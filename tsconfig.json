@@ -8,6 +8,7 @@
     "apps/websocket/src/**/*",
     "apps/cli/src/**/*",
     "apps/extension/src/**/*",
-    "apps/extension/vite.config.ts"
+    "apps/extension/vite.config.ts",
+    "apps/local-proxy/src/**/*"
   ]
 }

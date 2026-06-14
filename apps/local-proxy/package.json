@@ -1,0 +1,19 @@
+{
+  "name": "@browser-bridge/local-proxy",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local proxy for Browser Bridge",
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@browser-bridge/websocket": "workspace:*",
+    "@my/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.4.0"
+  }
+}
