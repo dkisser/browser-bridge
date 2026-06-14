@@ -1,5 +1,5 @@
 import { WEBSOCKET_PORT } from '@my/shared';
-import { encode } from '../protocol';
+import { decode, encode } from '../protocol';
 
 export function startServer(port = WEBSOCKET_PORT) {
   const server = Bun.serve<{ connectionId: string }>({
@@ -25,7 +25,13 @@ export function startServer(port = WEBSOCKET_PORT) {
             ? message
             : new TextDecoder().decode(message);
         console.log(`Received from ${ws.data.connectionId}: ${text}`);
-        ws.send(encode('echo', text));
+        try {
+          const envelope = decode(text);
+          // Echo back as a response with the same id for request-response correlation
+          ws.send(encode('response', envelope.payload, { id: envelope.id, browserId: envelope.browserId }));
+        } catch {
+          ws.send(encode('echo', text));
+        }
       },
       close(ws) {
         console.log(`Client disconnected: ${ws.data.connectionId}`);
