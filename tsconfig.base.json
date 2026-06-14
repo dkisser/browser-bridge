@@ -16,7 +16,9 @@
     "rootDir": ".",
     "baseUrl": ".",
     "paths": {
-      "@my/shared": ["./packages/shared/src/index.ts"]
+      "@my/shared": ["./packages/shared/src/index.ts"],
+      "@my/shared/types": ["./packages/shared/src/types.ts"],
+      "@my/shared/auth": ["./packages/shared/src/auth.ts"]
     }
   },
   "exclude": ["node_modules", "dist"]
