@@ -18,6 +18,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         popup: resolve(__dirname, 'src/popup.html'),
+        offscreen: resolve(__dirname, 'src/offscreen.html'),
         background: resolve(__dirname, 'src/background.ts'),
         content: resolve(__dirname, 'src/content.ts'),
       },
@@ -33,21 +34,25 @@ export default defineConfig({
   },
   plugins: [
     {
-      name: 'flatten-popup-html',
+      name: 'flatten-html',
       closeBundle() {
         const distDir = resolve(__dirname, 'dist');
-        const nestedPopup = resolve(distDir, 'src/popup.html');
-        const flatPopup = resolve(distDir, 'popup.html');
 
-        if (existsSync(nestedPopup)) {
-          const html = readFileSync(nestedPopup, 'utf-8');
-          writeFileSync(flatPopup, html.replace(/\.\.\//g, './'));
-          rmSync(nestedPopup);
+        // Flatten nested HTML files (Vite puts them under src/)
+        for (const htmlFile of ['popup.html', 'offscreen.html']) {
+          const nested = resolve(distDir, 'src', htmlFile);
+          const flat = resolve(distDir, htmlFile);
 
-          const srcDir = resolve(distDir, 'src');
-          if (existsSync(srcDir) && readdirSync(srcDir).length === 0) {
-            rmdirSync(srcDir);
+          if (existsSync(nested)) {
+            const html = readFileSync(nested, 'utf-8');
+            writeFileSync(flat, html.replace(/\.\.\//g, './'));
+            rmSync(nested);
           }
+        }
+
+        const srcDir = resolve(distDir, 'src');
+        if (existsSync(srcDir) && readdirSync(srcDir).length === 0) {
+          rmdirSync(srcDir);
         }
 
         copyFileSync(

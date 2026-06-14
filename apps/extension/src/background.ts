@@ -1,9 +1,42 @@
-import { LOCAL_WS_PORT } from '@my/shared';
+// Service Worker: manages the offscreen document and executes browser commands.
+// The WebSocket connection lives in the offscreen document (it persists when SW sleeps).
+// Commands arrive from offscreen via chrome.runtime.sendMessage, are executed here
+// using Chrome APIs, and responses are returned via the sendResponse callback.
 
-const LOCAL_WS_URL = `ws://localhost:${LOCAL_WS_PORT}`;
+const OFFSCREEN_DOCUMENT_URL = 'offscreen.html';
 
-let ws: WebSocket | null = null;
-let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let wsConnected = false;
+let creatingOffscreen: Promise<void> | null = null;
+
+async function ensureOffscreenDocument(): Promise<void> {
+  const existingContexts = await chrome.runtime.getContexts({
+    contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT],
+    documentUrls: [chrome.runtime.getURL(OFFSCREEN_DOCUMENT_URL)],
+  });
+
+  if (existingContexts.length > 0) return;
+
+  if (creatingOffscreen) {
+    await creatingOffscreen;
+    return;
+  }
+
+  creatingOffscreen = chrome.offscreen
+    .createDocument({
+      url: OFFSCREEN_DOCUMENT_URL,
+      reasons: [chrome.offscreen.Reason.WEB_RTC],
+      justification: 'Maintain persistent WebSocket connection to Local Proxy',
+    })
+    .then(() => {
+      creatingOffscreen = null;
+    })
+    .catch((err: Error) => {
+      creatingOffscreen = null;
+      throw err;
+    });
+
+  await creatingOffscreen;
+}
 
 interface CommandMessage {
   id: string;
@@ -17,204 +50,125 @@ interface CommandMessage {
   timestamp: number;
 }
 
-function connectToLocalProxy(): void {
-  if (ws && ws.readyState === WebSocket.OPEN) return;
-
-  ws = new WebSocket(LOCAL_WS_URL);
-
-  ws.addEventListener('open', () => {
-    console.log('[bg] Connected to Local Proxy');
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-    }
-  });
-
-  ws.addEventListener('message', async (event) => {
-    try {
-      const envelope = JSON.parse(event.data as string);
-      if (envelope.type === 'command') {
-        await handleCommand(envelope as CommandMessage);
-      }
-    } catch (err) {
-      console.error('[bg] Error processing message:', err);
-    }
-  });
-
-  ws.addEventListener('close', () => {
-    console.log('[bg] Disconnected from Local Proxy');
-    ws = null;
-    scheduleReconnect();
-  });
-
-  ws.addEventListener('error', () => {
-    console.error('[bg] WebSocket error');
-    ws = null;
-    scheduleReconnect();
-  });
-}
-
-function scheduleReconnect(): void {
-  if (reconnectTimer) return;
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null;
-    connectToLocalProxy();
-  }, 3000);
-}
-
-function sendResponse(id: string, browserId: string, payload: unknown): void {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify({
-    id,
-    type: 'response',
-    browserId,
-    payload,
-    timestamp: Date.now(),
-  }));
-}
-
-async function handleCommand(msg: CommandMessage): Promise<void> {
-  const { id, browserId, payload } = msg;
+async function handleCommand(msg: CommandMessage): Promise<unknown> {
+  const { payload } = msg;
   const { command, tabId, params } = payload;
 
-  try {
-    let result: unknown;
-
-    switch (command) {
-      case 'navigate': {
-        const tab = tabId ?? (await getActiveTabId());
-        await chrome.tabs.update(tab, { url: params.url as string });
-        await new Promise<void>((resolve) => {
-          const listener = (updatedTabId: number, changeInfo: chrome.tabs.TabChangeInfo) => {
-            if (updatedTabId === tab && changeInfo.status === 'complete') {
-              chrome.tabs.onUpdated.removeListener(listener);
-              resolve();
-            }
-          };
-          chrome.tabs.onUpdated.addListener(listener);
-        });
-        const updatedTab = await chrome.tabs.get(tab);
-        result = { url: updatedTab.url, title: updatedTab.title };
-        break;
-      }
-
-      case 'goBack': {
-        const tab = tabId ?? (await getActiveTabId());
-        await chrome.tabs.goBack(tab);
-        result = { ok: true };
-        break;
-      }
-
-      case 'goForward': {
-        const tab = tabId ?? (await getActiveTabId());
-        await chrome.tabs.goForward(tab);
-        result = { ok: true };
-        break;
-      }
-
-      case 'refresh': {
-        const tab = tabId ?? (await getActiveTabId());
-        await chrome.tabs.reload(tab);
-        result = { ok: true };
-        break;
-      }
-
-      case 'tab:list': {
-        const tabs = await chrome.tabs.query({});
-        result = tabs.map((t) => ({
-          id: t.id,
-          url: t.url,
-          title: t.title,
-          active: t.active,
-          windowId: t.windowId,
-        }));
-        break;
-      }
-
-      case 'tab:new': {
-        const newTab = await chrome.tabs.create({ url: params.url as string | undefined });
-        result = { id: newTab.id, url: newTab.url };
-        break;
-      }
-
-      case 'tab:close': {
-        await chrome.tabs.remove(params.tabId as number);
-        result = { ok: true };
-        break;
-      }
-
-      case 'tab:switch': {
-        const targetTabId = params.tabId as number;
-        const tab = await chrome.tabs.update(targetTabId, { active: true });
-        result = { id: tab.id, url: tab.url, title: tab.title };
-        break;
-      }
-
-      case 'pageinfo': {
-        const tab = tabId ?? (await getActiveTabId());
-        const t = await chrome.tabs.get(tab);
-        result = { id: t.id, url: t.url, title: t.title, active: t.active };
-        break;
-      }
-
-      case 'screenshot': {
-        const tab = tabId ?? (await getActiveTabId());
-        const activeTab = await chrome.tabs.get(tab);
-        const dataUrl = await chrome.tabs.captureVisibleTab(activeTab.windowId, { format: 'png' });
-        result = { dataUrl };
-        break;
-      }
-
-      case 'wait:navigation': {
-        const timeout = (params.timeout as number) || 10000;
-        const tab = tabId ?? (await getActiveTabId());
-        await new Promise<void>((resolve, reject) => {
-          const timer = setTimeout(() => {
+  switch (command) {
+    case 'navigate': {
+      const tab = tabId ?? (await getActiveTabId());
+      await chrome.tabs.update(tab, { url: params.url as string });
+      await new Promise<void>((resolve) => {
+        const listener = (updatedTabId: number, changeInfo: chrome.tabs.TabChangeInfo) => {
+          if (updatedTabId === tab && changeInfo.status === 'complete') {
             chrome.tabs.onUpdated.removeListener(listener);
-            reject(new Error('Navigation timeout'));
-          }, timeout);
-          const listener = (updatedTabId: number, changeInfo: chrome.tabs.TabChangeInfo) => {
-            if (updatedTabId === tab && changeInfo.status === 'complete') {
-              clearTimeout(timer);
-              chrome.tabs.onUpdated.removeListener(listener);
-              resolve();
-            }
-          };
-          chrome.tabs.onUpdated.addListener(listener);
-        });
-        const t = await chrome.tabs.get(tab);
-        result = { url: t.url, title: t.title };
-        break;
-      }
-
-      // DOM commands — forward to content script
-      case 'click':
-      case 'type':
-      case 'select':
-      case 'scroll':
-      case 'hover':
-      case 'gettext':
-      case 'gethtml':
-      case 'wait:element': {
-        result = await sendToContentScript(tabId, payload);
-        break;
-      }
-
-      default:
-        sendResponse(id, browserId, { status: 'error', error: 'unknown_command', message: `Unknown command: ${command}` });
-        return;
+            resolve();
+          }
+        };
+        chrome.tabs.onUpdated.addListener(listener);
+      });
+      const updatedTab = await chrome.tabs.get(tab);
+      return { url: updatedTab.url, title: updatedTab.title };
     }
 
-    sendResponse(id, browserId, { status: 'ok', data: result });
-  } catch (err) {
-    sendResponse(id, browserId, { status: 'error', error: 'execution_error', message: String(err) });
+    case 'goBack': {
+      const tab = tabId ?? (await getActiveTabId());
+      await chrome.tabs.goBack(tab);
+      return { ok: true };
+    }
+
+    case 'goForward': {
+      const tab = tabId ?? (await getActiveTabId());
+      await chrome.tabs.goForward(tab);
+      return { ok: true };
+    }
+
+    case 'refresh': {
+      const tab = tabId ?? (await getActiveTabId());
+      await chrome.tabs.reload(tab);
+      return { ok: true };
+    }
+
+    case 'tab:list': {
+      const tabs = await chrome.tabs.query({});
+      return tabs.map((t) => ({
+        id: t.id,
+        url: t.url,
+        title: t.title,
+        active: t.active,
+        windowId: t.windowId,
+      }));
+    }
+
+    case 'tab:new': {
+      const newTab = await chrome.tabs.create({ url: params.url as string | undefined });
+      return { id: newTab.id, url: newTab.url };
+    }
+
+    case 'tab:close': {
+      await chrome.tabs.remove(params.tabId as number);
+      return { ok: true };
+    }
+
+    case 'tab:switch': {
+      const targetTabId = params.tabId as number;
+      const tab = await chrome.tabs.update(targetTabId, { active: true });
+      return { id: tab.id, url: tab.url, title: tab.title };
+    }
+
+    case 'pageinfo': {
+      const tab = tabId ?? (await getActiveTabId());
+      const t = await chrome.tabs.get(tab);
+      return { id: t.id, url: t.url, title: t.title, active: t.active };
+    }
+
+    case 'screenshot': {
+      const tab = tabId ?? (await getActiveTabId());
+      const activeTab = await chrome.tabs.get(tab);
+      const dataUrl = await chrome.tabs.captureVisibleTab(activeTab.windowId, { format: 'png' });
+      return { dataUrl };
+    }
+
+    case 'wait:navigation': {
+      const timeout = (params.timeout as number) || 10000;
+      const tab = tabId ?? (await getActiveTabId());
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          chrome.tabs.onUpdated.removeListener(listener);
+          reject(new Error('Navigation timeout'));
+        }, timeout);
+        const listener = (updatedTabId: number, changeInfo: chrome.tabs.TabChangeInfo) => {
+          if (updatedTabId === tab && changeInfo.status === 'complete') {
+            clearTimeout(timer);
+            chrome.tabs.onUpdated.removeListener(listener);
+            resolve();
+          }
+        };
+        chrome.tabs.onUpdated.addListener(listener);
+      });
+      const t = await chrome.tabs.get(tab);
+      return { url: t.url, title: t.title };
+    }
+
+    // DOM commands — forward to content script
+    case 'click':
+    case 'type':
+    case 'select':
+    case 'scroll':
+    case 'hover':
+    case 'gettext':
+    case 'gethtml':
+    case 'wait:element':
+      return await sendToContentScript(tabId, payload);
+
+    default:
+      throw new Error(`Unknown command: ${command}`);
   }
 }
 
 async function sendToContentScript(tabId: number | undefined, payload: Record<string, unknown>): Promise<unknown> {
   const tab = tabId ?? (await getActiveTabId());
 
-  // Try to ping content script
   try {
     const response = await chrome.tabs.sendMessage(tab, { type: 'ping' });
     if (response?.type === 'pong') {
@@ -229,7 +183,6 @@ async function sendToContentScript(tabId: number | undefined, payload: Record<st
     files: ['content.js'],
   });
 
-  // Small delay to let content script initialize
   await new Promise((resolve) => setTimeout(resolve, 100));
   return await chrome.tabs.sendMessage(tab, { type: 'command', payload });
 }
@@ -240,17 +193,54 @@ async function getActiveTabId(): Promise<number> {
   return tab.id;
 }
 
-// Start connection on extension load
-connectToLocalProxy();
-
-// Handle messages from popup
+// Message handler: receives commands from offscreen doc, popup, and content scripts
 chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
+  // Command from offscreen document (originating from Local Proxy)
+  if (request.type === 'ws_command') {
+    const envelope = request.envelope as CommandMessage;
+    handleCommand(envelope)
+      .then((data) => sendResponse({ status: 'ok', data }))
+      .catch((err: Error) => sendResponse({ status: 'error', error: err.message }));
+    return true; // async response
+  }
+
+  // Status update from offscreen document
+  if (request.type === 'ws_status') {
+    wsConnected = request.connected;
+    return false;
+  }
+
+  // Popup: ping connection status
   if (request.type === 'ping') {
-    sendResponse({ type: 'pong', connected: ws?.readyState === WebSocket.OPEN });
+    sendResponse({ type: 'pong', connected: wsConnected });
+    return false;
   }
+
+  // Popup: trigger connection
   if (request.type === 'connect') {
-    connectToLocalProxy();
-    sendResponse({ type: 'connected' });
+    ensureOffscreenDocument()
+      .then(() => {
+        // Ask offscreen to connect
+        chrome.runtime.sendMessage({ type: 'connect_ws' }).catch(() => {});
+        sendResponse({ type: 'connected' });
+      })
+      .catch((err: Error) => {
+        sendResponse({ type: 'error', message: err.message });
+      });
+    return true;
   }
-  return true;
+
+  return false;
 });
+
+// Initialize offscreen document on extension install/startup
+chrome.runtime.onInstalled.addListener(() => {
+  ensureOffscreenDocument().catch(console.error);
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  ensureOffscreenDocument().catch(console.error);
+});
+
+// Also try on SW wake — if offscreen was somehow killed, recreate it
+ensureOffscreenDocument().catch(console.error);
