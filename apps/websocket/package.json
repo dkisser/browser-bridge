@@ -1,0 +1,22 @@
+{
+  "name": "@browser-bridge/websocket",
+  "version": "1.0.0",
+  "private": true,
+  "description": "WebSocket server, client, and protocol for Browser Bridge",
+  "exports": {
+    "./client": "./src/client/index.ts",
+    "./protocol": "./src/protocol/index.ts"
+  },
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@my/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.4.0"
+  }
+}

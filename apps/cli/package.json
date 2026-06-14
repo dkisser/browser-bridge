@@ -1,0 +1,22 @@
+{
+  "name": "@browser-bridge/cli",
+  "version": "1.0.0",
+  "private": true,
+  "description": "CLI tool for Browser Bridge",
+  "bin": {
+    "mycli": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "bun src/index.ts",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@browser-bridge/websocket": "workspace:*",
+    "@my/shared": "workspace:*",
+    "commander": "^12.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.4.0"
+  }
+}

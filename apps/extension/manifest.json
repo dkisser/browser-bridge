@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "Browser Bridge",
+  "version": "1.0.0",
+  "description": "Bridge browser events to a WebSocket server",
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Browser Bridge"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"]
+    }
+  ],
+  "permissions": []
+}

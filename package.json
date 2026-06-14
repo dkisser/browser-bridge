@@ -1,0 +1,24 @@
+{
+  "name": "browser-bridge",
+  "private": true,
+  "version": "1.0.0",
+  "description": "A pure TypeScript + Bun monorepo bridging browser extensions and WebSocket services.",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:websocket": "bun --cwd apps/websocket dev",
+    "dev:extension": "bun --cwd apps/extension dev",
+    "build:extension": "bun --cwd apps/extension build",
+    "cli": "bun --cwd apps/cli start",
+    "type-check": "tsc --noEmit",
+    "test": "bun test",
+    "test:watch": "bun test --watch"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.16",
+    "@types/bun": "latest",
+    "typescript": "^5.4.0"
+  }
+}

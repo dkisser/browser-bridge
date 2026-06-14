@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Browser Bridge Architecture</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,700;9..144,800&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --background: #FDFCF8;
+      --foreground: #2C2C24;
+      --primary: #5D7052;
+      --primary-foreground: #F3F4F1;
+      --secondary: #C18C5D;
+      --secondary-foreground: #FFFFFF;
+      --accent: #E6DCCD;
+      --accent-foreground: #4A4A40;
+      --muted: #F0EBE5;
+      --muted-foreground: #78786C;
+      --border: #DED8CF;
+      --card: #FEFEFA;
+      --shadow-soft: 0 4px 24px -4px rgba(93, 112, 82, 0.18);
+      --shadow-float: 0 14px 48px -12px rgba(193, 140, 93, 0.22);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      min-height: 100%;
+    }
+
+    body {
+      font-family: 'Nunito', system-ui, sans-serif;
+      background-color: var(--background);
+      color: var(--foreground);
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    /* Grain texture overlay */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 1000;
+      opacity: 0.04;
+      mix-blend-mode: multiply;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    }
+
+    .poster {
+      position: relative;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 64px 32px 80px;
+    }
+
+    /* Ambient blobs */
+    .blob {
+      position: absolute;
+      border-radius: 60% 40% 30% 70% / 60% 30% 70% 40%;
+      filter: blur(70px);
+      opacity: 0.35;
+      z-index: 0;
+    }
+
+    .blob--moss {
+      width: 420px;
+      height: 320px;
+      background: rgba(93, 112, 82, 0.25);
+      top: -80px;
+      right: -60px;
+    }
+
+    .blob--clay {
+      width: 360px;
+      height: 280px;
+      background: rgba(193, 140, 93, 0.22);
+      bottom: 140px;
+      left: -80px;
+      border-radius: 30% 70% 70% 30% / 30% 30% 70% 70%;
+    }
+
+    .blob--sand {
+      width: 300px;
+      height: 240px;
+      background: rgba(230, 220, 205, 0.55);
+      top: 45%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      border-radius: 50% 50% 40% 60% / 60% 40% 60% 40%;
+    }
+
+    /* Header */
+    .header {
+      position: relative;
+      z-index: 1;
+      text-align: center;
+      margin-bottom: 56px;
+    }
+
+    .eyebrow {
+      display: inline-block;
+      font-size: 0.85rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--secondary);
+      background: rgba(193, 140, 93, 0.12);
+      padding: 6px 16px;
+      border-radius: 999px;
+      margin-bottom: 18px;
+    }
+
+    h1 {
+      font-family: 'Fraunces', Georgia, serif;
+      font-size: clamp(2.5rem, 6vw, 4.5rem);
+      font-weight: 800;
+      color: var(--foreground);
+      margin: 0 0 16px;
+      line-height: 1.1;
+    }
+
+    .tagline {
+      font-size: clamp(1.1rem, 2.2vw, 1.5rem);
+      color: var(--muted-foreground);
+      max-width: 640px;
+      margin: 0 auto;
+    }
+
+    /* Diagram container */
+    .diagram {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      align-items: center;
+    }
+
+    /* Layer cards */
+    .layer {
+      width: 100%;
+      max-width: 920px;
+      background: var(--card);
+      border: 1px solid rgba(222, 216, 207, 0.6);
+      border-radius: 2.5rem;
+      padding: 36px 40px;
+      box-shadow: var(--shadow-soft);
+      position: relative;
+    }
+
+    .layer--cloud {
+      border-top-left-radius: 4rem;
+      border-bottom-right-radius: 3rem;
+    }
+
+    .layer--local {
+      border-top-right-radius: 4rem;
+      border-bottom-left-radius: 3rem;
+      margin-top: -28px;
+    }
+
+    .layer__title {
+      font-family: 'Fraunces', Georgia, serif;
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: var(--foreground);
+      margin-bottom: 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .layer__badge {
+      font-family: 'Nunito', sans-serif;
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 4px 12px;
+      border-radius: 999px;
+    }
+
+    .layer__badge--cloud {
+      background: rgba(193, 140, 93, 0.14);
+      color: var(--secondary);
+    }
+
+    .layer__badge--local {
+      background: rgba(93, 112, 82, 0.14);
+      color: var(--primary);
+    }
+
+    .components {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 20px;
+      justify-content: center;
+    }
+
+    .component {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      background: var(--background);
+      border: 1px solid var(--border);
+      border-radius: 1.5rem;
+      padding: 18px 22px;
+      min-width: 220px;
+      box-shadow: 0 2px 12px -2px rgba(44, 44, 36, 0.06);
+      transition: transform 0.3s ease, box-shadow 0.3s ease;
+    }
+
+    .component:hover {
+      transform: translateY(-2px);
+      box-shadow: var(--shadow-soft);
+    }
+
+    .component__icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 1rem;
+      display: grid;
+      place-items: center;
+      flex-shrink: 0;
+    }
+
+    .component__icon--cli {
+      background: rgba(193, 140, 93, 0.15);
+      color: var(--secondary);
+    }
+
+    .component__icon--server {
+      background: rgba(161, 140, 120, 0.15);
+      color: #8B7B68;
+    }
+
+    .component__icon--local {
+      background: rgba(120, 120, 108, 0.12);
+      color: var(--muted-foreground);
+    }
+
+    .component__icon--extension {
+      background: rgba(93, 112, 82, 0.15);
+      color: var(--primary);
+    }
+
+    .component__icon--chrome {
+      background: rgba(230, 220, 205, 0.6);
+      color: var(--accent-foreground);
+    }
+
+    .component__text h3 {
+      font-size: 1rem;
+      font-weight: 700;
+      margin: 0 0 2px;
+      color: var(--foreground);
+    }
+
+    .component__text p {
+      font-size: 0.85rem;
+      color: var(--muted-foreground);
+      margin: 0;
+    }
+
+    /* Bridge section */
+    .bridge {
+      position: relative;
+      width: 100%;
+      max-width: 920px;
+      height: 160px;
+      margin: -12px 0;
+      z-index: 2;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .bridge__label {
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: var(--primary);
+      background: rgba(93, 112, 82, 0.1);
+      padding: 8px 20px;
+      border-radius: 999px;
+      margin-bottom: 8px;
+      border: 1px solid rgba(93, 112, 82, 0.2);
+    }
+
+    .bridge__sublabel {
+      font-size: 0.8rem;
+      color: var(--muted-foreground);
+    }
+
+    .bridge__svg {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      overflow: visible;
+    }
+
+    .bridge__path {
+      fill: none;
+      stroke: var(--primary);
+      stroke-width: 3;
+      stroke-linecap: round;
+      stroke-dasharray: 10 8;
+      opacity: 0.35;
+    }
+
+    .bridge__flow {
+      fill: none;
+      stroke: var(--primary);
+      stroke-width: 3;
+      stroke-linecap: round;
+      stroke-dasharray: 12 180;
+      animation: flow 2.4s linear infinite;
+    }
+
+    @keyframes flow {
+      to {
+        stroke-dashoffset: -192;
+      }
+    }
+
+    .bridge__dot {
+      fill: var(--primary);
+      opacity: 0.8;
+    }
+
+    /* Steps */
+    .steps {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 24px;
+      margin-top: 56px;
+    }
+
+    .step {
+      flex: 1 1 240px;
+      max-width: 300px;
+      background: var(--card);
+      border: 1px solid rgba(222, 216, 207, 0.5);
+      border-radius: 2rem;
+      padding: 28px;
+      text-align: center;
+      box-shadow: var(--shadow-soft);
+      transition: transform 0.3s ease;
+    }
+
+    .step:nth-child(1) {
+      border-top-left-radius: 3rem;
+    }
+
+    .step:nth-child(2) {
+      border-radius: 2.5rem;
+    }
+
+    .step:nth-child(3) {
+      border-top-right-radius: 3rem;
+    }
+
+    .step:hover {
+      transform: translateY(-4px);
+    }
+
+    .step__number {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: var(--primary);
+      color: var(--primary-foreground);
+      font-family: 'Fraunces', Georgia, serif;
+      font-size: 1.25rem;
+      font-weight: 800;
+      display: grid;
+      place-items: center;
+      margin: 0 auto 16px;
+      box-shadow: 0 4px 16px -4px rgba(93, 112, 82, 0.35);
+    }
+
+    .step h3 {
+      font-size: 1.1rem;
+      font-weight: 700;
+      margin: 0 0 8px;
+      color: var(--foreground);
+    }
+
+    .step p {
+      font-size: 0.9rem;
+      color: var(--muted-foreground);
+      margin: 0;
+    }
+
+    /* Footer */
+    .footer {
+      position: relative;
+      z-index: 1;
+      text-align: center;
+      margin-top: 64px;
+      color: var(--muted-foreground);
+      font-size: 0.85rem;
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      .poster {
+        padding: 40px 20px 60px;
+      }
+
+      .layer {
+        padding: 28px 24px;
+      }
+
+      .components {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .component {
+        min-width: 0;
+      }
+
+      .bridge {
+        height: 120px;
+      }
+
+      .steps {
+        flex-direction: column;
+        align-items: center;
+      }
+
+      .step {
+        max-width: 100%;
+        width: 100%;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .bridge__flow {
+        animation: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="poster">
+    <div class="blob blob--moss" aria-hidden="true"></div>
+    <div class="blob blob--sand" aria-hidden="true"></div>
+    <div class="blob blob--clay" aria-hidden="true"></div>
+
+    <header class="header">
+      <span class="eyebrow">System Architecture</span>
+      <h1>Browser Bridge</h1>
+      <p class="tagline">从云端安全地握住你的浏览器。一条命令，跨越云端与本地的距离。</p>
+    </header>
+
+    <section class="diagram" aria-label="Browser Bridge 架构图">
+      <!-- Cloud Layer -->
+      <div class="layer layer--cloud">
+        <div class="layer__title">
+          <span class="layer__badge layer__badge--cloud">Cloud</span>
+          云端
+        </div>
+        <div class="components">
+          <div class="component">
+            <div class="component__icon component__icon--cli" aria-hidden="true">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
+            </div>
+            <div class="component__text">
+              <h3>CLI</h3>
+              <p>输入命令，发送到服务端</p>
+            </div>
+          </div>
+          <div class="component">
+            <div class="component__icon component__icon--server" aria-hidden="true">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
+            </div>
+            <div class="component__text">
+              <h3>WebSocket Server</h3>
+              <p>鉴权并路由到对应客户端</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bridge -->
+      <div class="bridge">
+        <svg class="bridge__svg" viewBox="0 0 920 160" preserveAspectRatio="none" aria-hidden="true">
+          <!-- Organic curved bridge path -->
+          <path class="bridge__path" d="M 280 10 C 380 80, 540 80, 640 10" />
+          <path class="bridge__flow" d="M 280 10 C 380 80, 540 80, 640 10" />
+          <circle class="bridge__dot" cx="280" cy="10" r="5" />
+          <circle class="bridge__dot" cx="640" cy="10" r="5" />
+        </svg>
+        <div class="bridge__label">WebSocket 长连接</div>
+        <div class="bridge__sublabel">云端与本地的有机桥接</div>
+      </div>
+
+      <!-- Local Layer -->
+      <div class="layer layer--local">
+        <div class="layer__title">
+          <span class="layer__badge layer__badge--local">Local</span>
+          本地
+        </div>
+        <div class="components">
+          <div class="component">
+            <div class="component__icon component__icon--local" aria-hidden="true">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+            </div>
+            <div class="component__text">
+              <h3>WebSocket Local</h3>
+              <p>本地代理，维持长连接</p>
+            </div>
+          </div>
+          <div class="component">
+            <div class="component__icon component__icon--extension" aria-hidden="true">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"></path><path d="M2 17l10 5 10-5"></path><path d="M2 12l10 5 10-5"></path></svg>
+            </div>
+            <div class="component__text">
+              <h3>Chrome Extension</h3>
+              <p>接收指令，执行浏览器操作</p>
+            </div>
+          </div>
+          <div class="component">
+            <div class="component__icon component__icon--chrome" aria-hidden="true">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="4"></circle><line x1="21.17" y1="8" x2="12" y2="8"></line><line x1="3.95" y1="6.06" x2="8.54" y2="14"></line><line x1="10.88" y1="21.94" x2="15.46" y2="14"></line></svg>
+            </div>
+            <div class="component__text">
+              <h3>Chrome</h3>
+              <p>标签、DOM、表单、页面</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- User Journey -->
+      <div class="steps" aria-label="用户旅程">
+        <article class="step">
+          <div class="step__number">1</div>
+          <h3>安装 Extension</h3>
+          <p>从应用商店或本地加载 Browser Bridge 扩展。</p>
+        </article>
+        <article class="step">
+          <div class="step__number">2</div>
+          <h3>完成认证</h3>
+          <p>扫码、账号密码，或接入其它认证方式。认证模块可插拔。</p>
+        </article>
+        <article class="step">
+          <div class="step__number">3</div>
+          <h3>云端操控浏览器</h3>
+          <p>通过 CLI 发送命令，浏览器在本地执行。</p>
+        </article>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <p>Browser Bridge · 云端与本地的有机桥接</p>
+    </footer>
+  </main>
+</body>
+</html>

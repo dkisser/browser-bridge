@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "packages/shared/src/**/*",
+    "apps/websocket/src/**/*",
+    "apps/cli/src/**/*",
+    "apps/extension/src/**/*",
+    "apps/extension/vite.config.ts"
+  ]
+}
