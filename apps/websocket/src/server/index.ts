@@ -1,8 +1,22 @@
 import { WEBSOCKET_PORT } from '@my/shared';
-import { decode, encode } from '../protocol';
+import { NoopAuthProvider } from '@my/shared/auth';
+import { encode, decode } from '../protocol';
+import { ConnectionRegistry } from './registry';
+import type { AuthProvider, Envelope } from '@my/shared/types';
+import type { ServerWebSocket } from 'bun';
 
-export function startServer(port = WEBSOCKET_PORT) {
-  const server = Bun.serve<{ connectionId: string }>({
+export function startServer(
+  port = WEBSOCKET_PORT,
+  authProvider: AuthProvider = new NoopAuthProvider(),
+) {
+  const registry = new ConnectionRegistry(authProvider);
+  const cliConnections = new Set<ServerWebSocket>();
+
+  const server = Bun.serve<{
+    connectionId: string;
+    browserId?: string;
+    userId?: string;
+  }>({
     port,
     fetch(_req, server) {
       if (
@@ -17,23 +31,105 @@ export function startServer(port = WEBSOCKET_PORT) {
     websocket: {
       open(ws) {
         console.log(`Client connected: ${ws.data.connectionId}`);
-        ws.send(encode('welcome', 'Connected'));
+        cliConnections.add(ws);
+        ws.send(encode('event', { event: 'welcome' }));
       },
-      message(ws, message) {
+
+      async message(ws, message) {
         const text =
           typeof message === 'string'
             ? message
             : new TextDecoder().decode(message);
-        console.log(`Received from ${ws.data.connectionId}: ${text}`);
+
+        let envelope: Envelope;
         try {
-          const envelope = decode(text);
-          // Echo back as a response with the same id for request-response correlation
-          ws.send(encode('response', envelope.payload, { id: envelope.id, browserId: envelope.browserId }));
+          envelope = decode(text);
         } catch {
-          ws.send(encode('echo', text));
+          ws.send(encode('response', { status: 'error', error: 'invalid_json' }, { id: '' }));
+          return;
+        }
+
+        switch (envelope.type) {
+          case 'event': {
+            const event = envelope.payload as Record<string, unknown>;
+
+            if (event.event === 'register') {
+              const result = await registry.register(
+                ws,
+                event.browserId as string,
+                event.token as string,
+              );
+              if (result.success) {
+                ws.send(encode('response', { status: 'ok' }, { id: envelope.id, browserId: event.browserId as string }));
+              } else {
+                ws.send(encode('response', { status: 'error', error: result.error }, { id: envelope.id }));
+              }
+            }
+
+            if (event.event === 'online') {
+              const browserId = (event.browserId as string) || ws.data.browserId;
+              registry.setStatus(browserId, 'online');
+              ws.send(encode('response', { status: 'ok' }, { id: envelope.id, browserId }));
+            }
+
+            if (event.event === 'offline') {
+              const browserId = (event.browserId as string) || ws.data.browserId;
+              registry.setStatus(browserId, 'offline');
+              ws.send(encode('response', { status: 'ok' }, { id: envelope.id, browserId }));
+            }
+            break;
+          }
+
+          case 'command': {
+            const browserId = envelope.browserId;
+            const status = registry.getStatus(browserId);
+
+            if (!status || status === 'offline') {
+              ws.send(
+                encode(
+                  'response',
+                  { status: 'error', error: 'browser_offline', message: `Browser ${browserId} is offline` },
+                  { id: envelope.id, browserId },
+                ),
+              );
+              break;
+            }
+
+            const targetWs = registry.getWebSocket(browserId);
+            if (!targetWs) {
+              ws.send(
+                encode(
+                  'response',
+                  { status: 'error', error: 'browser_not_found' },
+                  { id: envelope.id, browserId },
+                ),
+              );
+              break;
+            }
+
+            // Forward command to Local Proxy
+            targetWs.send(text);
+            break;
+          }
+
+          case 'response': {
+            // Response from Local Proxy — forward back to CLI connections
+            for (const cliWs of cliConnections) {
+              if (cliWs !== ws && cliWs.readyState === 1) {
+                cliWs.send(text);
+              }
+            }
+            break;
+          }
         }
       },
+
       close(ws) {
+        cliConnections.delete(ws);
+        const browserId = registry.removeByWebSocket(ws);
+        if (browserId) {
+          console.log(`Browser disconnected: ${browserId}`);
+        }
         console.log(`Client disconnected: ${ws.data.connectionId}`);
       },
     },
