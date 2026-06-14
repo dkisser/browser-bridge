@@ -6,17 +6,42 @@
     <title>Browser Bridge</title>
     <style>
       body {
-        width: 240px;
+        width: 280px;
         padding: 16px;
         font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      }
+      .status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+      .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #ccc;
+      }
+      .dot.connected { background: #4caf50; }
+      .dot.disconnected { background: #f44336; }
+      .label {
+        font-size: 14px;
+        color: #333;
+      }
+      .browser-id {
+        font-size: 12px;
+        color: #666;
+        margin-bottom: 12px;
+        word-break: break-all;
       }
       button {
         width: 100%;
         padding: 8px;
         cursor: pointer;
+        margin-bottom: 8px;
       }
       #result {
-        margin-top: 12px;
+        margin-top: 8px;
         word-break: break-word;
         font-size: 12px;
         color: #333;
@@ -24,6 +49,12 @@
     </style>
   </head>
   <body>
+    <div class="status">
+      <div id="statusDot" class="dot disconnected"></div>
+      <span id="statusLabel" class="label">Disconnected</span>
+    </div>
+    <div id="browserId" class="browser-id"></div>
+    <button id="connect" type="button">Connect to Local Proxy</button>
     <button id="ping" type="button">Ping Background</button>
     <div id="result"></div>
     <script type="module" src="./popup.ts"></script>
