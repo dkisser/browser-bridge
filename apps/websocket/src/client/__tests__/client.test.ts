@@ -48,6 +48,8 @@ describe('WS client', () => {
     }, { timeout: 2000 });
 
     expect(response.id).toBeDefined();
+    expect(typeof response.id).toBe('string');
+    expect(response.id.length).toBeGreaterThan(0);
     expect(response.type).toBe('response');
     client.close();
   });
@@ -69,5 +71,41 @@ describe('WS client', () => {
     ).rejects.toThrow('timeout');
 
     client.close();
+  });
+
+  it('rejects pending requests on connection close', async () => {
+    // Use a server that accepts but doesn't respond
+    const closeServer = Bun.serve({
+      port: 3101,
+      fetch(_req, server) {
+        if (server.upgrade(_req)) return;
+        return new Response('ok', { status: 200 });
+      },
+      websocket: {
+        open(ws) {
+          // Immediately close to trigger rejection
+          setTimeout(() => ws.close(), 50);
+        },
+        message() {},
+      },
+    });
+
+    const client = createClient({ url: 'ws://localhost:3101' });
+
+    await new Promise((resolve) => {
+      const check = setInterval(() => {
+        if (client.readyState === WebSocket.OPEN) {
+          clearInterval(check);
+          resolve(undefined);
+        }
+      }, 50);
+    });
+
+    await expect(
+      client.sendCommand('b-123', { command: 'navigate', params: {} }, { timeout: 5000 }),
+    ).rejects.toThrow('connection closed');
+
+    client.close();
+    closeServer.stop();
   });
 });
