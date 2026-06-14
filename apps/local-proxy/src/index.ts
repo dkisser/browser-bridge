@@ -14,6 +14,8 @@ async function main() {
   console.log(`Browser ID: ${state.browserId}`);
   console.log(`Cloud server: ${serverUrl}`);
 
+  let router: Router;
+
   const local = new LocalServer(localPort, {
     onCommand: (envelope) => {
       if (envelope.type === 'response') {
@@ -31,7 +33,7 @@ async function main() {
     onCommand: (envelope) => router.handleCloudCommand(envelope),
   });
 
-  const router = new Router(state, cloud, local);
+  router = new Router(state, cloud, local);
 
   local.start();
 

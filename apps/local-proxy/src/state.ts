@@ -59,9 +59,7 @@ export class StateManager {
 
   bufferCommand(envelope: string, onTimeout: () => void): boolean {
     if (this.browserStatus !== 'idle_wait') return false;
-    if (this.bufferedCommand) {
-      clearTimeout(this.bufferedCommand.timer);
-    }
+    if (this.bufferedCommand) return false;
     this.bufferedCommand = {
       envelope,
       receivedAt: Date.now(),

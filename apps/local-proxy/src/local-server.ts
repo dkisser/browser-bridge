@@ -1,4 +1,3 @@
-import { LOCAL_WS_PORT } from '@my/shared';
 import { decode, encode } from '@browser-bridge/websocket/protocol';
 import type { ServerWebSocket } from 'bun';
 import type { Envelope } from '@my/shared/types';
