@@ -19,6 +19,18 @@ describe('shared', () => {
       expect(result.valid).toBe(true);
       expect(result.userId).toBe('local');
     });
+
+    it('returns id "noop"', () => {
+      const provider = new NoopAuthProvider();
+      expect(provider.id).toBe('noop');
+    });
+
+    it('refreshToken returns the same token', async () => {
+      const provider = new NoopAuthProvider();
+      const token = { accessToken: 'a', refreshToken: 'r', expiresAt: 0, userId: 'u' };
+      const result = await provider.refreshToken(token);
+      expect(result).toEqual(token);
+    });
   });
 
   describe('ApiKeyAuthProvider', () => {
@@ -33,6 +45,18 @@ describe('shared', () => {
       const provider = new ApiKeyAuthProvider({ 'key-123': 'user-1' });
       const result = await provider.validateToken('wrong');
       expect(result.valid).toBe(false);
+    });
+
+    it('returns id "api-key"', () => {
+      const provider = new ApiKeyAuthProvider({});
+      expect(provider.id).toBe('api-key');
+    });
+
+    it('refreshToken returns the same token', async () => {
+      const provider = new ApiKeyAuthProvider({});
+      const token = { accessToken: 'a', refreshToken: 'r', expiresAt: 0, userId: 'u' };
+      const result = await provider.refreshToken(token);
+      expect(result).toEqual(token);
     });
   });
 });
