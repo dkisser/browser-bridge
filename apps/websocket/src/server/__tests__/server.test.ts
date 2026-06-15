@@ -62,12 +62,67 @@ describe('WS server routing', () => {
   });
 });
 
+describe('WS server handshake auth', () => {
+  const AUTH_PORT = 3097;
+  const VALID_KEY = 'server-test-key';
+  let server: Server;
+
+  beforeAll(() => {
+    server = startServer(AUTH_PORT, new ApiKeyAuthProvider({ [VALID_KEY]: 'user-1' }));
+  });
+
+  afterAll(() => {
+    server.stop();
+  });
+
+  it('closes connection without Authorization header', async () => {
+    const ws = new WebSocket(`ws://localhost:${AUTH_PORT}`);
+
+    const closeEvent = await new Promise<CloseEvent>((resolve) => {
+      ws.addEventListener('close', (e) => resolve(e));
+    });
+
+    expect(closeEvent.code).toBe(4001);
+    expect(closeEvent.reason).toBe('unauthorized');
+  });
+
+  it('closes connection with wrong API key', async () => {
+    const ws = new WebSocket(`ws://localhost:${AUTH_PORT}`, {
+      headers: { Authorization: 'Bearer wrong-key' },
+    });
+
+    const closeEvent = await new Promise<CloseEvent>((resolve) => {
+      ws.addEventListener('close', (e) => resolve(e));
+    });
+
+    expect(closeEvent.code).toBe(4001);
+    expect(closeEvent.reason).toBe('unauthorized');
+  });
+
+  it('accepts connection with valid API key', async () => {
+    const ws = new WebSocket(`ws://localhost:${AUTH_PORT}`, {
+      headers: { Authorization: `Bearer ${VALID_KEY}` },
+    });
+
+    const message = await new Promise<string>((resolve) => {
+      ws.addEventListener('message', (e) => {
+        resolve(e.data as string);
+        ws.close();
+      });
+    });
+
+    const envelope = JSON.parse(message);
+    expect(envelope.type).toBe('event');
+    expect(envelope.payload).toEqual({ event: 'welcome' });
+  });
+});
+
 describe('ConnectionRegistry', () => {
   it('registers a browser and tracks status', async () => {
     const registry = new ConnectionRegistry(new NoopAuthProvider());
     const mockWs = { data: {} } as any;
 
-    const result = await registry.register(mockWs, 'b-1', 'any-token');
+    const result = await registry.register(mockWs, 'b-1');
     expect(result.success).toBe(true);
     expect(registry.getStatus('b-1')).toBe('offline');
 
@@ -75,12 +130,11 @@ describe('ConnectionRegistry', () => {
     expect(registry.getStatus('b-1')).toBe('online');
   });
 
-  it('rejects invalid token', async () => {
+  it('always succeeds (auth happened at handshake)', async () => {
     const registry = new ConnectionRegistry(new ApiKeyAuthProvider({ 'good-key': 'user-1' }));
-    const mockWs = { data: {} } as any;
+    const mockWs = { data: { userId: 'user-1' } } as any;
 
-    const result = await registry.register(mockWs, 'b-2', 'bad-key');
-    expect(result.success).toBe(false);
-    expect(result.error).toBe('invalid_token');
+    const result = await registry.register(mockWs, 'b-2');
+    expect(result.success).toBe(true);
   });
 });

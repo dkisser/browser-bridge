@@ -1,36 +1,57 @@
 import { WEBSOCKET_PORT } from '@my/shared';
+import { isLocalhost } from '@my/shared/utils';
 import { NoopAuthProvider } from '@my/shared/auth';
 import { encode, decode } from '../protocol';
 import { ConnectionRegistry } from './registry';
 import type { AuthProvider, Envelope } from '@my/shared/types';
 import type { ServerWebSocket } from 'bun';
 
+interface WsData {
+  connectionId: string;
+  browserId?: string;
+  userId?: string;
+  authenticated?: boolean;
+}
+
 export function startServer(
   port = WEBSOCKET_PORT,
   authProvider: AuthProvider = new NoopAuthProvider(),
 ) {
   const registry = new ConnectionRegistry(authProvider);
-  const cliConnections = new Set<ServerWebSocket>();
+  const cliConnections = new Set<ServerWebSocket<WsData>>();
 
-  const server = Bun.serve<{
-    connectionId: string;
-    browserId?: string;
-    userId?: string;
-  }>({
+  const server = Bun.serve<WsData>({
     port,
-    fetch(_req, server) {
-      if (
-        server.upgrade(_req, {
-          data: { connectionId: crypto.randomUUID() },
-        })
-      ) {
+    async fetch(req, server) {
+      const url = new URL(req.url);
+      const host = url.hostname;
+
+      if (url.protocol === 'ws:' && !isLocalhost(host)) {
+        return new Response('TLS required', { status: 426 });
+      }
+
+      const authHeader = req.headers.get('Authorization') ?? '';
+      const authResult = await authProvider.validateHeader(authHeader);
+
+      if (server.upgrade(req, {
+        data: {
+          connectionId: crypto.randomUUID(),
+          authenticated: authResult.valid,
+          userId: authResult.userId,
+        },
+      })) {
         return;
       }
       return new Response('Browser Bridge WebSocket server', { status: 200 });
     },
     websocket: {
       open(ws) {
-        console.log(`Client connected: ${ws.data.connectionId}`);
+        if (!ws.data.authenticated) {
+          ws.close(4001, 'unauthorized');
+          return;
+        }
+
+        console.log(`Client connected: ${ws.data.connectionId} (user: ${ws.data.userId})`);
         cliConnections.add(ws);
         ws.send(encode('event', { event: 'welcome' }));
       },
@@ -54,13 +75,10 @@ export function startServer(
             const event = envelope.payload as Record<string, unknown>;
 
             if (event.event === 'register') {
-              const result = await registry.register(
-                ws,
-                event.browserId as string,
-                event.token as string,
-              );
+              const browserId = event.browserId as string;
+              const result = await registry.register(ws, browserId);
               if (result.success) {
-                ws.send(encode('response', { status: 'ok' }, { id: envelope.id, browserId: event.browserId as string }));
+                ws.send(encode('response', { status: 'ok' }, { id: envelope.id, browserId }));
               } else {
                 ws.send(encode('response', { status: 'error', error: result.error }, { id: envelope.id }));
               }

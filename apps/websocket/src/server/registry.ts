@@ -20,22 +20,18 @@ export class ConnectionRegistry {
   async register(
     ws: ServerWebSocket,
     browserId: string,
-    token: string,
   ): Promise<{ success: boolean; error?: string }> {
-    const result = await this.authProvider.validateToken(token);
-    if (!result.valid) {
-      return { success: false, error: 'invalid_token' };
-    }
+    const userId = (ws.data as any).userId || 'unknown';
 
     this.browsers.set(browserId, {
       browserId,
-      userId: result.userId,
+      userId,
       ws,
       status: 'offline',
       lastSeen: Date.now(),
     });
 
-    ws.data = { ...ws.data, browserId, userId: result.userId };
+    ws.data = { ...ws.data, browserId, userId };
     return { success: true };
   }
 
