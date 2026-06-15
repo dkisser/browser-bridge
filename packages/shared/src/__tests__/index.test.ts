@@ -58,5 +58,40 @@ describe('shared', () => {
       const result = await provider.refreshToken(token);
       expect(result).toEqual(token);
     });
+
+    it('validateHeader accepts valid Bearer token', async () => {
+      const provider = new ApiKeyAuthProvider({ 'key-123': 'user-1' });
+      const result = await provider.validateHeader('Bearer key-123');
+      expect(result.valid).toBe(true);
+      expect(result.userId).toBe('user-1');
+    });
+
+    it('validateHeader rejects invalid Bearer token', async () => {
+      const provider = new ApiKeyAuthProvider({ 'key-123': 'user-1' });
+      const result = await provider.validateHeader('Bearer wrong');
+      expect(result.valid).toBe(false);
+    });
+
+    it('validateHeader rejects malformed header', async () => {
+      const provider = new ApiKeyAuthProvider({ 'key-123': 'user-1' });
+      const result = await provider.validateHeader('key-123');
+      expect(result.valid).toBe(false);
+    });
+
+    it('validateHeader rejects empty string', async () => {
+      const provider = new ApiKeyAuthProvider({ 'key-123': 'user-1' });
+      const result = await provider.validateHeader('');
+      expect(result.valid).toBe(false);
+    });
+
+    it('accepts string array of keys', async () => {
+      const provider = new ApiKeyAuthProvider(['key-a', 'key-b']);
+      const resultA = await provider.validateToken('key-a');
+      expect(resultA.valid).toBe(true);
+      const resultB = await provider.validateToken('key-b');
+      expect(resultB.valid).toBe(true);
+      const resultC = await provider.validateToken('key-c');
+      expect(resultC.valid).toBe(false);
+    });
   });
 });
