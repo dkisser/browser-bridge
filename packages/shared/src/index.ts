@@ -9,3 +9,4 @@ export type {
 } from './types';
 export type { AuthProvider, AuthToken, AuthResult } from './auth';
 export { NoopAuthProvider, ApiKeyAuthProvider } from './auth';
+export { isLocalhost } from './utils';

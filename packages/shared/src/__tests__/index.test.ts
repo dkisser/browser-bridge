@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { WEBSOCKET_PORT, LOCAL_WS_PORT, NoopAuthProvider, ApiKeyAuthProvider } from '../index';
+import { isLocalhost } from '../utils';
 
 describe('shared', () => {
   describe('constants', () => {
@@ -92,6 +93,32 @@ describe('shared', () => {
       expect(resultB.valid).toBe(true);
       const resultC = await provider.validateToken('key-c');
       expect(resultC.valid).toBe(false);
+    });
+  });
+
+  describe('isLocalhost', () => {
+    it('recognizes localhost', () => {
+      expect(isLocalhost('localhost')).toBe(true);
+    });
+
+    it('recognizes 127.0.0.1', () => {
+      expect(isLocalhost('127.0.0.1')).toBe(true);
+    });
+
+    it('recognizes [::1]', () => {
+      expect(isLocalhost('[::1]')).toBe(true);
+    });
+
+    it('recognizes ::1 without brackets', () => {
+      expect(isLocalhost('::1')).toBe(true);
+    });
+
+    it('rejects remote host', () => {
+      expect(isLocalhost('example.com')).toBe(false);
+    });
+
+    it('rejects IP that is not loopback', () => {
+      expect(isLocalhost('192.168.1.1')).toBe(false);
     });
   });
 });
