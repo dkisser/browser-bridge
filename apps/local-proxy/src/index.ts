@@ -5,10 +5,28 @@ import { CloudClient } from './cloud-client';
 import { LocalServer } from './local-server';
 import { Router } from './router';
 
+function isLocalhostUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '::1';
+  } catch {
+    return false;
+  }
+}
+
 async function main() {
   const serverUrl = process.env.BRIDGE_SERVER_URL || DEFAULT_SERVER_URL;
   const localPort = Number(process.env.BRIDGE_LOCAL_PORT) || DEFAULT_LOCAL_PORT;
-  const apiToken = process.env.BRIDGE_API_TOKEN || 'dev-token';
+  const apiToken = process.env.BRIDGE_API_TOKEN;
+
+  if (!apiToken && !isLocalhostUrl(serverUrl)) {
+    console.error('BRIDGE_API_TOKEN is required when connecting to a remote server');
+    process.exit(1);
+  }
+
+  if (!apiToken && isLocalhostUrl(serverUrl)) {
+    console.warn('Warning: BRIDGE_API_TOKEN not set — running without authentication (local development only)');
+  }
 
   const state = new StateManager();
   console.log(`Browser ID: ${state.browserId}`);
@@ -28,7 +46,7 @@ async function main() {
 
   const cloud = new CloudClient({
     serverUrl,
-    apiToken,
+    apiToken: apiToken || '',
     browserId: state.browserId,
     onCommand: (envelope) => router.handleCloudCommand(envelope),
   });

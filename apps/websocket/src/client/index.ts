@@ -4,6 +4,7 @@ import type { Envelope, CommandPayload, ResponsePayload } from '@my/shared/types
 
 export interface ClientOptions {
   url?: string;
+  headers?: Record<string, string>;
   onMessage?: (envelope: Envelope) => void;
   onError?: (error: Event) => void;
   onClose?: () => void;
@@ -18,12 +19,15 @@ interface PendingRequest {
 export function createClient(options: ClientOptions = {}) {
   const {
     url = `ws://localhost:${WEBSOCKET_PORT}`,
+    headers,
     onMessage,
     onError,
     onClose,
   } = options;
 
-  const socket = new WebSocket(url);
+  const socket = headers
+    ? new WebSocket(url, { headers } as any)
+    : new WebSocket(url);
   const pending = new Map<string, PendingRequest>();
 
   socket.addEventListener('open', () => {

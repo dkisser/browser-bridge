@@ -26,6 +26,7 @@ export class CloudClient {
     return new Promise((resolve, reject) => {
       this.client = createClient({
         url: this.serverUrl,
+        headers: { Authorization: `Bearer ${this.apiToken}` },
         onMessage: (envelope) => this.handleMessage(envelope),
         onError: (error) => {
           console.error('[cloud] connection error:', error);
@@ -65,7 +66,6 @@ export class CloudClient {
     this.client.send('event', {
       event: 'register',
       browserId: this.browserId,
-      token: this.apiToken,
     });
   }
 
