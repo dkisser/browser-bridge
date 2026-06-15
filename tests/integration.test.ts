@@ -19,7 +19,9 @@ describe('Integration: CLI → Server → Local Proxy', () => {
   });
 
   it('rejects command to unregistered browser', async () => {
-    const cli = new WebSocket(`ws://localhost:${TEST_PORT}`);
+    const cli = new WebSocket(`ws://localhost:${TEST_PORT}`, {
+      headers: { Authorization: `Bearer ${TEST_API_KEY}` },
+    });
 
     await new Promise<void>((resolve) => {
       cli.addEventListener('open', () => resolve());
@@ -49,8 +51,10 @@ describe('Integration: CLI → Server → Local Proxy', () => {
   });
 
   it('registers a Local Proxy and routes command to it', async () => {
-    // 1. Connect a mock Local Proxy
-    const proxy = new WebSocket(`ws://localhost:${TEST_PORT}`);
+    // 1. Connect a mock Local Proxy WITH auth header
+    const proxy = new WebSocket(`ws://localhost:${TEST_PORT}`, {
+      headers: { Authorization: `Bearer ${TEST_API_KEY}` },
+    });
     await new Promise<void>((resolve) => {
       proxy.addEventListener('open', () => resolve());
     });
@@ -63,7 +67,7 @@ describe('Integration: CLI → Server → Local Proxy', () => {
       });
     });
 
-    // 2. Register the proxy
+    // 2. Register the proxy (no token in message body)
     const registerResponse = await new Promise<string>((resolve) => {
       const handler = (e: MessageEvent) => {
         const data = JSON.parse(e.data as string);
@@ -77,7 +81,7 @@ describe('Integration: CLI → Server → Local Proxy', () => {
         id: 'reg-1',
         type: 'event',
         browserId: 'b-integration',
-        payload: { event: 'register', browserId: 'b-integration', token: TEST_API_KEY },
+        payload: { event: 'register', browserId: 'b-integration' },
         timestamp: Date.now(),
       }));
     });
@@ -107,7 +111,9 @@ describe('Integration: CLI → Server → Local Proxy', () => {
     expect(JSON.parse(onlineResponse).payload.status).toBe('ok');
 
     // 4. Connect CLI and send command
-    const cli = new WebSocket(`ws://localhost:${TEST_PORT}`);
+    const cli = new WebSocket(`ws://localhost:${TEST_PORT}`, {
+      headers: { Authorization: `Bearer ${TEST_API_KEY}` },
+    });
     await new Promise<void>((resolve) => {
       cli.addEventListener('open', () => resolve());
     });
@@ -177,42 +183,27 @@ describe('Integration: CLI → Server → Local Proxy', () => {
     proxy.close();
   });
 
-  it('rejects registration with invalid API key', async () => {
+  it('rejects connection without valid API key', async () => {
     const ws = new WebSocket(`ws://localhost:${TEST_PORT}`);
-    await new Promise<void>((resolve) => {
-      ws.addEventListener('open', () => resolve());
+
+    const closeEvent = await new Promise<CloseEvent>((resolve) => {
+      ws.addEventListener('close', (e) => resolve(e));
     });
 
-    // Consume welcome
-    await new Promise<void>((resolve) => {
-      ws.addEventListener('message', function handler() {
-        ws.removeEventListener('message', handler);
-        resolve();
-      });
+    expect(closeEvent.code).toBe(4001);
+    expect(closeEvent.reason).toBe('unauthorized');
+  });
+
+  it('rejects connection with wrong API key', async () => {
+    const ws = new WebSocket(`ws://localhost:${TEST_PORT}`, {
+      headers: { Authorization: 'Bearer wrong-key' },
     });
 
-    const regResponse = await new Promise<string>((resolve) => {
-      const handler = (e: MessageEvent) => {
-        const data = JSON.parse(e.data as string);
-        if (data.id === 'reg-bad') {
-          ws.removeEventListener('message', handler);
-          resolve(e.data as string);
-        }
-      };
-      ws.addEventListener('message', handler);
-      ws.send(JSON.stringify({
-        id: 'reg-bad',
-        type: 'event',
-        browserId: 'b-bad',
-        payload: { event: 'register', browserId: 'b-bad', token: 'wrong-key' },
-        timestamp: Date.now(),
-      }));
+    const closeEvent = await new Promise<CloseEvent>((resolve) => {
+      ws.addEventListener('close', (e) => resolve(e));
     });
 
-    const parsed = JSON.parse(regResponse);
-    expect(parsed.payload.status).toBe('error');
-    expect(parsed.payload.error).toBe('invalid_token');
-
-    ws.close();
+    expect(closeEvent.code).toBe(4001);
+    expect(closeEvent.reason).toBe('unauthorized');
   });
 });
