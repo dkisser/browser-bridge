@@ -50,6 +50,16 @@ interface CommandMessage {
   timestamp: number;
 }
 
+async function queryOffscreenStatus(): Promise<boolean> {
+  try {
+    await ensureOffscreenDocument();
+    const response = await chrome.runtime.sendMessage({ type: 'ws_ping' });
+    return response?.connected ?? false;
+  } catch {
+    return false;
+  }
+}
+
 async function handleCommand(msg: CommandMessage): Promise<unknown> {
   const { payload } = msg;
   const { command, tabId, params } = payload;
@@ -210,10 +220,12 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
     return false;
   }
 
-  // Popup: ping connection status
+  // Popup: ping connection status — query offscreen for real status
   if (request.type === 'ping') {
-    sendResponse({ type: 'pong', connected: wsConnected });
-    return false;
+    queryOffscreenStatus()
+      .then((connected) => sendResponse({ type: 'pong', connected }))
+      .catch(() => sendResponse({ type: 'pong', connected: false }));
+    return true;
   }
 
   // Popup: trigger connection
