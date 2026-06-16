@@ -1,3 +1,11 @@
+<p align="center">
+  <img src="./docs/assets/logo.png" alt="Browser Bridge Logo" width="200" />
+</p>
+
+<p align="center">
+  <a href="./README.en.md">English</a> | 中文
+</p>
+
 # Browser Bridge
 
 **从云端安全地握住你的浏览器。**
@@ -111,12 +119,15 @@ bun install
 # 2. 启动 WebSocket 服务
 bun run dev:websocket
 
-# 3. 构建 Extension（另一个终端）
+# 3. 启动本地代理（另一个终端）
+bun run dev:local-proxy
+
+# 4. 构建 Extension（再开一个终端）
 bun run dev:extension
 
-# 4. 在 Chrome 中加载 apps/extension/dist/ 目录
+# 5. 在 Chrome 中加载 apps/extension/dist/ 目录
 
-# 5. 运行 CLI
+# 6. 运行 CLI
 bun run cli
 ```
 
