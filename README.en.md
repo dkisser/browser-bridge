@@ -10,20 +10,21 @@
 
 **Hold your browser securely from the cloud.**
 
-Browser Bridge lets developers remote-control their own browser from the command line: search, fill forms, scrape pages, manage tabs — as if you were sitting in front of the computer, except the commands come from the cloud.
+Browser Bridge lets developers and agents remote-control a browser through the same command-line interface: search, fill forms, scrape pages, and manage tabs. For humans it is a CLI tool; for agents, it is a standard, orchestratable browser control entrypoint.
 
 ---
 
 ## In One Sentence
 
-A two-part bridge system: a cloud-side CLI sends commands to the user's local Chrome Extension over WebSocket, and the Extension performs the actions inside the browser.
+A two-part bridge system: a cloud-side CLI serves as the unified control interface, accepting input from users and any agent alike. Commands are sent over WebSocket to the user's local Chrome Extension, which performs the actions inside the browser.
 
 ---
 
 ## Why You Need It
 
+- **Agents can control the browser too**: any LLM, script, or automation tool only needs to call the CLI to operate a real browser like a human, without learning the Chrome Extension API.
 - **Automate repetitive work**: batch form filling, scheduled scraping, cross-site data collection.
-- **Remote work**: let cloud scripts or shared team CLI tools operate your locally-logged-in browser.
+- **Remote work**: let cloud scripts, shared team CLI tools, or agents operate your locally-logged-in browser.
 - **Preserve browser state**: no headless browser or extra cookie management — directly reuse the real user session.
 
 ---
@@ -33,13 +34,12 @@ A two-part bridge system: a cloud-side CLI sends commands to the user's local Ch
 ```
 ┌─────────────────────────────────────┐
 │               CLOUD                 │
-│  ┌─────────┐      ┌─────────────┐   │
-│  │   CLI   │──────▶│ WebSocket   │   │
-│  │ (where  │      │   Server    │   │
-│  │ you type│      │             │   │
-│  │commands)│      │             │   │
-│  └─────────┘      └──────┬──────┘   │
-└──────────────────────────┼──────────┘
+│  ┌─────────────┐   ┌─────────────┐  │
+│  │ CLI / Agent │──▶│ WebSocket   │  │
+│  │ (user or    │   │   Server    │  │
+│  │  any agent) │   │             │  │
+│  └─────────────┘   └──────┬──────┘  │
+└───────────────────────────┼─────────┘
                            │ WebSocket
                            │ Secure long-lived connection
 ┌──────────────────────────┼──────────┐
@@ -60,7 +60,7 @@ A two-part bridge system: a cloud-side CLI sends commands to the user's local Ch
 
 | Part | Component | Responsibility |
 |------|-----------|----------------|
-| **Cloud** | CLI | User enters commands and sends them to the server. |
+| **Cloud** | CLI / Agent | Unified browser control interface; accepts commands from users and any agent. |
 |  | WebSocket Server | Receives CLI commands and forwards them to the matching local client. |
 | **Local** | WebSocket Local | Local proxy that maintains the long-lived connection with the server. |
 |  | Chrome Extension | Talks to the local proxy via Native Messaging and performs browser actions. |
@@ -71,7 +71,7 @@ A two-part bridge system: a cloud-side CLI sends commands to the user's local Ch
 ## Data Flow: How a Command Reaches the Browser
 
 ```
-CLI command entered
+CLI / Agent enters command
     │
     ▼
 WebSocket Server authenticates and routes
@@ -91,22 +91,31 @@ Browser executes: open tab / fill form / scrape / click ...
 
 ---
 
+## Who Uses It
+
+Browser Bridge serves two kinds of callers:
+
+- **End users**: type commands directly in the terminal to remote-control their own browser.
+- **Agents / automation systems**: use the CLI as a standard entrypoint, letting LLMs, scripts, scheduled jobs, or other agents invoke it for complex browser-based workflows.
+
+---
+
 ## User Journey: Three Steps to Connect
 
 ```
-Install Extension  ──▶  Authenticate  ──▶  Control browser from the cloud
+Install Extension  ──▶  Authenticate  ──▶  Human or agent controls the browser from the cloud
 ```
 
 1. **Install**: load the Browser Bridge Extension from the Chrome Web Store or locally.
 2. **Authenticate**: complete identity verification in the Extension (QR code, account/password, or future providers). The auth module is abstracted as a pluggable interface that supports multiple providers.
-3. **Control**: once authenticated, you can send commands from the cloud to your browser via the CLI.
+3. **Control**: once authenticated, a user or agent can send commands to the browser via the CLI from the cloud. For an agent, the CLI is the standard API for controlling the browser.
 
 ---
 
 ## Security Boundaries
 
 - Only authenticated local Extensions can register with the WebSocket Server.
-- Every CLI command is routed through the server — the local network is never exposed directly.
+- Every command from the CLI or an agent is routed through the server — the local network is never exposed directly.
 - The local proxy talks to the Extension via Chrome Native Messaging and does not listen on external ports.
 
 ---
