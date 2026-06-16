@@ -1023,7 +1023,8 @@ Replace the stub functions in `install/install.sh`:
 resolve_version() {
   if [[ -n "$BB_VERSION" ]]; then
     [[ "$BB_VERSION" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "BB-E022: invalid version '$BB_VERSION'"
-    echo "$BB_VERSION" | sed 's/^v/v/'
+    # Normalize to always include the leading 'v' (GitHub tags always have it).
+    echo "${BB_VERSION#v}" | awk '{print "v"$0}'
     return
   fi
   local url="https://api.github.com/repos/${ORG}/${REPO}/releases/latest"
