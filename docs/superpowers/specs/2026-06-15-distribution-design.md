@@ -43,21 +43,21 @@ All state lives under `~/.browser-bridge/` (no sudo required).
 
 ## Install Flow
 
-Single command:
+Single command (where `<org>` is the GitHub organization hosting the repo; replaced with the real value at implementation time):
 
 ```
 curl -fsSL https://raw.githubusercontent.com/<org>/browser-bridge/main/install/install.sh | bash
 ```
 
-`install.sh` (POSIX bash, `set -euo pipefail`):
+`install.sh` (POSIX bash, `set -euo pipefail`). The `bridge` script is embedded inside `install.sh` as a heredoc so both files are templated together from a single source (kept in `install/bridge.sh.tmpl` during development):
 
-1. **Prerequisite checks** — bash ≥ 4, `curl`, `unzip`, writable `$HOME/.local`. If `bun` is missing, print installation instructions and exit with `BB-E001`. Bun is required because `bridge up` shells out to it.
-2. **Resolve version** — default to latest GitHub Release (`/repos/<org>/browser-bridge/releases/latest`). Accept `BB_VERSION` env var to pin a specific version. Validate the version string matches `^v?[0-9]+\.[0-9]+\.[0-9]+$`.
-3. **Download extension** — `curl -fsSL` both `browser-bridge-extension-${VERSION}.zip` and its `.sha256` sidecar from the release's `browser.versions` JSON `browser_download_url`. Compute SHA-256 locally and refuse to continue on mismatch (exit `BB-E020`).
+1. **Prerequisite checks** — bash ≥ 4, `curl`, `unzip`, writable `$HOME/.local`. If `bun` is missing, print installation instructions and exit `BB-E001`. Bun is required because `bridge up` shells out to it.
+2. **Resolve version** — default to latest GitHub Release (parsed from `/repos/<org>/browser-bridge/releases/latest`). Accept `BB_VERSION` env var to pin a specific version. Validate the version string matches `^v?[0-9]+\.[0-9]+\.[0-9]+$`.
+3. **Download extension** — `curl -fsSL` the `browser-bridge-extension-${VERSION}.zip` asset and its `.sha256` sidecar from the GitHub Release for the resolved tag. Compute SHA-256 locally and refuse to continue on mismatch (exit `BB-E020`). On any HTTP error, exit `BB-E021`.
 4. **Extract extension** — unzip into `~/.browser-bridge/extension/`. If already present, rename old to `extension.bak.$(date +%s)` before overwriting.
 5. **Clone or update source** — shallow clone (`git clone --depth 1 --branch <tag>`) to `~/.browser-bridge/repo/`. On reinstall, `git fetch --depth 1 origin <tag> && git reset --hard <tag>` for idempotency.
 6. **Install dependencies** — `cd ~/.browser-bridge/repo && bun install --frozen-lockfile`.
-7. **Generate `bridge`** — write `~/.browser-bridge/bin/bridge` from an inlined template in `install.sh` (kept in sync with `install/bridge.sh.tmpl`). Symlink into `~/.local/bin/bridge` (creating the directory if missing).
+7. **Write artifacts** — emit `~/.browser-bridge/bin/bridge` from the embedded heredoc, symlink it into `~/.local/bin/bridge` (creating the directory if missing), and write the resolved version to `~/.browser-bridge/version`.
 8. **Print next steps** — list PATH export if needed, the Chrome "load unpacked" instructions pointing at `~/.browser-bridge/extension/`, and a one-liner `bridge up`.
 
 `install.sh` is idempotent. Re-running it upgrades in place. On any failure, `trap` removes half-extracted artifacts.
