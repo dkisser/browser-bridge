@@ -5,8 +5,8 @@ import { ApiKeyAuthProvider } from '@my/shared/auth';
 import type { Server } from 'bun';
 
 describe('WS client', () => {
-  let server: Server;
-  let silentServer: Server;
+  let server: ReturnType<typeof startServer>;
+  let silentServer: Server<undefined>;
 
   beforeAll(() => {
     server = startServer(3099);
@@ -114,7 +114,7 @@ describe('WS client', () => {
 describe('WS client with API key auth', () => {
   const AUTH_PORT = 3102;
   const VALID_KEY = 'client-test-key';
-  let authServer: Server;
+  let authServer: ReturnType<typeof startServer>;
 
   beforeAll(() => {
     authServer = startServer(AUTH_PORT, new ApiKeyAuthProvider({ [VALID_KEY]: 'user-1' }));

@@ -1,10 +1,12 @@
-import type { BrowserStatus, BrowserConnection, AuthProvider } from '@my/shared';
+import type { BrowserStatus, BrowserConnection } from '@my/shared';
+import type { AuthProvider } from '@my/shared/auth';
 import type { ServerWebSocket } from 'bun';
+import type { WsData } from './types';
 
 interface RegistryEntry {
   browserId: string;
   userId: string;
-  ws: ServerWebSocket;
+  ws: ServerWebSocket<WsData>;
   status: BrowserStatus;
   lastSeen: number;
 }
@@ -18,10 +20,10 @@ export class ConnectionRegistry {
   }
 
   async register(
-    ws: ServerWebSocket,
+    ws: ServerWebSocket<WsData>,
     browserId: string,
   ): Promise<{ success: boolean; error?: string }> {
-    const userId = (ws.data as any).userId || 'unknown';
+    const userId = ws.data.userId ?? 'unknown';
 
     this.browsers.set(browserId, {
       browserId,
@@ -47,11 +49,11 @@ export class ConnectionRegistry {
     return this.browsers.get(browserId)?.status;
   }
 
-  getWebSocket(browserId: string): ServerWebSocket | undefined {
+  getWebSocket(browserId: string): ServerWebSocket<WsData> | undefined {
     return this.browsers.get(browserId)?.ws;
   }
 
-  removeByWebSocket(ws: ServerWebSocket): string | undefined {
+  removeByWebSocket(ws: ServerWebSocket<WsData>): string | undefined {
     for (const [browserId, entry] of this.browsers) {
       if (entry.ws === ws) {
         this.browsers.delete(browserId);

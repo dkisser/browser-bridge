@@ -25,7 +25,7 @@ describe('protocol', () => {
 
   describe('decode', () => {
     it('parses envelope JSON', () => {
-      const envelope = { id: 'abc', type: 'command', browserId: 'b-1', payload: { x: 1 }, timestamp: 1000 };
+      const envelope = { id: 'abc', type: 'command' as const, browserId: 'b-1', payload: { x: 1 }, timestamp: 1000 };
       const result = decode(JSON.stringify(envelope));
       expect(result).toEqual(envelope);
     });

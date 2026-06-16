@@ -3,10 +3,9 @@ import { NoopAuthProvider } from '@my/shared/auth';
 import { ApiKeyAuthProvider } from '@my/shared/auth';
 import { startServer } from '../index';
 import { ConnectionRegistry } from '../registry';
-import type { Server } from 'bun';
 
 describe('WS server routing', () => {
-  let server: Server;
+  let server: ReturnType<typeof startServer>;
 
   beforeAll(() => {
     server = startServer(3098);
@@ -65,7 +64,7 @@ describe('WS server routing', () => {
 describe('WS server handshake auth', () => {
   const AUTH_PORT = 3097;
   const VALID_KEY = 'server-test-key';
-  let server: Server;
+  let server: ReturnType<typeof startServer>;
 
   beforeAll(() => {
     server = startServer(AUTH_PORT, new ApiKeyAuthProvider({ [VALID_KEY]: 'user-1' }));
@@ -89,7 +88,7 @@ describe('WS server handshake auth', () => {
   it('closes connection with wrong API key', async () => {
     const ws = new WebSocket(`ws://localhost:${AUTH_PORT}`, {
       headers: { Authorization: 'Bearer wrong-key' },
-    });
+    } as any);
 
     const closeEvent = await new Promise<CloseEvent>((resolve) => {
       ws.addEventListener('close', (e) => resolve(e));
@@ -102,7 +101,7 @@ describe('WS server handshake auth', () => {
   it('accepts connection with valid API key', async () => {
     const ws = new WebSocket(`ws://localhost:${AUTH_PORT}`, {
       headers: { Authorization: `Bearer ${VALID_KEY}` },
-    });
+    } as any);
 
     const message = await new Promise<string>((resolve) => {
       ws.addEventListener('message', (e) => {

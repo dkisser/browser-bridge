@@ -3,15 +3,10 @@ import { isLocalhost } from '@my/shared/utils';
 import { NoopAuthProvider } from '@my/shared/auth';
 import { encode, decode } from '../protocol';
 import { ConnectionRegistry } from './registry';
-import type { AuthProvider, Envelope } from '@my/shared/types';
+import type { AuthProvider } from '@my/shared/auth';
+import type { Envelope } from '@my/shared/types';
 import type { ServerWebSocket } from 'bun';
-
-interface WsData {
-  connectionId: string;
-  browserId?: string;
-  userId?: string;
-  authenticated?: boolean;
-}
+import type { WsData } from './types';
 
 export function startServer(
   port = WEBSOCKET_PORT,
@@ -86,14 +81,18 @@ export function startServer(
 
             if (event.event === 'online') {
               const browserId = (event.browserId as string) || ws.data.browserId;
-              registry.setStatus(browserId, 'online');
-              ws.send(encode('response', { status: 'ok' }, { id: envelope.id, browserId }));
+              if (browserId) {
+                registry.setStatus(browserId, 'online');
+                ws.send(encode('response', { status: 'ok' }, { id: envelope.id, browserId }));
+              }
             }
 
             if (event.event === 'offline') {
               const browserId = (event.browserId as string) || ws.data.browserId;
-              registry.setStatus(browserId, 'offline');
-              ws.send(encode('response', { status: 'ok' }, { id: envelope.id, browserId }));
+              if (browserId) {
+                registry.setStatus(browserId, 'offline');
+                ws.send(encode('response', { status: 'ok' }, { id: envelope.id, browserId }));
+              }
             }
             break;
           }

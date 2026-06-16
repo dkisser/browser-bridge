@@ -1,14 +1,13 @@
 import { describe, expect, it, beforeAll, afterAll } from 'bun:test';
 import { startServer } from '../apps/websocket/src/server';
 import { ApiKeyAuthProvider } from '../packages/shared/src/auth';
-import type { Server } from 'bun';
 
 const TEST_PORT = 3080;
 const TEST_API_KEY = 'test-key-123';
 const TEST_USER_ID = 'test-user';
 
 describe('Integration: CLI → Server → Local Proxy', () => {
-  let server: Server;
+  let server: ReturnType<typeof startServer>;
 
   beforeAll(() => {
     server = startServer(TEST_PORT, new ApiKeyAuthProvider({ [TEST_API_KEY]: TEST_USER_ID }));
@@ -21,7 +20,7 @@ describe('Integration: CLI → Server → Local Proxy', () => {
   it('rejects command to unregistered browser', async () => {
     const cli = new WebSocket(`ws://localhost:${TEST_PORT}`, {
       headers: { Authorization: `Bearer ${TEST_API_KEY}` },
-    });
+    } as any);
 
     await new Promise<void>((resolve) => {
       cli.addEventListener('open', () => resolve());
@@ -54,7 +53,7 @@ describe('Integration: CLI → Server → Local Proxy', () => {
     // 1. Connect a mock Local Proxy WITH auth header
     const proxy = new WebSocket(`ws://localhost:${TEST_PORT}`, {
       headers: { Authorization: `Bearer ${TEST_API_KEY}` },
-    });
+    } as any);
     await new Promise<void>((resolve) => {
       proxy.addEventListener('open', () => resolve());
     });
@@ -113,7 +112,7 @@ describe('Integration: CLI → Server → Local Proxy', () => {
     // 4. Connect CLI and send command
     const cli = new WebSocket(`ws://localhost:${TEST_PORT}`, {
       headers: { Authorization: `Bearer ${TEST_API_KEY}` },
-    });
+    } as any);
     await new Promise<void>((resolve) => {
       cli.addEventListener('open', () => resolve());
     });
@@ -197,7 +196,7 @@ describe('Integration: CLI → Server → Local Proxy', () => {
   it('rejects connection with wrong API key', async () => {
     const ws = new WebSocket(`ws://localhost:${TEST_PORT}`, {
       headers: { Authorization: 'Bearer wrong-key' },
-    });
+    } as any);
 
     const closeEvent = await new Promise<CloseEvent>((resolve) => {
       ws.addEventListener('close', (e) => resolve(e));
