@@ -22,8 +22,25 @@ check_prereqs() {
 }
 # ---- END PREREQ ----
 
+clone_source() {
+  local version="$1"
+  local src="${BB_GIT_REMOTE:-https://github.com/${ORG}/${REPO}.git}"
+  if [[ -d "$BB_HOME/repo/.git" ]]; then
+    info "Updating existing repo at $BB_HOME/repo"
+    git -C "$BB_HOME/repo" fetch --depth 1 origin "$version" \
+      || die "BB-E023: failed to fetch $version from $src"
+    git -C "$BB_HOME/repo" reset --hard FETCH_HEAD \
+      || die "BB-E024: failed to reset to $version"
+  else
+    info "Cloning $src (tag $version) into $BB_HOME/repo"
+    git clone --depth 1 --branch "$version" "$src" "$BB_HOME/repo" \
+      || die "BB-E024: clone failed"
+  fi
+  info "Installing dependencies"
+  ( cd "$BB_HOME/repo" && bun install --frozen-lockfile ) \
+    || die "BB-E025: bun install failed"
+}
 # Stub functions; replaced by later tasks.
-clone_source() { :; }
 write_artifacts() { :; }
 print_next_steps() { :; }
 

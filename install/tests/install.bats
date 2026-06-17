@@ -127,3 +127,63 @@ SCRIPT
   [ "$status" -eq 0 ]
   [[ "$output" == *"bb.zip"* ]]
 }
+
+# ---------------------------------------------------------------------------
+# Task 10: clone_source
+# ---------------------------------------------------------------------------
+
+setup_clone_fixture() {
+  # Make a bare repo we can clone from.
+  mkdir -p "$BB_TEST_TMP/origin.git"
+  git -C "$BB_TEST_TMP/origin.git" init --bare --quiet
+  # Seed a commit and tag v9.9.9 in a working tree, push it.
+  local seed="$BB_TEST_TMP/seed"
+  mkdir -p "$seed"
+  git -C "$seed" init --quiet -b main
+  git -C "$seed" -c user.email=t@t -c user.name=t commit --allow-empty -m initial --quiet
+  git -C "$seed" tag v9.9.9
+  git -C "$seed" remote add origin "$BB_TEST_TMP/origin.git"
+  git -C "$seed" push origin main v9.9.9 --quiet
+}
+
+@test "clone_source fresh: shallow-clones repo at tag" {
+  setup_clone_fixture
+  make_fake_bun
+  bash_path=$(find_modern_bash)
+  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_clone.sh"
+  cat >> "$BB_TEST_TMP/test_clone.sh" <<'SCRIPT'
+clone_source v9.9.9
+test -f "$BB_HOME/repo/.git/HEAD"
+SCRIPT
+  BB_HOME="$BB_TEST_TMP/bb-home" \
+  BB_GIT_REMOTE="$BB_TEST_TMP/origin.git" \
+  run "$bash_path" "$BB_TEST_TMP/test_clone.sh"
+  [ "$status" -eq 0 ]
+  [[ -d "$BB_TEST_TMP/bb-home/repo" ]]
+}
+
+@test "clone_source update: fetches and resets existing repo" {
+  setup_clone_fixture
+  make_fake_bun
+  bash_path=$(find_modern_bash)
+  BB_HOME="$BB_TEST_TMP/bb-home"
+  mkdir -p "$BB_HOME"
+  # First clone at v9.9.9 to simulate an existing install.
+  git clone --depth 1 --branch v9.9.9 "$BB_TEST_TMP/origin.git" "$BB_HOME/repo" >/dev/null 2>&1
+  # Tag a new commit and push it.
+  local seed="$BB_TEST_TMP/seed2"
+  git clone "$BB_TEST_TMP/origin.git" "$seed" >/dev/null 2>&1
+  git -C "$seed" -c user.email=t@t -c user.name=t commit --allow-empty -m "v9.9.10" --quiet
+  git -C "$seed" tag v9.9.10
+  git -C "$seed" push origin v9.9.10 --quiet
+  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_clone.sh"
+  cat >> "$BB_TEST_TMP/test_clone.sh" <<'SCRIPT'
+clone_source v9.9.10
+git -C "$BB_HOME/repo" log --oneline -1
+SCRIPT
+  BB_HOME="$BB_HOME" \
+  BB_GIT_REMOTE="$BB_TEST_TMP/origin.git" \
+  run "$bash_path" "$BB_TEST_TMP/test_clone.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"v9.9.10"* ]]
+}
