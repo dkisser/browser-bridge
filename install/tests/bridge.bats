@@ -60,3 +60,35 @@ EOF
   [ "$status" -ne 0 ]
   [[ "$output" == *"BB-E011"* ]]
 }
+
+@test "bridge down stops running service via SIGTERM and removes PID file" {
+  mkdir -p "$BB_HOME/run"
+  # Spawn a sleeper that traps SIGTERM.
+  sleeper() { trap "exit 0" TERM; sleep 60; }
+  sleeper &
+  SLEEP_PID=$!
+  echo "$SLEEP_PID" > "$BB_HOME/run/ws-server.pid"
+  run bash "$BRIDGE_TMPL" down
+  [ "$status" -eq 0 ]
+  [[ ! -f "$BB_HOME/run/ws-server.pid" ]]
+  ! kill -0 "$SLEEP_PID" 2>/dev/null
+}
+
+@test "bridge down with no PID file is a no-op (exit 0)" {
+  rm -f "$BB_HOME/run/ws-server.pid" "$BB_HOME/run/local-proxy.pid"
+  run bash "$BRIDGE_TMPL" down
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"already stopped"* ]]
+}
+
+@test "bridge down SIGKILLs after 3s if service ignores SIGTERM" {
+  mkdir -p "$BB_HOME/run"
+  # Spawn a sleeper that ignores SIGTERM.
+  ( trap "" TERM; sleep 60 ) &
+  ZOMBIE_PID=$!
+  echo "$ZOMBIE_PID" > "$BB_HOME/run/local-proxy.pid"
+  run bash "$BRIDGE_TMPL" down
+  [ "$status" -eq 0 ]
+  [[ ! -f "$BB_HOME/run/local-proxy.pid" ]]
+  ! kill -0 "$ZOMBIE_PID" 2>/dev/null
+}
