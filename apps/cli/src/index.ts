@@ -332,4 +332,13 @@ program
     }
   });
 
+// Reserved for future distributed-mode support. Not yet implemented.
+program
+  .command('bridge-host')
+  .description('Configure CLI to point at a remote Browser Bridge server (not yet implemented)')
+  .action(() => {
+    console.error('bridge-host: not yet implemented. See docs/superpowers/specs/2026-06-15-distribution-design.md');
+    process.exit(1);
+  });
+
 program.parse();
