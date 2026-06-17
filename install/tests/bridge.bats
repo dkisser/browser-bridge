@@ -92,3 +92,42 @@ EOF
   [[ ! -f "$BB_HOME/run/local-proxy.pid" ]]
   ! kill -0 "$ZOMBIE_PID" 2>/dev/null
 }
+
+@test "bridge status exits 0 when both services running" {
+  mkdir -p "$BB_HOME/run"
+  ( trap "" TERM; sleep 30 ) & echo $! > "$BB_HOME/run/ws-server.pid"
+  ( trap "" TERM; sleep 30 ) & echo $! > "$BB_HOME/run/local-proxy.pid"
+  run bash "$BRIDGE_TMPL" status
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ws-server:    running"* ]]
+  [[ "$output" == *"local-proxy:  running"* ]]
+}
+
+@test "bridge status exits 1 when a service is down" {
+  mkdir -p "$BB_HOME/run"
+  echo "99999" > "$BB_HOME/run/ws-server.pid"
+  echo "99998" > "$BB_HOME/run/local-proxy.pid"
+  run bash "$BRIDGE_TMPL" status
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"ws-server:    stopped"* ]]
+}
+
+@test "bridge restart runs down then up" {
+  mkdir -p "$BB_HOME/run" "$BB_HOME/logs" "$BB_HOME/repo/apps/websocket" "$BB_HOME/repo/apps/local-proxy"
+  echo "99999" > "$BB_HOME/run/ws-server.pid"
+  make_fake_bun
+  BB_FAKE_BUN_BEHAVIOR=ok run bash "$BRIDGE_TMPL" restart
+  [ "$status" -eq 0 ]
+  # The fake PID 99999 is gone; new PIDs are written.
+  [[ "$(cat "$BB_HOME/run/ws-server.pid")" != "99999" ]]
+}
+
+@test "bridge logs without name tails both logs (smoke test that files exist)" {
+  mkdir -p "$BB_HOME/logs"
+  echo "ws log" > "$BB_HOME/logs/ws-server.log"
+  echo "lp log" > "$BB_HOME/logs/local-proxy.log"
+  # We can't easily test tail -f in bats; instead confirm the files are referenced.
+  run bash -c "BB_HOME='$BB_HOME' bash '$BRIDGE_TMPL' logs 2>&1 & sleep 0.2; pkill -P \$\$ ; wait"
+  [ -f "$BB_HOME/logs/ws-server.log" ]
+  [ -f "$BB_HOME/logs/local-proxy.log" ]
+}

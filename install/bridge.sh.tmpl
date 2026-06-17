@@ -105,14 +105,49 @@ cmd_down() {
   stop_service local-proxy
 }
 
+service_state() {
+  local name="$1"
+  local pidfile="$RUN_DIR/${name}.pid"
+  if [[ -f "$pidfile" ]] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
+    printf '%-13s running  (pid %s)\n' "$name:" "$(cat "$pidfile")"
+    return 0
+  fi
+  printf '%-13s stopped\n' "$name:"
+  return 1
+}
+
+cmd_status() {
+  local rc=0
+  service_state ws-server || rc=1
+  service_state local-proxy || rc=1
+  return $rc
+}
+
+cmd_logs() {
+  local name="${1:-}"
+  case "$name" in
+    ws-server|local-proxy) exec tail -f "$LOG_DIR/${name}.log" ;;
+    "")                    exec tail -f "$LOG_DIR/ws-server.log" "$LOG_DIR/local-proxy.log" ;;
+    *) die "BB-E102: unknown log target '$name' (use ws-server | local-proxy)" ;;
+  esac
+}
+
+cmd_restart() {
+  cmd_down
+  cmd_up
+}
+
 main() {
   if [[ $# -eq 0 ]]; then print_help; exit 0; fi
   case "$1" in
     --version|-V|version) cmd_version; exit 0 ;;
     -h|--help|help)       print_help; exit 0 ;;
-    up)    cmd_up ;;
-    down)  cmd_down ;;
-    restart|status|logs|update|doctor|uninstall)
+    up)      cmd_up ;;
+    down)    cmd_down ;;
+    status)  cmd_status ;;
+    logs)    shift; cmd_logs "$@" ;;
+    restart) cmd_restart ;;
+    update|doctor|uninstall)
       die "BB-E100: '$1' not implemented yet" ;;
     *) die "BB-E101: unknown command '$1'. Run 'bridge' for help." ;;
   esac
