@@ -5,6 +5,12 @@ set -euo pipefail
 
 BRIDGE_VERSION="{{BRIDGE_VERSION}}"
 
+WS_PORT="${BRIDGE_WS_PORT:-8787}"
+LOCAL_PROXY_PORT="${BRIDGE_LOCAL_PROXY_PORT:-3001}"
+REPO_DIR="${BB_HOME:-$HOME/.browser-bridge}/repo"
+LOG_DIR="${BB_HOME:-$HOME/.browser-bridge}/logs"
+RUN_DIR="${BB_HOME:-$HOME/.browser-bridge}/run"
+
 die() { printf 'Error: %s\n' "$*" >&2; exit 1; }
 info() { printf '%s\n' "$*"; }
 
@@ -29,12 +35,54 @@ cmd_version() {
   echo "bridge ${BRIDGE_VERSION}"
 }
 
+port_in_use() {
+  python3 -c "
+import socket, sys
+s = socket.socket()
+try:
+    s.bind(('127.0.0.1', int('$1')))
+    s.close()
+    sys.exit(0)
+except OSError:
+    sys.exit(1)
+" 2>/dev/null
+}
+
+start_service() {
+  local name="$1" cwd="$2" port="$3"
+  local logfile="$LOG_DIR/${name}.log" pidfile="$RUN_DIR/${name}.pid"
+  if [[ -f "$pidfile" ]] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
+    info "$name already running (pid $(cat "$pidfile"))"
+    return 0
+  fi
+  ( cd "$cwd" && nohup bun run start >"$logfile" 2>&1 & echo $! >"$pidfile" )
+  for _ in {1..50}; do
+    if ! port_in_use "$port"; then
+      sleep 0.1
+      continue
+    fi
+    return 0
+  done
+  kill "$(cat "$pidfile")" 2>/dev/null || true
+  rm -f "$pidfile"
+  die "BB-E011: $name failed to bind port $port within 5s (see $logfile)"
+}
+
+cmd_up() {
+  [[ -d "$REPO_DIR" ]] || die "BB-E002: install not run. Execute the install script first."
+  mkdir -p "$LOG_DIR" "$RUN_DIR"
+  start_service ws-server    "$REPO_DIR/apps/websocket"  "$WS_PORT"
+  start_service local-proxy  "$REPO_DIR/apps/local-proxy" "$LOCAL_PROXY_PORT"
+  info "bridge up: ws-server=$(cat "$RUN_DIR/ws-server.pid"), local-proxy=$(cat "$RUN_DIR/local-proxy.pid")"
+}
+
 main() {
   if [[ $# -eq 0 ]]; then print_help; exit 0; fi
   case "$1" in
     --version|-V|version) cmd_version; exit 0 ;;
     -h|--help|help)       print_help; exit 0 ;;
-    up|down|restart|status|logs|update|doctor|uninstall)
+    up)    cmd_up ;;
+    down|restart|status|logs|update|doctor|uninstall)
       die "BB-E100: '$1' not implemented yet" ;;
     *) die "BB-E101: unknown command '$1'. Run 'bridge' for help." ;;
   esac
