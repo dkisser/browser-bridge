@@ -15,7 +15,9 @@
     "dev:local-proxy": "bun --cwd apps/local-proxy dev",
     "type-check": "tsc --noEmit",
     "test": "bun test",
-    "test:watch": "bun test --watch"
+    "test:watch": "bun test --watch",
+    "test:install": "bats install/tests/",
+    "release:extension-zip": "bash .github/scripts/build-extension-zip.sh"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",
