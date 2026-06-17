@@ -3,7 +3,7 @@
 # Template markers {{BRIDGE_VERSION}} and {{ORG}} are substituted at emit time.
 set -euo pipefail
 
-BRIDGE_VERSION="0.1.0"
+BRIDGE_VERSION="{{BRIDGE_VERSION}}"
 
 die() { printf 'Error: %s\n' "$*" >&2; exit 1; }
 info() { printf '%s\n' "$*"; }

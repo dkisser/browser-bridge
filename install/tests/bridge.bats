@@ -16,8 +16,8 @@ load helpers
   [[ "$output" == *"BB-E"* ]]
 }
 
-@test "bridge --version prints template version marker" {
+@test "bridge --version prints template placeholder marker" {
   run bash "$BRIDGE_TMPL" --version
   [ "$status" -eq 0 ]
-  [[ "$output" == *"bridge 0.1.0"* ]]
+  [[ "$output" == *"bridge {{BRIDGE_VERSION}}"* ]]
 }
