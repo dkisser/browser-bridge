@@ -230,3 +230,85 @@ TPL
   [[ "$output" == *"Chrome"* ]]
   [[ "$output" == *"bridge up"* ]]
 }
+
+# ---------------------------------------------------------------------------
+# Task 12: end-to-end install against mock release server
+# ---------------------------------------------------------------------------
+
+@test "install.sh end-to-end against mock release server" {
+  setup_clone_fixture
+  make_fake_bun
+
+  # Set up www dir with extension zip + sha256 sidecar
+  mkdir -p "$BB_TEST_TMP/www" "$BB_TEST_TMP/stage"
+  echo "fake-extension-content" > "$BB_TEST_TMP/stage/bb.zip"
+  ( cd "$BB_TEST_TMP/stage" && zip -q "$BB_TEST_TMP/www/browser-bridge-extension-v9.9.9.zip" bb.zip )
+  ( cd "$BB_TEST_TMP/www" && shasum -a 256 browser-bridge-extension-v9.9.9.zip > browser-bridge-extension-v9.9.9.zip.sha256 )
+
+  start_mock_http 18750
+  bash_path=$(find_modern_bash)
+
+  # Source install.sh (minus trailing 'main "$@"'), override ORG, then call main.
+  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_e2e.sh"
+  cat >> "$BB_TEST_TMP/test_e2e.sh" <<'SCRIPT'
+ORG='127.0.0.1:18750'
+main
+SCRIPT
+
+  BB_HOME="$BB_TEST_TMP/bb-home" \
+  BB_VERSION="v9.9.9" \
+  BB_GIT_REMOTE="$BB_TEST_TMP/origin.git" \
+  BRIDGE_TEMPLATE_PATH="$BB_TEST_ROOT/install/bridge.sh.tmpl" \
+  run "$bash_path" "$BB_TEST_TMP/test_e2e.sh"
+  stop_mock_http
+
+  [ "$status" -eq 0 ]
+  [[ -f "$BB_TEST_TMP/bb-home/version" ]]
+  [[ -f "$BB_TEST_TMP/bb-home/bin/bridge" ]]
+  [[ -L "$HOME/.local/bin/bridge" ]]
+  [[ -d "$BB_TEST_TMP/bb-home/repo" ]]
+  [[ "$(cat "$BB_TEST_TMP/bb-home/version")" == "v9.9.9" ]]
+}
+
+@test "install.sh idempotent: second run upgrades in place" {
+  setup_clone_fixture
+  make_fake_bun
+
+  mkdir -p "$BB_TEST_TMP/www" "$BB_TEST_TMP/stage"
+  echo "fake-extension-content" > "$BB_TEST_TMP/stage/bb.zip"
+  ( cd "$BB_TEST_TMP/stage" && zip -q "$BB_TEST_TMP/www/browser-bridge-extension-v9.9.9.zip" bb.zip )
+  ( cd "$BB_TEST_TMP/www" && shasum -a 256 browser-bridge-extension-v9.9.9.zip > browser-bridge-extension-v9.9.9.zip.sha256 )
+
+  start_mock_http 18751
+  bash_path=$(find_modern_bash)
+
+  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_e2e.sh"
+  cat >> "$BB_TEST_TMP/test_e2e.sh" <<'SCRIPT'
+ORG='127.0.0.1:18751'
+main
+SCRIPT
+
+  # First run — fresh install
+  BB_HOME="$BB_TEST_TMP/bb-home" \
+  BB_VERSION="v9.9.9" \
+  BB_GIT_REMOTE="$BB_TEST_TMP/origin.git" \
+  BRIDGE_TEMPLATE_PATH="$BB_TEST_ROOT/install/bridge.sh.tmpl" \
+  run "$bash_path" "$BB_TEST_TMP/test_e2e.sh"
+  first_status=$status
+
+  # Second run — upgrade in place
+  BB_HOME="$BB_TEST_TMP/bb-home" \
+  BB_VERSION="v9.9.9" \
+  BB_GIT_REMOTE="$BB_TEST_TMP/origin.git" \
+  BRIDGE_TEMPLATE_PATH="$BB_TEST_ROOT/install/bridge.sh.tmpl" \
+  run "$bash_path" "$BB_TEST_TMP/test_e2e.sh"
+  stop_mock_http
+
+  [ "$first_status" -eq 0 ]
+  [ "$status" -eq 0 ]
+  [[ -f "$BB_TEST_TMP/bb-home/version" ]]
+  [[ -f "$BB_TEST_TMP/bb-home/bin/bridge" ]]
+  [[ -L "$HOME/.local/bin/bridge" ]]
+  [[ -d "$BB_TEST_TMP/bb-home/repo" ]]
+  [[ "$(cat "$BB_TEST_TMP/bb-home/version")" == "v9.9.9" ]]
+}
