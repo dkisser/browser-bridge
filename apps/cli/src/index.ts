@@ -2,7 +2,11 @@
 import { WEBSOCKET_PORT } from '@my/shared';
 import { Command } from 'commander';
 import { createClient } from '@browser-bridge/websocket/client';
-import type { CommandPayload, ResponsePayload } from '@my/shared/types';
+import type {
+  CommandPayload,
+  ResponsePayload,
+  BrowserConnection,
+} from '@my/shared/types';
 
 const program = new Command();
 program.name('mycli').description('Browser Bridge CLI').version('1.0.0');
@@ -31,13 +35,49 @@ function output(global: GlobalOptions, data: unknown): void {
   }
 }
 
-function outputError(global: GlobalOptions, error: string, message: string): void {
+function outputError(
+  global: GlobalOptions,
+  error: string,
+  message: string,
+): void {
   if (global.json) {
     console.log(JSON.stringify({ status: 'error', error, message }));
   } else {
     console.error(`Error: ${message}`);
   }
   process.exit(1);
+}
+
+async function listBrowsers(server: string): Promise<BrowserConnection[]> {
+  const client = createClient({ url: server });
+
+  await new Promise<void>((resolve, reject) => {
+    const check = setInterval(() => {
+      if (client.readyState === WebSocket.OPEN) {
+        clearInterval(check);
+        resolve();
+      }
+    }, 50);
+    setTimeout(() => {
+      clearInterval(check);
+      reject(new Error('Connection timeout'));
+    }, 5000);
+  });
+
+  try {
+    const response = await client.request(
+      'event',
+      { event: 'list_browsers' },
+      { timeout: 10000 },
+    );
+    const payload = response.payload as ResponsePayload;
+    if (payload.status === 'error') {
+      throw new Error(payload.message ?? payload.error ?? 'unknown');
+    }
+    return (payload.data as BrowserConnection[]) ?? [];
+  } finally {
+    client.close();
+  }
 }
 
 async function sendCommand(
@@ -66,11 +106,19 @@ async function sendCommand(
   });
 
   try {
-    const response = await client.sendCommand(global.browser, { command, params }, { timeout: global.timeout });
+    const response = await client.sendCommand(
+      global.browser,
+      { command, params },
+      { timeout: global.timeout },
+    );
     const payload = response.payload as ResponsePayload;
 
     if (payload.status === 'error') {
-      outputError(global, payload.error ?? 'unknown', payload.message ?? 'Unknown error');
+      outputError(
+        global,
+        payload.error ?? 'unknown',
+        payload.message ?? 'Unknown error',
+      );
       return;
     }
 
@@ -185,7 +233,11 @@ program
   .description('Scroll page by x,y pixels')
   .action(async (x: string, y: string) => {
     const global = getGlobalOptions(program.opts());
-    await sendCommand(global, 'scroll', { selector: 'page', x: Number(x), y: Number(y) });
+    await sendCommand(global, 'scroll', {
+      selector: 'page',
+      x: Number(x),
+      y: Number(y),
+    });
   });
 
 program
@@ -236,7 +288,10 @@ program
   .option('--timeout <ms>', 'Timeout in ms', '10000')
   .action(async (selector: string, opts: Record<string, unknown>) => {
     const global = getGlobalOptions(program.opts());
-    await sendCommand(global, 'wait:element', { selector, timeout: Number(opts.timeout || 10000) });
+    await sendCommand(global, 'wait:element', {
+      selector,
+      timeout: Number(opts.timeout || 10000),
+    });
   });
 
 program
@@ -245,7 +300,36 @@ program
   .option('--timeout <ms>', 'Timeout in ms', '10000')
   .action(async (opts: Record<string, unknown>) => {
     const global = getGlobalOptions(program.opts());
-    await sendCommand(global, 'wait:navigation', { timeout: Number(opts.timeout || 10000) });
+    await sendCommand(global, 'wait:navigation', {
+      timeout: Number(opts.timeout || 10000),
+    });
+  });
+
+program
+  .command('browser:list')
+  .description('List connected browser instances')
+  .action(async () => {
+    const global = getGlobalOptions(program.opts());
+    try {
+      const browsers = await listBrowsers(global.server);
+      if (global.json) {
+        output(global, browsers);
+        return;
+      }
+      if (browsers.length === 0) {
+        console.log('No connected browsers.');
+        return;
+      }
+      console.log('Connected browsers:');
+      for (const browser of browsers) {
+        const lastSeen = new Date(browser.lastSeen).toLocaleString();
+        console.log(
+          `  - ${browser.browserId} (status: ${browser.status}, lastSeen: ${lastSeen})`,
+        );
+      }
+    } catch (err) {
+      outputError(global, 'list_failed', String(err));
+    }
   });
 
 program.parse();

@@ -1,6 +1,10 @@
 import { WEBSOCKET_PORT } from '@my/shared';
 import { decode, encode } from '../protocol';
-import type { Envelope, CommandPayload, ResponsePayload } from '@my/shared/types';
+import type {
+  Envelope,
+  CommandPayload,
+  ResponsePayload,
+} from '@my/shared/types';
 
 export interface ClientOptions {
   url?: string;
@@ -46,7 +50,13 @@ export function createClient(options: ClientOptions = {}) {
       }
       onMessage?.(envelope);
     } catch {
-      onMessage?.({ id: '', type: 'event', browserId: '', payload: event.data, timestamp: 0 });
+      onMessage?.({
+        id: '',
+        type: 'event',
+        browserId: '',
+        payload: event.data,
+        timestamp: 0,
+      });
     }
   });
 
@@ -65,7 +75,11 @@ export function createClient(options: ClientOptions = {}) {
   });
 
   return {
-    send(type: Envelope['type'], payload: unknown, opts?: { id?: string; browserId?: string }) {
+    send(
+      type: Envelope['type'],
+      payload: unknown,
+      opts?: { id?: string; browserId?: string },
+    ) {
       socket.send(encode(type, payload, opts));
     },
 
@@ -79,11 +93,35 @@ export function createClient(options: ClientOptions = {}) {
       return new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
           pending.delete(id);
-          reject(new Error(`timeout: no response for command ${payload.command} within ${timeout}ms`));
+          reject(
+            new Error(
+              `timeout: no response for command ${payload.command} within ${timeout}ms`,
+            ),
+          );
         }, timeout);
 
         pending.set(id, { resolve, reject, timer });
         socket.send(encode('command', payload, { id, browserId }));
+      });
+    },
+
+    request(
+      type: Envelope['type'],
+      payload: unknown,
+      opts: { id?: string; browserId?: string; timeout?: number } = {},
+    ): Promise<Envelope> {
+      const timeout = opts.timeout ?? 10000;
+      const id = opts.id ?? crypto.randomUUID();
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          pending.delete(id);
+          reject(
+            new Error(`timeout: no response for ${type} within ${timeout}ms`),
+          );
+        }, timeout);
+
+        pending.set(id, { resolve, reject, timer });
+        socket.send(encode(type, payload, { id, browserId: opts.browserId }));
       });
     },
 

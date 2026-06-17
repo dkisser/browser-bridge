@@ -28,13 +28,15 @@ export function startServer(
       const authHeader = req.headers.get('Authorization') ?? '';
       const authResult = await authProvider.validateHeader(authHeader);
 
-      if (server.upgrade(req, {
-        data: {
-          connectionId: crypto.randomUUID(),
-          authenticated: authResult.valid,
-          userId: authResult.userId,
-        },
-      })) {
+      if (
+        server.upgrade(req, {
+          data: {
+            connectionId: crypto.randomUUID(),
+            authenticated: authResult.valid,
+            userId: authResult.userId,
+          },
+        })
+      ) {
         return;
       }
       return new Response('Browser Bridge WebSocket server', { status: 200 });
@@ -46,7 +48,9 @@ export function startServer(
           return;
         }
 
-        console.log(`Client connected: ${ws.data.connectionId} (user: ${ws.data.userId})`);
+        console.log(
+          `Client connected: ${ws.data.connectionId} (user: ${ws.data.userId})`,
+        );
         cliConnections.add(ws);
         ws.send(encode('event', { event: 'welcome' }));
       },
@@ -61,7 +65,13 @@ export function startServer(
         try {
           envelope = decode(text);
         } catch {
-          ws.send(encode('response', { status: 'error', error: 'invalid_json' }, { id: '' }));
+          ws.send(
+            encode(
+              'response',
+              { status: 'error', error: 'invalid_json' },
+              { id: '' },
+            ),
+          );
           return;
         }
 
@@ -73,26 +83,63 @@ export function startServer(
               const browserId = event.browserId as string;
               const result = await registry.register(ws, browserId);
               if (result.success) {
-                ws.send(encode('response', { status: 'ok' }, { id: envelope.id, browserId }));
+                ws.send(
+                  encode(
+                    'response',
+                    { status: 'ok' },
+                    { id: envelope.id, browserId },
+                  ),
+                );
               } else {
-                ws.send(encode('response', { status: 'error', error: result.error }, { id: envelope.id }));
+                ws.send(
+                  encode(
+                    'response',
+                    { status: 'error', error: result.error },
+                    { id: envelope.id },
+                  ),
+                );
               }
             }
 
             if (event.event === 'online') {
-              const browserId = (event.browserId as string) || ws.data.browserId;
+              const browserId =
+                (event.browserId as string) || ws.data.browserId;
               if (browserId) {
                 registry.setStatus(browserId, 'online');
-                ws.send(encode('response', { status: 'ok' }, { id: envelope.id, browserId }));
+                ws.send(
+                  encode(
+                    'response',
+                    { status: 'ok' },
+                    { id: envelope.id, browserId },
+                  ),
+                );
               }
             }
 
             if (event.event === 'offline') {
-              const browserId = (event.browserId as string) || ws.data.browserId;
+              const browserId =
+                (event.browserId as string) || ws.data.browserId;
               if (browserId) {
                 registry.setStatus(browserId, 'offline');
-                ws.send(encode('response', { status: 'ok' }, { id: envelope.id, browserId }));
+                ws.send(
+                  encode(
+                    'response',
+                    { status: 'ok' },
+                    { id: envelope.id, browserId },
+                  ),
+                );
               }
+            }
+
+            if (event.event === 'list_browsers') {
+              const browsers = registry.listBrowsers();
+              ws.send(
+                encode(
+                  'response',
+                  { status: 'ok', data: browsers },
+                  { id: envelope.id },
+                ),
+              );
             }
             break;
           }
@@ -105,7 +152,11 @@ export function startServer(
               ws.send(
                 encode(
                   'response',
-                  { status: 'error', error: 'browser_offline', message: `Browser ${browserId} is offline` },
+                  {
+                    status: 'error',
+                    error: 'browser_offline',
+                    message: `Browser ${browserId} is offline`,
+                  },
                   { id: envelope.id, browserId },
                 ),
               );
