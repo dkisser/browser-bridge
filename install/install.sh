@@ -5,6 +5,7 @@ set -euo pipefail
 ORG="{{ORG}}"  # substituted at emit time
 REPO="browser-bridge"
 BB_VERSION="${BB_VERSION:-}"
+BB_HOME="${BB_HOME:-$HOME/.browser-bridge}"
 
 die() { printf 'Error: %s\n' "$*" >&2; exit 1; }
 info() { printf '%s\n' "$*"; }
@@ -22,19 +23,65 @@ check_prereqs() {
 # ---- END PREREQ ----
 
 # Stub functions; replaced by later tasks.
-resolve_version() { echo "v0.0.0"; }
-download_extension() { :; }
 clone_source() { :; }
 write_artifacts() { :; }
 print_next_steps() { :; }
 
+resolve_version() {
+  if [[ -n "$BB_VERSION" ]]; then
+    [[ "$BB_VERSION" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "BB-E022: invalid version '$BB_VERSION'"
+    # Normalize to always include the leading 'v' (GitHub tags always have it).
+    echo "${BB_VERSION#v}" | awk '{print "v"$0}'
+    return
+  fi
+  local url="https://api.github.com/repos/${ORG}/${REPO}/releases/latest"
+  local tag
+  tag=$(curl -fsSL "$url" | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'])") \
+    || die "BB-E021: failed to query latest release from $url"
+  [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "BB-E022: latest tag '$tag' is not a valid version"
+  echo "$tag"
+}
+
+download_extension() {
+  local version="${1:-$(resolve_version)}"
+  local base zipname
+  if [[ "$ORG" =~ ^[0-9a-zA-Z.-]+:[0-9]+$ ]]; then
+    base="http://${ORG}"
+  else
+    base="https://github.com/${ORG}/${REPO}/releases/download/${version}"
+  fi
+  zipname="browser-bridge-extension-${version}.zip"
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  trap 'rm -rf "$tmpdir"' RETURN
+  info "Downloading $zipname"
+  curl -fsSL "${base}/${zipname}" -o "${tmpdir}/${zipname}" \
+    || die "BB-E021: download failed for ${base}/${zipname}"
+  curl -fsSL "${base}/${zipname}.sha256" -o "${tmpdir}/${zipname}.sha256" \
+    || die "BB-E021: download failed for ${base}/${zipname}.sha256"
+  local expected actual
+  expected=$(awk '{print $1}' "${tmpdir}/${zipname}.sha256")
+  actual=$(shasum -a 256 "${tmpdir}/${zipname}" | awk '{print $1}')
+  [[ "$expected" == "$actual" ]] || die "BB-E020: sha256 mismatch (expected $expected, got $actual)"
+  if [[ -d "$BB_HOME/extension" ]] && [[ -n "$(ls -A "$BB_HOME/extension" 2>/dev/null)" ]]; then
+    mv "$BB_HOME/extension" "$BB_HOME/extension.bak.$(date +%s)"
+  fi
+  mkdir -p "$BB_HOME/extension"
+  unzip -q "${tmpdir}/${zipname}" -d "$BB_HOME/extension"
+  rm -rf "$tmpdir"
+  trap - RETURN
+  info "Extension installed to $BB_HOME/extension"
+}
+
 main() {
   check_prereqs
-  resolve_version
-  download_extension
-  clone_source
-  write_artifacts
-  print_next_steps
+  local version
+  version=$(resolve_version)
+  info "Installing Browser Bridge ${version}"
+  download_extension "$version"
+  clone_source "$version"
+  write_artifacts "$version"
+  print_next_steps "$version"
 }
 
 main "$@"
