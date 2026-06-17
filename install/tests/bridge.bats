@@ -164,3 +164,30 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" == *"installed: v1.2.3"* ]]
 }
+
+@test "bridge uninstall without --yes prompts and aborts on 'n'" {
+  mkdir -p "$BB_HOME"
+  echo "n" | run bash "$BRIDGE_TMPL" uninstall
+  [[ -d "$BB_HOME" ]]
+}
+
+@test "bridge uninstall --yes removes BB_HOME" {
+  mkdir -p "$BB_HOME/repo"
+  run bash "$BRIDGE_TMPL" uninstall --yes
+  [ "$status" -eq 0 ]
+  [[ ! -d "$BB_HOME" ]]
+}
+
+@test "bridge update invokes install.sh with target version" {
+  # Stub install.sh so we can assert invocation.
+  cat > "$BB_TEST_TMP/install.sh" <<'EOF'
+#!/usr/bin/env bash
+echo "called with: $*"
+exit 0
+EOF
+  chmod +x "$BB_TEST_TMP/install.sh"
+  BB_INSTALL_SH="$BB_TEST_TMP/install.sh" BB_VERSION=v9.9.9 \
+    run bash -c "BB_INSTALL_SH='$BB_TEST_TMP/install.sh'; source '$BRIDGE_TMPL'; cmd_update v9.9.9"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"v9.9.9"* ]]
+}

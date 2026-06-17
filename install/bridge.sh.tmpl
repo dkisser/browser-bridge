@@ -164,6 +164,30 @@ cmd_restart() {
   cmd_up
 }
 
+cmd_update() {
+  local target="${1:-latest}"
+  local installer="${BB_INSTALL_SH:-$REPO_DIR/../install/install.sh}"
+  if [[ ! -x "$installer" ]]; then
+    die "BB-E103: cannot find installer at $installer"
+  fi
+  info "Updating to $target"
+  BB_VERSION="$target" "$installer" "$target"
+  # Restart only if the install left us a usable repo (e.g. a stub in tests won't).
+  [[ -d "$REPO_DIR" ]] && cmd_restart || true
+}
+
+cmd_uninstall() {
+  local yes=false
+  [[ "${1:-}" == "--yes" ]] && yes=true
+  if ! $yes; then
+    read -rp "About to rm -rf $BB_HOME. Continue? [y/N] " ans
+    [[ "$ans" == "y" || "$ans" == "Y" ]] || { echo "aborted"; return 0; }
+  fi
+  cmd_down || true
+  rm -rf "$BB_HOME"
+  echo "Removed $BB_HOME"
+}
+
 main() {
   if [[ $# -eq 0 ]]; then print_help; exit 0; fi
   case "$1" in
@@ -176,10 +200,13 @@ main() {
     logs)    shift; cmd_logs "$@" ;;
     restart) cmd_restart ;;
     doctor)  cmd_doctor ;;
-    update|uninstall)
-      die "BB-E100: '$1' not implemented yet" ;;
+    update)    shift; cmd_update "$@" ;;
+    uninstall) shift; cmd_uninstall "$@" ;;
     *) die "BB-E101: unknown command '$1'. Run 'bridge' for help." ;;
   esac
 }
 
-main "$@"
+# Only run main when the script is executed, not when sourced for tests.
+if [[ "${BASH_SOURCE[0]:-$0}" == "$0" ]]; then
+  main "$@"
+fi
