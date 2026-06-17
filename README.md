@@ -128,7 +128,21 @@ Browser Bridge 同时服务于两种调用方：
 
 ---
 
-## 快速开始
+## 一行安装
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/<org>/browser-bridge/main/install/install.sh | bash
+```
+
+按提示在 Chrome 里加载 `~/.browser-bridge/extension/`，然后：
+
+```bash
+bridge up
+```
+
+详细说明、错误码、卸载方式见 [`install/README.md`](./install/README.md)。
+
+## 快速开始（开发模式）
 
 ```bash
 # 1. 安装依赖

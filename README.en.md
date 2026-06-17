@@ -125,7 +125,21 @@ Install Extension  ──▶  Authenticate  ──▶  Human or agent controls t
 
 ---
 
-## Quick Start
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/<org>/browser-bridge/main/install/install.sh | bash
+```
+
+Follow the printed instructions to load `~/.browser-bridge/extension/` in Chrome, then:
+
+```bash
+bridge up
+```
+
+See [`install/README.md`](./install/README.md) for details, error codes, and uninstall steps.
+
+## Quick Start (Development)
 
 ```bash
 # 1. Install dependencies
