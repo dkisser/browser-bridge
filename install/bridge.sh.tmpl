@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Browser Bridge orchestrator. Sourced into install.sh and emitted at install time.
+# Template markers {{BRIDGE_VERSION}} and {{ORG}} are substituted at emit time.
+set -euo pipefail
+
+BRIDGE_VERSION="0.1.0"
+
+die() { printf 'Error: %s\n' "$*" >&2; exit 1; }
+info() { printf '%s\n' "$*"; }
+
+print_help() {
+  cat <<'EOF'
+Usage: bridge <command> [args]
+
+Commands:
+  up                  Start ws-server and local-proxy
+  down                Stop both services
+  restart             down then up
+  status              Show service state
+  logs [name]         Tail logs (ws-server | local-proxy)
+  update [version]    Upgrade to a release (default: latest)
+  doctor              Diagnose the install
+  uninstall           Remove ~/.browser-bridge/ (use --yes to skip prompt)
+  version             Print installed + latest version
+EOF
+}
+
+cmd_version() {
+  echo "bridge ${BRIDGE_VERSION}"
+}
+
+main() {
+  if [[ $# -eq 0 ]]; then print_help; exit 0; fi
+  case "$1" in
+    --version|-V|version) cmd_version; exit 0 ;;
+    -h|--help|help)       print_help; exit 0 ;;
+    up|down|restart|status|logs|update|doctor|uninstall)
+      die "BB-E100: '$1' not implemented yet" ;;
+    *) die "BB-E101: unknown command '$1'. Run 'bridge' for help." ;;
+  esac
+}
+
+main "$@"
