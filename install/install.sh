@@ -6,6 +6,7 @@ ORG="{{ORG}}"  # substituted at emit time
 REPO="browser-bridge"
 BB_VERSION="${BB_VERSION:-}"
 BB_HOME="${BB_HOME:-$HOME/.browser-bridge}"
+REPO_DIR="$BB_HOME/repo"
 
 die() { printf 'Error: %s\n' "$*" >&2; exit 1; }
 info() { printf '%s\n' "$*"; }
@@ -40,9 +41,38 @@ clone_source() {
   ( cd "$BB_HOME/repo" && bun install --frozen-lockfile ) \
     || die "BB-E025: bun install failed"
 }
-# Stub functions; replaced by later tasks.
-write_artifacts() { :; }
-print_next_steps() { :; }
+# Path to the bridge template, baked into install.sh via a heredoc at emit time.
+BRIDGE_TEMPLATE_PATH="${BRIDGE_TEMPLATE_PATH:-$REPO_DIR/install/bridge.sh.tmpl}"
+
+write_artifacts() {
+  local version="$1"
+  mkdir -p "$BB_HOME/bin"
+  info "Writing bridge to $BB_HOME/bin/bridge"
+  sed -e "s|{{BRIDGE_VERSION}}|${version}|g" -e "s|{{ORG}}|${ORG}|g" "$BRIDGE_TEMPLATE_PATH" > "$BB_HOME/bin/bridge"
+  chmod +x "$BB_HOME/bin/bridge"
+  echo "$version" > "$BB_HOME/version"
+  mkdir -p "$HOME/.local/bin"
+  ln -sf "$BB_HOME/bin/bridge" "$HOME/.local/bin/bridge"
+}
+
+print_next_steps() {
+  local version="$1"
+  cat <<EOF
+
+Browser Bridge ${version} installed.
+
+Next steps:
+  1. Ensure ~/.local/bin is on your PATH:
+       export PATH="\$HOME/.local/bin:\$PATH"
+  2. Open Chrome and load the unpacked extension from:
+       $BB_HOME/extension/
+     (chrome://extensions - enable Developer mode - "Load unpacked")
+  3. Start the bridge:
+       bridge up
+
+To uninstall later: bridge uninstall --yes
+EOF
+}
 
 resolve_version() {
   if [[ -n "$BB_VERSION" ]]; then

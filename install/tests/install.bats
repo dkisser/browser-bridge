@@ -187,3 +187,46 @@ SCRIPT
   [ "$status" -eq 0 ]
   [[ "$output" == *"v9.9.10"* ]]
 }
+
+# ---------------------------------------------------------------------------
+# Task 11: write_artifacts + print_next_steps
+# ---------------------------------------------------------------------------
+
+@test "write_artifacts emits bridge script and version file" {
+  bash_path=$(find_modern_bash)
+  mkdir -p "$BB_HOME"
+  cat > "$BB_TEST_TMP/bridge.tmpl" <<'TPL'
+#!/usr/bin/env bash
+echo bridge-{{BRIDGE_VERSION}}
+echo org-{{ORG}}
+TPL
+  run "$bash_path" -c "
+    set -euo pipefail
+    source <(sed -n '/^write_artifacts()/,/^}/p' '$INSTALL_SH')
+    BB_HOME='$BB_HOME'
+    ORG='testorg'
+    BRIDGE_TEMPLATE_PATH='$BB_TEST_TMP/bridge.tmpl'
+    info() { :; }
+    write_artifacts v9.9.9
+    cat '$BB_HOME/bin/bridge'
+    cat '$BB_HOME/version'
+    test -L '$HOME/.local/bin/bridge'
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"bridge-v9.9.9"* ]]
+  [[ "$output" == *"v9.9.9"* ]]
+}
+
+@test "print_next_steps mentions PATH, Chrome load, and bridge up" {
+  bash_path=$(find_modern_bash)
+  run "$bash_path" -c "
+    set -euo pipefail
+    source <(sed -n '/^print_next_steps()/,/^}/p' '$INSTALL_SH')
+    BB_HOME='$BB_HOME'
+    print_next_steps v9.9.9
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"PATH"* ]]
+  [[ "$output" == *"Chrome"* ]]
+  [[ "$output" == *"bridge up"* ]]
+}
