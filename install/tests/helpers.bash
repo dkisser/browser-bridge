@@ -37,6 +37,7 @@ EOF
 
 # Start a tiny Python HTTP server on a free port serving $BB_TEST_TMP/www.
 start_mock_http() {
+  mkdir -p "$BB_TEST_TMP/www"
   python3 -m http.server -d "$BB_TEST_TMP/www" "$@" >"$BB_TEST_TMP/http.log" 2>&1 &
   MOCK_HTTP_PID=$!
   sleep 0.2
@@ -46,8 +47,12 @@ stop_mock_http() {
   [[ -n "${MOCK_HTTP_PID:-}" ]] && kill "$MOCK_HTTP_PID" 2>/dev/null || true
 }
 
-teardown() {
+# Default teardown. Test files that need their own teardown should call
+# `helpers_teardown` from within their override rather than redefining this.
+helpers_teardown() {
   stop_mock_http
   # Kill anything still running from the test.
   pkill -P $$ 2>/dev/null || true
 }
+
+teardown() { helpers_teardown; }
