@@ -131,3 +131,36 @@ EOF
   [ -f "$BB_HOME/logs/ws-server.log" ]
   [ -f "$BB_HOME/logs/local-proxy.log" ]
 }
+
+@test "bridge doctor reports OK when install is healthy" {
+  mkdir -p "$BB_HOME/repo" "$BB_HOME/extension"
+  echo '{"manifest_version":3}' > "$BB_HOME/extension/manifest.json"
+  make_fake_bun
+  run bash "$BRIDGE_TMPL" doctor
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[OK] bun on PATH"* ]]
+  [[ "$output" == *"[OK] repo present"* ]]
+  [[ "$output" == *"[OK] extension/manifest.json valid"* ]]
+}
+
+@test "bridge doctor reports FAIL when repo missing" {
+  rm -rf "$BB_HOME/repo"
+  run bash "$BRIDGE_TMPL" doctor
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"[FAIL] repo present"* ]]
+}
+
+@test "bridge doctor reports FAIL when bun missing" {
+  export PATH="/usr/bin:/bin"  # exclude our fake
+  run bash "$BRIDGE_TMPL" doctor
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"[FAIL] bun on PATH"* ]]
+}
+
+@test "bridge version prints installed and latest release" {
+  mkdir -p "$BB_HOME"
+  echo "v1.2.3" > "$BB_HOME/version"
+  run bash "$BRIDGE_TMPL" version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"installed: v1.2.3"* ]]
+}

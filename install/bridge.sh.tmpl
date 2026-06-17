@@ -31,8 +31,35 @@ Commands:
 EOF
 }
 
-cmd_version() {
+LATEST_VERSION="${LATEST_VERSION:-unknown}"
+
+cmd_bridge_version() {
   echo "bridge ${BRIDGE_VERSION}"
+}
+
+cmd_version() {
+  local installed
+  installed=$(cat "$BB_HOME/version" 2>/dev/null || echo "unknown")
+  printf 'installed: %s\nlatest:    %s\n' "$installed" "$LATEST_VERSION"
+}
+
+cmd_doctor() {
+  local rc=0
+  command -v bun >/dev/null && echo "[OK] bun on PATH ($(command -v bun))" \
+    || { echo "[FAIL] bun on PATH"; rc=1; }
+  [[ -d "$REPO_DIR" ]] && echo "[OK] repo present" \
+    || { echo "[FAIL] repo present"; rc=1; }
+  if [[ -f "$BB_HOME/extension/manifest.json" ]] && python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$BB_HOME/extension/manifest.json" 2>/dev/null; then
+    echo "[OK] extension/manifest.json valid"
+  else
+    echo "[FAIL] extension/manifest.json valid"; rc=1
+  fi
+  if service_state ws-server >/dev/null && service_state local-proxy >/dev/null; then
+    echo "[OK] both services running"
+  else
+    echo "[WARN] one or more services not running (run 'bridge up')"
+  fi
+  return $rc
 }
 
 port_in_use() {
@@ -140,14 +167,16 @@ cmd_restart() {
 main() {
   if [[ $# -eq 0 ]]; then print_help; exit 0; fi
   case "$1" in
-    --version|-V|version) cmd_version; exit 0 ;;
+    --version|-V) cmd_bridge_version; exit 0 ;;
+    version) cmd_version; exit 0 ;;
     -h|--help|help)       print_help; exit 0 ;;
     up)      cmd_up ;;
     down)    cmd_down ;;
     status)  cmd_status ;;
     logs)    shift; cmd_logs "$@" ;;
     restart) cmd_restart ;;
-    update|doctor|uninstall)
+    doctor)  cmd_doctor ;;
+    update|uninstall)
       die "BB-E100: '$1' not implemented yet" ;;
     *) die "BB-E101: unknown command '$1'. Run 'bridge' for help." ;;
   esac
