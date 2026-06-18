@@ -37,5 +37,5 @@ When adding new entry points or HTML assets, verify the output paths in `dist/` 
 
 ## TypeScript
 
-- `tsconfig.base.json` enables `strict`, `moduleResolution: "bundler"`, and path alias `@my/shared` → `./packages/shared/src/index.ts`.
+- `tsconfig.base.json` enables `strict`, `moduleResolution: "bundler"`, and path alias `@browser-bridge/shared` → `./packages/shared/src/index.ts`.
 - Each app/package extends `tsconfig.base.json` in its own `tsconfig.json`.

@@ -44,7 +44,7 @@ packages/shared/src/__tests__/index.test.ts           # Update for new exports
 apps/websocket/src/protocol/index.ts                  # New envelope format
 apps/websocket/src/client/index.ts                    # Request-response correlation
 apps/websocket/src/server/index.ts                    # Routing + auth + registry
-apps/websocket/package.json                           # Add @my/shared/types import
+apps/websocket/package.json                           # Add @browser-bridge/shared/types import
 
 apps/extension/src/background.ts                      # Rewrite: local proxy connection
 apps/extension/src/content.ts                         # Rewrite: DOM command handlers
@@ -232,9 +232,9 @@ In `tsconfig.base.json`, update paths to:
 ```json
 {
   "paths": {
-    "@my/shared": ["./packages/shared/src/index.ts"],
-    "@my/shared/types": ["./packages/shared/src/types.ts"],
-    "@my/shared/auth": ["./packages/shared/src/auth.ts"]
+    "@browser-bridge/shared": ["./packages/shared/src/index.ts"],
+    "@browser-bridge/shared/types": ["./packages/shared/src/types.ts"],
+    "@browser-bridge/shared/auth": ["./packages/shared/src/auth.ts"]
   }
 }
 ```
@@ -368,7 +368,7 @@ Expected: FAIL — encode signature doesn't match (currently takes `(type, data)
 Replace `apps/websocket/src/protocol/index.ts`:
 
 ```ts
-import type { Envelope } from '@my/shared/types';
+import type { Envelope } from '@browser-bridge/shared/types';
 
 export type { Envelope };
 
@@ -493,9 +493,9 @@ Expected: FAIL — `createClient` doesn't have `sendCommand` method
 Replace `apps/websocket/src/client/index.ts`:
 
 ```ts
-import { WEBSOCKET_PORT } from '@my/shared';
+import { WEBSOCKET_PORT } from '@browser-bridge/shared';
 import { decode, encode } from '../protocol';
-import type { Envelope, CommandPayload, ResponsePayload } from '@my/shared/types';
+import type { Envelope, CommandPayload, ResponsePayload } from '@browser-bridge/shared/types';
 
 export interface ClientOptions {
   url?: string;
@@ -612,7 +612,7 @@ git commit -m "feat(ws-client): add sendCommand with request-response correlatio
 **Files:**
 - Create: `apps/websocket/src/server/registry.ts`
 - Modify: `apps/websocket/src/server/index.ts`
-- Modify: `apps/websocket/package.json` (add @my/shared/types to deps)
+- Modify: `apps/websocket/package.json` (add @browser-bridge/shared/types to deps)
 - Test: `apps/websocket/src/server/__tests__/server.test.ts`
 
 - [ ] **Step 1: Create registry.ts**
@@ -620,7 +620,7 @@ git commit -m "feat(ws-client): add sendCommand with request-response correlatio
 Create `apps/websocket/src/server/registry.ts`:
 
 ```ts
-import type { BrowserStatus, BrowserConnection, AuthProvider } from '@my/shared';
+import type { BrowserStatus, BrowserConnection, AuthProvider } from '@browser-bridge/shared';
 import type { ServerWebSocket } from 'bun';
 
 interface RegistryEntry {
@@ -699,7 +699,7 @@ Create `apps/websocket/src/server/__tests__/server.test.ts`:
 
 ```ts
 import { describe, expect, it, beforeAll, afterAll } from 'bun:test';
-import { NoopAuthProvider } from '@my/shared/auth';
+import { NoopAuthProvider } from '@browser-bridge/shared/auth';
 import { startServer } from '../index';
 import { ConnectionRegistry } from '../registry';
 import type { Server } from 'bun';
@@ -775,7 +775,7 @@ describe('ConnectionRegistry', () => {
   });
 
   it('rejects invalid token', async () => {
-    const { ApiKeyAuthProvider } = await import('@my/shared/auth');
+    const { ApiKeyAuthProvider } = await import('@browser-bridge/shared/auth');
     const registry = new ConnectionRegistry(new ApiKeyAuthProvider({ 'good-key': 'user-1' }));
     const mockWs = { data: {} } as any;
 
@@ -796,11 +796,11 @@ Expected: FAIL — server doesn't handle command routing or browser registration
 Replace `apps/websocket/src/server/index.ts`:
 
 ```ts
-import { WEBSOCKET_PORT } from '@my/shared';
-import { NoopAuthProvider } from '@my/shared/auth';
+import { WEBSOCKET_PORT } from '@browser-bridge/shared';
+import { NoopAuthProvider } from '@browser-bridge/shared/auth';
 import { encode, decode } from '../protocol';
 import { ConnectionRegistry } from './registry';
-import type { AuthProvider, Envelope } from '@my/shared/types';
+import type { AuthProvider, Envelope } from '@browser-bridge/shared/types';
 
 export function startServer(
   port = WEBSOCKET_PORT,
@@ -983,7 +983,7 @@ Create `apps/local-proxy/package.json`:
   },
   "dependencies": {
     "@browser-bridge/websocket": "workspace:*",
-    "@my/shared": "workspace:*"
+    "@browser-bridge/shared": "workspace:*"
   },
   "devDependencies": {
     "@types/bun": "latest",
@@ -1012,7 +1012,7 @@ Create `apps/local-proxy/tsconfig.json`:
 Create `apps/local-proxy/src/state.ts`:
 
 ```ts
-import type { BrowserStatus } from '@my/shared/types';
+import type { BrowserStatus } from '@browser-bridge/shared/types';
 
 const CONFIG_DIR = `${process.env.HOME}/.browser-bridge`;
 const CONFIG_FILE = `${CONFIG_DIR}/config.json`;
@@ -1152,7 +1152,7 @@ Create `apps/local-proxy/src/cloud-client.ts`:
 
 ```ts
 import { createClient } from '@browser-bridge/websocket/client';
-import type { Envelope } from '@my/shared/types';
+import type { Envelope } from '@browser-bridge/shared/types';
 
 export class CloudClient {
   private client: ReturnType<typeof createClient> | null = null;
@@ -1258,9 +1258,9 @@ export class CloudClient {
 Create `apps/local-proxy/src/local-server.ts`:
 
 ```ts
-import { LOCAL_WS_PORT } from '@my/shared';
+import { LOCAL_WS_PORT } from '@browser-bridge/shared';
 import { decode, encode } from '@browser-bridge/websocket/protocol';
-import type { Envelope } from '@my/shared/types';
+import type { Envelope } from '@browser-bridge/shared/types';
 
 interface LocalServerHandlers {
   onCommand: (envelope: Envelope) => void;
@@ -1336,7 +1336,7 @@ export class LocalServer {
 Create `apps/local-proxy/src/router.ts`:
 
 ```ts
-import type { Envelope } from '@my/shared/types';
+import type { Envelope } from '@browser-bridge/shared/types';
 import { StateManager } from './state';
 import { CloudClient } from './cloud-client';
 import { LocalServer } from './local-server';
@@ -1515,7 +1515,7 @@ git commit -m "feat(local-proxy): add always-on proxy with cloud client, local s
 Replace `apps/extension/src/background.ts`:
 
 ```ts
-import { LOCAL_WS_PORT } from '@my/shared';
+import { LOCAL_WS_PORT } from '@browser-bridge/shared';
 
 const LOCAL_WS_URL = `ws://localhost:${LOCAL_WS_PORT}`;
 
@@ -2128,10 +2128,10 @@ Replace `apps/cli/src/index.ts`:
 
 ```ts
 #!/usr/bin/env bun
-import { WEBSOCKET_PORT } from '@my/shared';
+import { WEBSOCKET_PORT } from '@browser-bridge/shared';
 import { Command } from 'commander';
 import { createClient } from '@browser-bridge/websocket/client';
-import type { CommandPayload, ResponsePayload } from '@my/shared/types';
+import type { CommandPayload, ResponsePayload } from '@browser-bridge/shared/types';
 
 const program = new Command();
 program.name('mycli').description('Browser Bridge CLI').version('1.0.0');
@@ -2622,7 +2622,7 @@ No TBDs, TODOs, or placeholder patterns found.
 
 ### Type Consistency
 
-- `Envelope` type defined in `@my/shared/types` and used consistently across protocol, server, client, local-proxy, and extension.
+- `Envelope` type defined in `@browser-bridge/shared/types` and used consistently across protocol, server, client, local-proxy, and extension.
 - `CommandPayload` and `ResponsePayload` types used in client `sendCommand` and CLI.
 - `BrowserStatus` type used in registry and state manager.
 - All auth types (`AuthProvider`, `AuthToken`, `AuthResult`) consistent across shared and server.

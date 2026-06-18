@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeAll, afterAll } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { startServer } from '../apps/websocket/src/server';
 import { ApiKeyAuthProvider } from '../packages/shared/src/auth';
 
@@ -10,7 +10,10 @@ describe('Integration: CLI → Server → Local Proxy', () => {
   let server: ReturnType<typeof startServer>;
 
   beforeAll(() => {
-    server = startServer(TEST_PORT, new ApiKeyAuthProvider({ [TEST_API_KEY]: TEST_USER_ID }));
+    server = startServer(
+      TEST_PORT,
+      new ApiKeyAuthProvider({ [TEST_API_KEY]: TEST_USER_ID }),
+    );
   });
 
   afterAll(() => {
@@ -33,13 +36,18 @@ describe('Integration: CLI → Server → Local Proxy', () => {
           resolve(e.data as string);
         }
       });
-      cli.send(JSON.stringify({
-        id: 'test-1',
-        type: 'command',
-        browserId: 'b-nonexistent',
-        payload: { command: 'navigate', params: { url: 'https://example.com' } },
-        timestamp: Date.now(),
-      }));
+      cli.send(
+        JSON.stringify({
+          id: 'test-1',
+          type: 'command',
+          browserId: 'b-nonexistent',
+          payload: {
+            command: 'navigate',
+            params: { url: 'https://example.com' },
+          },
+          timestamp: Date.now(),
+        }),
+      );
     });
 
     const parsed = JSON.parse(response);
@@ -76,13 +84,15 @@ describe('Integration: CLI → Server → Local Proxy', () => {
         }
       };
       proxy.addEventListener('message', handler);
-      proxy.send(JSON.stringify({
-        id: 'reg-1',
-        type: 'event',
-        browserId: 'b-integration',
-        payload: { event: 'register', browserId: 'b-integration' },
-        timestamp: Date.now(),
-      }));
+      proxy.send(
+        JSON.stringify({
+          id: 'reg-1',
+          type: 'event',
+          browserId: 'b-integration',
+          payload: { event: 'register', browserId: 'b-integration' },
+          timestamp: Date.now(),
+        }),
+      );
     });
 
     const regParsed = JSON.parse(registerResponse);
@@ -98,13 +108,15 @@ describe('Integration: CLI → Server → Local Proxy', () => {
         }
       };
       proxy.addEventListener('message', handler);
-      proxy.send(JSON.stringify({
-        id: 'online-1',
-        type: 'event',
-        browserId: 'b-integration',
-        payload: { event: 'online', browserId: 'b-integration' },
-        timestamp: Date.now(),
-      }));
+      proxy.send(
+        JSON.stringify({
+          id: 'online-1',
+          type: 'event',
+          browserId: 'b-integration',
+          payload: { event: 'online', browserId: 'b-integration' },
+          timestamp: Date.now(),
+        }),
+      );
     });
 
     expect(JSON.parse(onlineResponse).payload.status).toBe('ok');
@@ -127,13 +139,18 @@ describe('Integration: CLI → Server → Local Proxy', () => {
 
     // Send command
     const cmdId = 'cmd-int-1';
-    cli.send(JSON.stringify({
-      id: cmdId,
-      type: 'command',
-      browserId: 'b-integration',
-      payload: { command: 'navigate', params: { url: 'https://example.com' } },
-      timestamp: Date.now(),
-    }));
+    cli.send(
+      JSON.stringify({
+        id: cmdId,
+        type: 'command',
+        browserId: 'b-integration',
+        payload: {
+          command: 'navigate',
+          params: { url: 'https://example.com' },
+        },
+        timestamp: Date.now(),
+      }),
+    );
 
     // 5. Verify command arrives at proxy
     const proxyMessage = await new Promise<string>((resolve) => {
@@ -153,13 +170,18 @@ describe('Integration: CLI → Server → Local Proxy', () => {
     expect(cmdParsed.payload.params.url).toBe('https://example.com');
 
     // 6. Proxy sends response back
-    proxy.send(JSON.stringify({
-      id: cmdId,
-      type: 'response',
-      browserId: 'b-integration',
-      payload: { status: 'ok', data: { url: 'https://example.com', title: 'Example Domain' } },
-      timestamp: Date.now(),
-    }));
+    proxy.send(
+      JSON.stringify({
+        id: cmdId,
+        type: 'response',
+        browserId: 'b-integration',
+        payload: {
+          status: 'ok',
+          data: { url: 'https://example.com', title: 'Example Domain' },
+        },
+        timestamp: Date.now(),
+      }),
+    );
 
     // 7. Verify CLI receives response
     const cliResponse = await new Promise<string>((resolve) => {

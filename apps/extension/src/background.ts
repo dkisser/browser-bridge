@@ -69,7 +69,10 @@ async function handleCommand(msg: CommandMessage): Promise<unknown> {
       const tab = tabId ?? (await getActiveTabId());
       await chrome.tabs.update(tab, { url: params.url as string });
       await new Promise<void>((resolve) => {
-        const listener = (updatedTabId: number, changeInfo: chrome.tabs.TabChangeInfo) => {
+        const listener = (
+          updatedTabId: number,
+          changeInfo: chrome.tabs.TabChangeInfo,
+        ) => {
           if (updatedTabId === tab && changeInfo.status === 'complete') {
             chrome.tabs.onUpdated.removeListener(listener);
             resolve();
@@ -111,7 +114,9 @@ async function handleCommand(msg: CommandMessage): Promise<unknown> {
     }
 
     case 'tab:new': {
-      const newTab = await chrome.tabs.create({ url: params.url as string | undefined });
+      const newTab = await chrome.tabs.create({
+        url: params.url as string | undefined,
+      });
       return { id: newTab.id, url: newTab.url };
     }
 
@@ -135,7 +140,9 @@ async function handleCommand(msg: CommandMessage): Promise<unknown> {
     case 'screenshot': {
       const tab = tabId ?? (await getActiveTabId());
       const activeTab = await chrome.tabs.get(tab);
-      const dataUrl = await chrome.tabs.captureVisibleTab(activeTab.windowId, { format: 'png' });
+      const dataUrl = await chrome.tabs.captureVisibleTab(activeTab.windowId, {
+        format: 'png',
+      });
       return { dataUrl };
     }
 
@@ -147,7 +154,10 @@ async function handleCommand(msg: CommandMessage): Promise<unknown> {
           chrome.tabs.onUpdated.removeListener(listener);
           reject(new Error('Navigation timeout'));
         }, timeout);
-        const listener = (updatedTabId: number, changeInfo: chrome.tabs.TabChangeInfo) => {
+        const listener = (
+          updatedTabId: number,
+          changeInfo: chrome.tabs.TabChangeInfo,
+        ) => {
           if (updatedTabId === tab && changeInfo.status === 'complete') {
             clearTimeout(timer);
             chrome.tabs.onUpdated.removeListener(listener);
@@ -176,7 +186,10 @@ async function handleCommand(msg: CommandMessage): Promise<unknown> {
   }
 }
 
-async function sendToContentScript(tabId: number | undefined, payload: Record<string, unknown>): Promise<unknown> {
+async function sendToContentScript(
+  tabId: number | undefined,
+  payload: Record<string, unknown>,
+): Promise<unknown> {
   const tab = tabId ?? (await getActiveTabId());
 
   try {
@@ -210,7 +223,9 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
     const envelope = request.envelope as CommandMessage;
     handleCommand(envelope)
       .then((data) => sendResponse({ status: 'ok', data }))
-      .catch((err: Error) => sendResponse({ status: 'error', error: err.message }));
+      .catch((err: Error) =>
+        sendResponse({ status: 'error', error: err.message }),
+      );
     return true; // async response
   }
 

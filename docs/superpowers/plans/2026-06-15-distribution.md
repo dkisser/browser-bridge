@@ -1672,7 +1672,7 @@ One-line install for macOS and Linux.
 ## Quick Start
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<org>/browser-bridge/main/install/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/dkisser/browser-bridge/main/install/install.sh | bash
 ```
 
 To pin a version: `BB_VERSION=v1.2.3 curl ... | bash`.
@@ -1695,7 +1695,7 @@ To install from a fork: `curl -fsSL https://raw.githubusercontent.com/<my-org>/b
 2. Resolves the target version (latest release, or `BB_VERSION` override).
 3. Downloads `browser-bridge-extension-{version}.zip` and its `.sha256` from the GitHub Release; aborts on mismatch.
 4. Extracts the extension into `~/.browser-bridge/extension/`.
-5. Shallow-clones (or updates) `https://github.com/<org>/browser-bridge` into `~/.browser-bridge/repo/` at the matching tag.
+5. Shallow-clones (or updates) `https://github.com/dkisser/browser-bridge` into `~/.browser-bridge/repo/` at the matching tag.
 6. Runs `bun install --frozen-lockfile` in the cloned repo.
 7. Writes `~/.browser-bridge/bin/bridge` (templated from `install/bridge.sh.tmpl`) and symlinks it into `~/.local/bin/bridge`.
 8. Writes the resolved version to `~/.browser-bridge/version`.
@@ -1785,7 +1785,7 @@ Find the `## 快速开始` heading. Insert an "Install" section above it, and de
 ## 一行安装
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<org>/browser-bridge/main/install/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/dkisser/browser-bridge/main/install/install.sh | bash
 ```
 
 按提示在 Chrome 里加载 `~/.browser-bridge/extension/`，然后：
@@ -1823,7 +1823,7 @@ Find the `## Quick Start` heading. Add an "Install" section above it and rename 
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<org>/browser-bridge/main/install/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/dkisser/browser-bridge/main/install/install.sh | bash
 ```
 
 Follow the printed instructions to load `~/.browser-bridge/extension/` in Chrome, then:

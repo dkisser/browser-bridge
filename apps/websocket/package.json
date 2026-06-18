@@ -13,7 +13,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@my/shared": "workspace:*"
+    "@browser-bridge/shared": "workspace:*"
   },
   "devDependencies": {
     "@types/bun": "latest",

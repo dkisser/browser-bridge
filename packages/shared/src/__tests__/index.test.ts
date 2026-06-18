@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'bun:test';
-import { WEBSOCKET_PORT, LOCAL_WS_PORT, NoopAuthProvider, ApiKeyAuthProvider } from '../index';
+import {
+  ApiKeyAuthProvider,
+  LOCAL_WS_PORT,
+  NoopAuthProvider,
+  WEBSOCKET_PORT,
+} from '../index';
 import { isLocalhost } from '../utils';
 
 describe('shared', () => {
@@ -28,7 +33,12 @@ describe('shared', () => {
 
     it('refreshToken returns the same token', async () => {
       const provider = new NoopAuthProvider();
-      const token = { accessToken: 'a', refreshToken: 'r', expiresAt: 0, userId: 'u' };
+      const token = {
+        accessToken: 'a',
+        refreshToken: 'r',
+        expiresAt: 0,
+        userId: 'u',
+      };
       const result = await provider.refreshToken(token);
       expect(result).toEqual(token);
     });
@@ -55,7 +65,12 @@ describe('shared', () => {
 
     it('refreshToken returns the same token', async () => {
       const provider = new ApiKeyAuthProvider({});
-      const token = { accessToken: 'a', refreshToken: 'r', expiresAt: 0, userId: 'u' };
+      const token = {
+        accessToken: 'a',
+        refreshToken: 'r',
+        expiresAt: 0,
+        userId: 'u',
+      };
       const result = await provider.refreshToken(token);
       expect(result).toEqual(token);
     });

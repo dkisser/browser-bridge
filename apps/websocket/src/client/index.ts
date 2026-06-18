@@ -1,10 +1,10 @@
-import { WEBSOCKET_PORT } from '@my/shared';
-import { decode, encode } from '../protocol';
+import { WEBSOCKET_PORT } from '@browser-bridge/shared';
 import type {
-  Envelope,
   CommandPayload,
+  Envelope,
   ResponsePayload,
-} from '@my/shared/types';
+} from '@browser-bridge/shared/types';
+import { decode, encode } from '../protocol';
 
 export interface ClientOptions {
   url?: string;

@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@browser-bridge/websocket": "workspace:*",
-    "@my/shared": "workspace:*"
+    "@browser-bridge/shared": "workspace:*"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.268",

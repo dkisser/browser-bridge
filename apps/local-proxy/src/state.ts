@@ -1,7 +1,7 @@
-import type { BrowserStatus } from '@my/shared/types';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import type { BrowserStatus } from '@browser-bridge/shared/types';
 
 const CONFIG_DIR = join(homedir(), '.browser-bridge');
 const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
@@ -54,7 +54,9 @@ export class StateManager {
   }
 
   canAcceptCommand(): boolean {
-    return this.browserStatus === 'online' || this.browserStatus === 'idle_wait';
+    return (
+      this.browserStatus === 'online' || this.browserStatus === 'idle_wait'
+    );
   }
 
   bufferCommand(envelope: string, onTimeout: () => void): boolean {

@@ -1,8 +1,8 @@
-import { describe, expect, it, beforeAll, afterAll } from 'bun:test';
-import { createClient } from '../index';
-import { startServer } from '../../server';
-import { ApiKeyAuthProvider } from '@my/shared/auth';
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
+import { ApiKeyAuthProvider } from '@browser-bridge/shared/auth';
 import type { Server } from 'bun';
+import { startServer } from '../../server';
+import { createClient } from '../index';
 
 describe('WS client', () => {
   let server: ReturnType<typeof startServer>;
@@ -43,10 +43,14 @@ describe('WS client', () => {
       }, 50);
     });
 
-    const response = await client.sendCommand('b-123', {
-      command: 'navigate',
-      params: { url: 'https://example.com' },
-    }, { timeout: 2000 });
+    const response = await client.sendCommand(
+      'b-123',
+      {
+        command: 'navigate',
+        params: { url: 'https://example.com' },
+      },
+      { timeout: 2000 },
+    );
 
     expect(response.id).toBeDefined();
     expect(typeof response.id).toBe('string');
@@ -68,7 +72,11 @@ describe('WS client', () => {
     });
 
     await expect(
-      client.sendCommand('b-123', { command: 'navigate', params: {} }, { timeout: 100 }),
+      client.sendCommand(
+        'b-123',
+        { command: 'navigate', params: {} },
+        { timeout: 100 },
+      ),
     ).rejects.toThrow('timeout');
 
     client.close();
@@ -103,7 +111,11 @@ describe('WS client', () => {
     });
 
     await expect(
-      client.sendCommand('b-123', { command: 'navigate', params: {} }, { timeout: 5000 }),
+      client.sendCommand(
+        'b-123',
+        { command: 'navigate', params: {} },
+        { timeout: 5000 },
+      ),
     ).rejects.toThrow('connection closed');
 
     client.close();
@@ -117,7 +129,10 @@ describe('WS client with API key auth', () => {
   let authServer: ReturnType<typeof startServer>;
 
   beforeAll(() => {
-    authServer = startServer(AUTH_PORT, new ApiKeyAuthProvider({ [VALID_KEY]: 'user-1' }));
+    authServer = startServer(
+      AUTH_PORT,
+      new ApiKeyAuthProvider({ [VALID_KEY]: 'user-1' }),
+    );
   });
 
   afterAll(() => {

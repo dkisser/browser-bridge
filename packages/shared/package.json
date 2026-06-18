@@ -1,5 +1,5 @@
 {
-  "name": "@my/shared",
+  "name": "@browser-bridge/shared",
   "version": "0.0.1",
   "description": "Shared types and utilities for Browser Bridge",
   "main": "./src/index.ts",

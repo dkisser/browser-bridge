@@ -227,7 +227,7 @@ git commit -m "feat(shared): add isLocalhost utility for TLS enforcement checks"
 Add to `apps/websocket/src/server/__tests__/server.test.ts`:
 
 ```typescript
-import { ApiKeyAuthProvider } from '@my/shared/auth';
+import { ApiKeyAuthProvider } from '@browser-bridge/shared/auth';
 
 describe('WS server handshake auth', () => {
   const AUTH_PORT = 3097;
@@ -297,12 +297,12 @@ In `apps/websocket/src/server/index.ts`, update the `fetch` handler and `open` h
 Change the `fetch` handler to read the `Authorization` header and store auth result on the upgrade data. Change `open` to check auth and enforce TLS:
 
 ```typescript
-import { WEBSOCKET_PORT } from '@my/shared';
-import { isLocalhost } from '@my/shared/utils';
-import { NoopAuthProvider } from '@my/shared/auth';
+import { WEBSOCKET_PORT } from '@browser-bridge/shared';
+import { isLocalhost } from '@browser-bridge/shared/utils';
+import { NoopAuthProvider } from '@browser-bridge/shared/auth';
 import { encode, decode } from '../protocol';
 import { ConnectionRegistry } from './registry';
-import type { AuthProvider, Envelope } from '@my/shared/types';
+import type { AuthProvider, Envelope } from '@browser-bridge/shared/types';
 import type { ServerWebSocket } from 'bun';
 
 interface WsData {
@@ -461,7 +461,7 @@ export function startServer(
 In `apps/websocket/src/server/registry.ts`, update `register` to no longer take a `token` parameter. The connection is already authenticated at the handshake, and `userId` comes from `ws.data.userId`:
 
 ```typescript
-import type { BrowserStatus, BrowserConnection, AuthProvider } from '@my/shared';
+import type { BrowserStatus, BrowserConnection, AuthProvider } from '@browser-bridge/shared';
 import type { ServerWebSocket } from 'bun';
 
 interface RegistryEntry {
@@ -588,7 +588,7 @@ git commit -m "feat(server): add handshake auth and TLS enforcement to WS server
 Update `apps/websocket/src/client/__tests__/client.test.ts` — the existing tests use `startServer(3099)` with default `NoopAuthProvider`, so they should still pass without changes. Add a test that verifies a client with an API key can connect to a server that requires one:
 
 ```typescript
-import { ApiKeyAuthProvider } from '@my/shared/auth';
+import { ApiKeyAuthProvider } from '@browser-bridge/shared/auth';
 
 describe('WS client with API key auth', () => {
   const AUTH_PORT = 3102;
@@ -881,7 +881,7 @@ git commit -m "feat(client,proxy): send API key in WebSocket handshake header"
 
 ```typescript
 import { startServer } from './server';
-import { ApiKeyAuthProvider } from '@my/shared/auth';
+import { ApiKeyAuthProvider } from '@browser-bridge/shared/auth';
 
 const apiKeys = process.env.BRIDGE_API_KEYS;
 

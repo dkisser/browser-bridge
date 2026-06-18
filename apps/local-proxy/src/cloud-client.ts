@@ -1,5 +1,5 @@
+import type { Envelope } from '@browser-bridge/shared/types';
 import { createClient } from '@browser-bridge/websocket/client';
-import type { Envelope } from '@my/shared/types';
 
 export class CloudClient {
   private client: ReturnType<typeof createClient> | null = null;
@@ -79,14 +79,19 @@ export class CloudClient {
 
   sendResponse(envelope: Envelope): void {
     if (!this.client || this.client.readyState !== WebSocket.OPEN) return;
-    this.client.send('response', envelope.payload, { id: envelope.id, browserId: this.browserId });
+    this.client.send('response', envelope.payload, {
+      id: envelope.id,
+      browserId: this.browserId,
+    });
   }
 
   private scheduleReconnect(): void {
     if (this.reconnectTimer) return;
     const delay = Math.min(1000 * 2 ** this.reconnectAttempts, 30000);
     this.reconnectAttempts++;
-    console.log(`[cloud] reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`);
+    console.log(
+      `[cloud] reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`,
+    );
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.connect().catch(() => {});

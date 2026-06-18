@@ -1,4 +1,4 @@
-import type { Envelope } from '@my/shared/types';
+import type { Envelope } from '@browser-bridge/shared/types';
 
 export type { Envelope };
 

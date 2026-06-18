@@ -1,12 +1,12 @@
-export { WEBSOCKET_PORT, LOCAL_WS_PORT } from './constants';
+export type { AuthProvider, AuthResult, AuthToken } from './auth';
+export { ApiKeyAuthProvider, NoopAuthProvider } from './auth';
+export { LOCAL_WS_PORT, WEBSOCKET_PORT } from './constants';
 export type {
-  Envelope,
-  BrowserStatus,
-  CommandType,
-  CommandPayload,
-  ResponsePayload,
   BrowserConnection,
+  BrowserStatus,
+  CommandPayload,
+  CommandType,
+  Envelope,
+  ResponsePayload,
 } from './types';
-export type { AuthProvider, AuthToken, AuthResult } from './auth';
-export { NoopAuthProvider, ApiKeyAuthProvider } from './auth';
 export { isLocalhost } from './utils';

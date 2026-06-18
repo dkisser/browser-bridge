@@ -87,7 +87,9 @@ function sendResponse(id: string, browserId: string, payload: unknown): void {
 
 function notifyStatus(connected: boolean): void {
   try {
-    chrome.runtime.sendMessage({ type: 'ws_status', connected }).catch(() => {});
+    chrome.runtime
+      .sendMessage({ type: 'ws_status', connected })
+      .catch(() => {});
   } catch {
     // SW might be asleep, that's fine
   }

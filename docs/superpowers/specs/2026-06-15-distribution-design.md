@@ -43,16 +43,16 @@ All state lives under `~/.browser-bridge/` (no sudo required).
 
 ## Install Flow
 
-Single command (where `<org>` is the GitHub organization hosting the repo; replaced with the real value at implementation time):
+Single command (where `dkisser` is the GitHub organization hosting the repo; replaced with the real value at implementation time):
 
 ```
-curl -fsSL https://raw.githubusercontent.com/<org>/browser-bridge/main/install/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/dkisser/browser-bridge/main/install/install.sh | bash
 ```
 
 `install.sh` (POSIX bash, `set -euo pipefail`). The `bridge` script is embedded inside `install.sh` as a heredoc so both files are templated together from a single source (kept in `install/bridge.sh.tmpl` during development):
 
 1. **Prerequisite checks** — bash ≥ 4, `curl`, `unzip`, writable `$HOME/.local`. If `bun` is missing, print installation instructions and exit `BB-E001`. Bun is required because `bridge up` shells out to it.
-2. **Resolve version** — default to latest GitHub Release (parsed from `/repos/<org>/browser-bridge/releases/latest`). Accept `BB_VERSION` env var to pin a specific version. Validate the version string matches `^v?[0-9]+\.[0-9]+\.[0-9]+$`.
+2. **Resolve version** — default to latest GitHub Release (parsed from `/repos/dkisser/browser-bridge/releases/latest`). Accept `BB_VERSION` env var to pin a specific version. Validate the version string matches `^v?[0-9]+\.[0-9]+\.[0-9]+$`.
 3. **Download extension** — `curl -fsSL` the `browser-bridge-extension-${VERSION}.zip` asset and its `.sha256` sidecar from the GitHub Release for the resolved tag. Compute SHA-256 locally and refuse to continue on mismatch (exit `BB-E020`). On any HTTP error, exit `BB-E021`.
 4. **Extract extension** — unzip into `~/.browser-bridge/extension/`. If already present, rename old to `extension.bak.$(date +%s)` before overwriting.
 5. **Clone or update source** — shallow clone (`git clone --depth 1 --branch <tag>`) to `~/.browser-bridge/repo/`. On reinstall, `git fetch --depth 1 origin <tag> && git reset --hard <tag>` for idempotency.
@@ -158,9 +158,9 @@ The design intentionally leaves seams for two-machine deployment:
 
 1. **`BRIDGE_WS_URL` is an env var** — flipping it to `wss://bridge.example.com` is the only change needed to point local-proxy at a remote ws-server.
 2. **Auth is already implemented** — `BRIDGE_API_KEYS` (server) and `BRIDGE_API_TOKEN` (local-proxy) land in the current release. Single-machine mode runs with both unset (auth disabled); setting them enables handshake auth with no code changes.
-3. **TLS enforcement already exists** — `@my/shared`'s `isLocalhost` check makes ws-server require TLS only when not bound to localhost.
+3. **TLS enforcement already exists** — `@browser-bridge/shared`'s `isLocalhost` check makes ws-server require TLS only when not bound to localhost.
 4. **`bridge` orchestrator is portable** — when `~/.browser-bridge/` is migrated to a remote host, only the `extension/` subtree stays local; `bridge` keeps working as the remote-side manager.
-5. **`install.sh` accepts `--source <git-url>`** — default is `https://github.com/<org>/browser-bridge.git`; forks and internal mirrors can override.
+5. **`install.sh` accepts `--source <git-url>`** — default is `https://github.com/dkisser/browser-bridge.git`; forks and internal mirrors can override.
 6. **CLI hooks** — `@browser-bridge/cli` reserves a `bridge-host` subcommand slot (placeholder + TODO comment only, not implemented) for future "point CLI at a remote server" config.
 
 ## Error Codes

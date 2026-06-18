@@ -1,12 +1,12 @@
 #!/usr/bin/env bun
-import { WEBSOCKET_PORT } from '@my/shared';
-import { Command } from 'commander';
-import { createClient } from '@browser-bridge/websocket/client';
+import { WEBSOCKET_PORT } from '@browser-bridge/shared';
 import type {
+  BrowserConnection,
   CommandPayload,
   ResponsePayload,
-  BrowserConnection,
-} from '@my/shared/types';
+} from '@browser-bridge/shared/types';
+import { createClient } from '@browser-bridge/websocket/client';
+import { Command } from 'commander';
 
 const program = new Command();
 program.name('mycli').description('Browser Bridge CLI').version('1.0.0');
@@ -335,9 +335,13 @@ program
 // Reserved for future distributed-mode support. Not yet implemented.
 program
   .command('bridge-host')
-  .description('Configure CLI to point at a remote Browser Bridge server (not yet implemented)')
+  .description(
+    'Configure CLI to point at a remote Browser Bridge server (not yet implemented)',
+  )
   .action(() => {
-    console.error('bridge-host: not yet implemented. See docs/superpowers/specs/2026-06-15-distribution-design.md');
+    console.error(
+      'bridge-host: not yet implemented. See docs/superpowers/specs/2026-06-15-distribution-design.md',
+    );
     process.exit(1);
   });
 

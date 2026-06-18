@@ -2,7 +2,7 @@
 # Browser Bridge installer.
 set -euo pipefail
 
-ORG="{{ORG}}"  # substituted at emit time
+ORG="dkisser"  # substituted at emit time
 REPO="browser-bridge"
 BB_VERSION="${BB_VERSION:-}"
 BB_HOME="${BB_HOME:-$HOME/.browser-bridge}"

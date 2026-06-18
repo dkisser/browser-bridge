@@ -1,11 +1,11 @@
-import { WEBSOCKET_PORT } from '@my/shared';
-import { isLocalhost } from '@my/shared/utils';
-import { NoopAuthProvider } from '@my/shared/auth';
-import { encode, decode } from '../protocol';
-import { ConnectionRegistry } from './registry';
-import type { AuthProvider } from '@my/shared/auth';
-import type { Envelope } from '@my/shared/types';
+import { WEBSOCKET_PORT } from '@browser-bridge/shared';
+import type { AuthProvider } from '@browser-bridge/shared/auth';
+import { NoopAuthProvider } from '@browser-bridge/shared/auth';
+import type { Envelope } from '@browser-bridge/shared/types';
+import { isLocalhost } from '@browser-bridge/shared/utils';
 import type { ServerWebSocket } from 'bun';
+import { decode, encode } from '../protocol';
+import { ConnectionRegistry } from './registry';
 import type { WsData } from './types';
 
 export function startServer(

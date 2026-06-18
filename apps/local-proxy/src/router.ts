@@ -1,7 +1,7 @@
-import type { Envelope } from '@my/shared/types';
-import { StateManager } from './state';
-import { CloudClient } from './cloud-client';
-import { LocalServer } from './local-server';
+import type { Envelope } from '@browser-bridge/shared/types';
+import type { CloudClient } from './cloud-client';
+import type { LocalServer } from './local-server';
+import type { StateManager } from './state';
 
 export class Router {
   constructor(
@@ -15,7 +15,11 @@ export class Router {
       this.cloud.sendResponse({
         ...envelope,
         type: 'response',
-        payload: { status: 'error', error: 'browser_offline', message: 'Browser is offline' },
+        payload: {
+          status: 'error',
+          error: 'browser_offline',
+          message: 'Browser is offline',
+        },
       } as Envelope);
       return;
     }
@@ -23,19 +27,30 @@ export class Router {
     if (this.local.hasExtension) {
       this.local.sendToExtension(JSON.stringify(envelope));
     } else {
-      const buffered = this.state.bufferCommand(JSON.stringify(envelope), () => {
-        this.cloud.sendResponse({
-          ...envelope,
-          type: 'response',
-          payload: { status: 'error', error: 'sw_timeout', message: 'Service worker did not wake up' },
-        } as Envelope);
-      });
+      const buffered = this.state.bufferCommand(
+        JSON.stringify(envelope),
+        () => {
+          this.cloud.sendResponse({
+            ...envelope,
+            type: 'response',
+            payload: {
+              status: 'error',
+              error: 'sw_timeout',
+              message: 'Service worker did not wake up',
+            },
+          } as Envelope);
+        },
+      );
 
       if (!buffered) {
         this.cloud.sendResponse({
           ...envelope,
           type: 'response',
-          payload: { status: 'error', error: 'cannot_buffer', message: 'Cannot buffer command' },
+          payload: {
+            status: 'error',
+            error: 'cannot_buffer',
+            message: 'Cannot buffer command',
+          },
         } as Envelope);
       }
     }

@@ -1,14 +1,18 @@
 #!/usr/bin/env bun
-import { DEFAULT_SERVER_URL, DEFAULT_LOCAL_PORT } from './config';
-import { StateManager } from './state';
 import { CloudClient } from './cloud-client';
+import { DEFAULT_LOCAL_PORT, DEFAULT_SERVER_URL } from './config';
 import { LocalServer } from './local-server';
 import { Router } from './router';
+import { StateManager } from './state';
 
 function isLocalhostUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
-    return parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '::1';
+    return (
+      parsed.hostname === 'localhost' ||
+      parsed.hostname === '127.0.0.1' ||
+      parsed.hostname === '::1'
+    );
   } catch {
     return false;
   }
@@ -20,12 +24,16 @@ async function main() {
   const apiToken = process.env.BRIDGE_API_TOKEN;
 
   if (!apiToken && !isLocalhostUrl(serverUrl)) {
-    console.error('BRIDGE_API_TOKEN is required when connecting to a remote server');
+    console.error(
+      'BRIDGE_API_TOKEN is required when connecting to a remote server',
+    );
     process.exit(1);
   }
 
   if (!apiToken && isLocalhostUrl(serverUrl)) {
-    console.warn('Warning: BRIDGE_API_TOKEN not set — running without authentication (local development only)');
+    console.warn(
+      'Warning: BRIDGE_API_TOKEN not set — running without authentication (local development only)',
+    );
   }
 
   const state = new StateManager();

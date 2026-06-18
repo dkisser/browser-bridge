@@ -128,7 +128,7 @@ Install Extension  ──▶  Authenticate  ──▶  Human or agent controls t
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<org>/browser-bridge/main/install/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/dkisser/browser-bridge/main/install/install.sh | bash
 ```
 
 Follow the printed instructions to load `~/.browser-bridge/extension/` in Chrome, then:

@@ -11,7 +11,10 @@ function querySelector(selector: string): Element {
 }
 
 function querySelectorByText(text: string): Element {
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+  const walker = document.createTreeWalker(
+    document.body,
+    NodeFilter.SHOW_ELEMENT,
+  );
   let node: Element | null;
   while ((node = walker.nextNode() as Element | null)) {
     if (node.textContent?.trim() === text) return node;
@@ -93,7 +96,9 @@ function executeCommand(payload: DomCommand): unknown {
       return new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
           observer.disconnect();
-          reject(new Error(`Element not found within ${timeout}ms: ${selector}`));
+          reject(
+            new Error(`Element not found within ${timeout}ms: ${selector}`),
+          );
         }, timeout);
 
         const observer = new MutationObserver(() => {

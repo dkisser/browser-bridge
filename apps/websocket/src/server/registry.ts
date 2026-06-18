@@ -1,5 +1,5 @@
-import type { BrowserStatus, BrowserConnection } from '@my/shared';
-import type { AuthProvider } from '@my/shared/auth';
+import type { BrowserConnection, BrowserStatus } from '@browser-bridge/shared';
+import type { AuthProvider } from '@browser-bridge/shared/auth';
 import type { ServerWebSocket } from 'bun';
 import type { WsData } from './types';
 

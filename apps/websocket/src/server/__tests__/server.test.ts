@@ -1,6 +1,8 @@
-import { describe, expect, it, beforeAll, afterAll } from 'bun:test';
-import { NoopAuthProvider } from '@my/shared/auth';
-import { ApiKeyAuthProvider } from '@my/shared/auth';
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
+import {
+  ApiKeyAuthProvider,
+  NoopAuthProvider,
+} from '@browser-bridge/shared/auth';
 import { startServer } from '../index';
 import { ConnectionRegistry } from '../registry';
 
@@ -67,7 +69,10 @@ describe('WS server handshake auth', () => {
   let server: ReturnType<typeof startServer>;
 
   beforeAll(() => {
-    server = startServer(AUTH_PORT, new ApiKeyAuthProvider({ [VALID_KEY]: 'user-1' }));
+    server = startServer(
+      AUTH_PORT,
+      new ApiKeyAuthProvider({ [VALID_KEY]: 'user-1' }),
+    );
   });
 
   afterAll(() => {
@@ -130,7 +135,9 @@ describe('ConnectionRegistry', () => {
   });
 
   it('always succeeds (auth happened at handshake)', async () => {
-    const registry = new ConnectionRegistry(new ApiKeyAuthProvider({ 'good-key': 'user-1' }));
+    const registry = new ConnectionRegistry(
+      new ApiKeyAuthProvider({ 'good-key': 'user-1' }),
+    );
     const mockWs = { data: { userId: 'user-1' } } as any;
 
     const result = await registry.register(mockWs, 'b-2');

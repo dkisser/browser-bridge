@@ -1,6 +1,6 @@
+import type { Envelope } from '@browser-bridge/shared/types';
 import { decode, encode } from '@browser-bridge/websocket/protocol';
 import type { ServerWebSocket } from 'bun';
-import type { Envelope } from '@my/shared/types';
 
 interface LocalServerHandlers {
   onCommand: (envelope: Envelope) => void;
@@ -35,7 +35,10 @@ export class LocalServer {
           self.handlers.onConnect();
         },
         message(ws, message) {
-          const text = typeof message === 'string' ? message : new TextDecoder().decode(message);
+          const text =
+            typeof message === 'string'
+              ? message
+              : new TextDecoder().decode(message);
           try {
             const envelope = decode(text);
             self.handlers.onCommand(envelope);
@@ -63,7 +66,10 @@ export class LocalServer {
   }
 
   get hasExtension(): boolean {
-    return this.extensionWs !== null && this.extensionWs.readyState === WebSocket.OPEN;
+    return (
+      this.extensionWs !== null &&
+      this.extensionWs.readyState === WebSocket.OPEN
+    );
   }
 
   stop(): void {

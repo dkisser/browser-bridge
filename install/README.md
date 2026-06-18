@@ -1,16 +1,20 @@
 # Browser Bridge Installer
 
+## Shell 环境排查
+
+安装脚本要求 Bash ≥ 4，开发环境通常使用 zsh。macOS 用户在安装和日常使用中可能遇到 Bash 版本、PATH 顺序、默认 shell 切换等问题，详见 [shell-troubleshooting.md](./shell-troubleshooting.md)。
+
 One-line install for macOS and Linux.
 
 ## Quick Start
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<org>/browser-bridge/main/install/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/dkisser/browser-bridge/main/install/install.sh | bash
 ```
 
 To pin a version: `BB_VERSION=v1.2.3 curl ... | bash`.
 
-To install from a fork: `curl -fsSL https://raw.githubusercontent.com/<my-org>/browser-bridge/main/install/install.sh | bash -s -- --source https://github.com/<my-org>/browser-bridge.git`.
+To install from a fork: `curl -fsSL https://raw.githubusercontent.com/dkisser/browser-bridge/main/install/install.sh | bash -s -- --source https://github.com/dkisser/browser-bridge.git`.
 
 ## Prerequisites
 
@@ -28,7 +32,7 @@ To install from a fork: `curl -fsSL https://raw.githubusercontent.com/<my-org>/b
 2. Resolves the target version (latest release, or `BB_VERSION` override).
 3. Downloads `browser-bridge-extension-{version}.zip` and its `.sha256` from the GitHub Release; aborts on mismatch.
 4. Extracts the extension into `~/.browser-bridge/extension/`.
-5. Shallow-clones (or updates) `https://github.com/<org>/browser-bridge` into `~/.browser-bridge/repo/` at the matching tag.
+5. Shallow-clones (or updates) `https://github.com/dkisser/browser-bridge` into `~/.browser-bridge/repo/` at the matching tag.
 6. Runs `bun install --frozen-lockfile` in the cloned repo.
 7. Writes `~/.browser-bridge/bin/bridge` (templated from `install/bridge.sh.tmpl`) and symlinks it into `~/.local/bin/bridge`.
 8. Writes the resolved version to `~/.browser-bridge/version`.
