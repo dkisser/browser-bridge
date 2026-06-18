@@ -205,7 +205,14 @@ main() {
   case "$1" in
     --version|-V) cmd_bridge_version; exit 0 ;;
     version) cmd_version; exit 0 ;;
-    -h|--help|help)       print_help; exit 0 ;;
+    -h|--help|help)
+      local cmd_bin="${BB_HOME:-$HOME/.browser-bridge}/bin/bridge-cmd"
+      if [[ -x "$cmd_bin" ]]; then
+        exec "$cmd_bin" --help
+      fi
+      print_help
+      exit 0
+      ;;
     up)      cmd_up ;;
     down)    cmd_down ;;
     status)  cmd_status ;;
