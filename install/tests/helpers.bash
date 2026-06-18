@@ -25,6 +25,12 @@ make_fake_bun() {
   cat > "$BB_TEST_TMP/bin/bun" <<'EOF'
 #!/usr/bin/env bash
 # Fake bun for tests. Honors BB_FAKE_BUN_BEHAVIOR env var.
+if [[ "$1" == "run" && "$2" == "build:cli" ]]; then
+  mkdir -p dist
+  printf '#!/usr/bin/env bash\necho "fake-bridge-cmd"\n' > dist/bridge
+  chmod +x dist/bridge
+  exit 0
+fi
 case "${BB_FAKE_BUN_BEHAVIOR:-ok}" in
   ok)
     port="${BRIDGE_WS_PORT:-${BRIDGE_LOCAL_PROXY_PORT:-${BRIDGE_LOCAL_PORT:-}}}"

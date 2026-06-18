@@ -11,6 +11,7 @@
     "dev:websocket": "bun --cwd apps/websocket dev",
     "dev:extension": "bun --cwd apps/extension dev",
     "build:extension": "bun --cwd apps/extension build",
+    "build:cli": "bun build --compile apps/cli/src/index.ts --outfile dist/bridge",
     "cli": "bun --cwd apps/cli start",
     "dev:local-proxy": "bun --cwd apps/local-proxy dev",
     "type-check": "tsc --noEmit",

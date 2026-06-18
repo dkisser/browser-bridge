@@ -9,7 +9,7 @@ import { createClient } from '@browser-bridge/websocket/client';
 import { Command } from 'commander';
 
 const program = new Command();
-program.name('mycli').description('Browser Bridge CLI').version('1.0.0');
+program.name('bridge').description('Browser Bridge CLI').version('0.0.1');
 
 interface GlobalOptions {
   server: string;

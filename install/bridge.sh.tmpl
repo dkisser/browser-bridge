@@ -28,6 +28,14 @@ Commands:
   doctor              Diagnose the install
   uninstall           Remove ~/.browser-bridge/ (use --yes to skip prompt)
   version             Print installed + latest version
+
+Browser commands (when services are running and a browser is connected):
+  browser:list                 List connected browsers
+  navigate <url>               Open a URL in the current tab
+  click <selector>             Click an element
+  type <selector> <text>       Type text into an element
+  screenshot                   Take a screenshot
+  See 'bridge --help' for the full list.
 EOF
 }
 
@@ -206,7 +214,13 @@ main() {
     doctor)  cmd_doctor ;;
     update)    shift; cmd_update "$@" ;;
     uninstall) shift; cmd_uninstall "$@" ;;
-    *) die "BB-E101: unknown command '$1'. Run 'bridge' for help." ;;
+    *)
+      local cmd_bin="${BB_HOME:-$HOME/.browser-bridge}/bin/bridge-cmd"
+      if [[ -x "$cmd_bin" ]]; then
+        exec "$cmd_bin" "$@"
+      fi
+      die "BB-E101: unknown command '$1'. Run 'bridge' for help."
+      ;;
   esac
 }
 

@@ -44,6 +44,16 @@ clone_source() {
 # Path to the bridge template, baked into install.sh via a heredoc at emit time.
 BRIDGE_TEMPLATE_PATH="${BRIDGE_TEMPLATE_PATH:-$REPO_DIR/install/bridge.sh.tmpl}"
 
+build_cli() {
+  info "Building bridge command binary"
+  ( cd "$REPO_DIR" && bun run build:cli ) \
+    || die "BB-E026: failed to build bridge CLI"
+  mkdir -p "$BB_HOME/bin"
+  cp "$REPO_DIR/dist/bridge" "$BB_HOME/bin/bridge-cmd" \
+    || die "BB-E027: failed to copy bridge command binary"
+  chmod +x "$BB_HOME/bin/bridge-cmd"
+}
+
 write_artifacts() {
   local version="$1"
   mkdir -p "$BB_HOME/bin"
@@ -69,6 +79,9 @@ Next steps:
      (chrome://extensions - enable Developer mode - "Load unpacked")
   3. Start the bridge:
        bridge up
+  4. List connected browsers and control the browser:
+       bridge browser:list
+       bridge --browser <browserId> navigate https://example.com
 
 To uninstall later: bridge uninstall --yes
 EOF
@@ -127,6 +140,7 @@ main() {
   info "Installing Browser Bridge ${version}"
   download_extension "$version"
   clone_source "$version"
+  build_cli
   write_artifacts "$version"
   print_next_steps "$version"
 }

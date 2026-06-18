@@ -34,11 +34,14 @@ To install from a fork: `curl -fsSL https://raw.githubusercontent.com/dkisser/br
 4. Extracts the extension into `~/.browser-bridge/extension/`.
 5. Shallow-clones (or updates) `https://github.com/dkisser/browser-bridge` into `~/.browser-bridge/repo/` at the matching tag.
 6. Runs `bun install --frozen-lockfile` in the cloned repo.
-7. Writes `~/.browser-bridge/bin/bridge` (templated from `install/bridge.sh.tmpl`) and symlinks it into `~/.local/bin/bridge`.
-8. Writes the resolved version to `~/.browser-bridge/version`.
-9. Prints next steps: PATH export, Chrome "load unpacked" pointer, `bridge up`.
+7. Compiles the command-line client to `~/.browser-bridge/bin/bridge-cmd`.
+8. Writes `~/.browser-bridge/bin/bridge` (templated from `install/bridge.sh.tmpl`) and symlinks it into `~/.local/bin/bridge`.
+9. Writes the resolved version to `~/.browser-bridge/version`.
+10. Prints next steps: PATH export, Chrome "load unpacked" pointer, `bridge up`.
 
 ## `bridge` Commands
+
+### Service orchestration
 
 | Command | Purpose |
 |---|---|
@@ -51,6 +54,19 @@ To install from a fork: `curl -fsSL https://raw.githubusercontent.com/dkisser/br
 | `bridge doctor` | Diagnose install health. |
 | `bridge uninstall [--yes]` | Remove `~/.browser-bridge/`. |
 | `bridge version` | Show installed + latest release. |
+
+### Browser control (requires `bridge up` and a connected browser)
+
+| Command | Purpose |
+|---|---|
+| `bridge browser:list` | List connected browsers. |
+| `bridge --browser <id> navigate <url>` | Open a URL. |
+| `bridge --browser <id> click <selector>` | Click an element. |
+| `bridge --browser <id> type <selector> <text>` | Type text. |
+| `bridge --browser <id> screenshot` | Take a screenshot. |
+| `bridge --browser <id> tab:list` | List tabs. |
+
+Run `bridge --help` for the full command list.
 
 ## Error Codes
 
@@ -67,6 +83,8 @@ To install from a fork: `curl -fsSL https://raw.githubusercontent.com/dkisser/br
 | `BB-E023` | Git fetch failed | Check network/credentials. |
 | `BB-E024` | Clone or reset failed | Check disk space. |
 | `BB-E025` | `bun install` failed | Inspect `~/.browser-bridge/repo/`. |
+| `BB-E026` | CLI build failed | Check `bun run build:cli` output in `~/.browser-bridge/repo/`. |
+| `BB-E027` | CLI binary copy failed | Check disk space / permissions in `~/.browser-bridge/bin/`. |
 | `BB-E030` | Tag/version mismatch on release | Fix `package.json` and re-tag. |
 | `BB-E031` | CHANGELOG missing entry for release | Add an entry, re-tag. |
 | `BB-E100` | Subcommand stub (during dev) | Implementation pending. |
@@ -93,7 +111,8 @@ bridge status         # both services running
 bridge doctor         # all OK
 # In Chrome: load unpacked extension from ~/.browser-bridge/extension/
 # In another terminal:
-bun run cli navigate https://example.com --browser test
+bridge browser:list
+bridge --browser <browserId> navigate https://example.com
 bridge down
 bridge uninstall --yes
 ```

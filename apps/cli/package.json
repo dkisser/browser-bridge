@@ -4,7 +4,7 @@
   "private": true,
   "description": "CLI tool for Browser Bridge",
   "bin": {
-    "mycli": "./src/index.ts"
+    "bridge": "./src/index.ts"
   },
   "scripts": {
     "start": "bun src/index.ts",
