@@ -8,8 +8,6 @@
 
 # Browser Bridge
 
-**Hold your browser securely from the cloud.**
-
 Browser Bridge lets developers and agents remote-control a browser through the same command-line interface: search, fill forms, scrape pages, and manage tabs. For humans it is a CLI tool; for agents, it is a standard, orchestratable browser control entrypoint.
 
 ---
