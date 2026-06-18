@@ -12,12 +12,6 @@ Browser Bridge lets developers and agents remote-control a browser through the s
 
 ---
 
-## In One Sentence
-
-A two-part bridge system: a cloud-side CLI serves as the unified control interface, accepting input from users and any agent alike. Commands are sent over WebSocket to the user's local Chrome Extension, which performs the actions inside the browser.
-
----
-
 ## Why You Need It
 
 - **Agents can control the browser too**: any LLM, script, or automation tool only needs to call the CLI to operate a real browser like a human, without learning the Chrome Extension API.
