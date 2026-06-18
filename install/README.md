@@ -37,7 +37,7 @@ To install from a fork: `curl -fsSL https://raw.githubusercontent.com/dkisser/br
 7. Compiles the command-line client to `~/.browser-bridge/bin/bridge-cmd`.
 8. Writes `~/.browser-bridge/bin/bridge` (templated from `install/bridge.sh.tmpl`) and symlinks it into `~/.local/bin/bridge`.
 9. Writes the resolved version to `~/.browser-bridge/version`.
-10. Prints next steps: PATH export, Chrome "load unpacked" pointer, `bridge up`.
+10. Prints next steps: PATH export, Chrome "load unpacked" pointer (on macOS the extension folder is under a hidden directory; press `Command + Shift + .` in the file picker to reveal it), `bridge up`.
 
 ## `bridge` Commands
 
@@ -109,7 +109,12 @@ bun test install/tests/release-workflow.test.ts
 bridge up
 bridge status         # both services running
 bridge doctor         # all OK
-# In Chrome: load unpacked extension from ~/.browser-bridge/extension/
+# In Chrome:
+#   1. Open chrome://extensions/
+#   2. Enable "Developer mode"
+#   3. Click "Load unpacked"
+#   4. Select ~/.browser-bridge/extension/
+#      On macOS, ~/.browser-bridge is hidden. In the file picker press Command + Shift + . to show hidden folders.
 # In another terminal:
 bridge browser:list
 bridge --browser <browserId> navigate https://example.com
