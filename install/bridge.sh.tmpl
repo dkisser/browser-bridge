@@ -5,8 +5,8 @@ set -euo pipefail
 
 BRIDGE_VERSION="{{BRIDGE_VERSION}}"
 
-WS_PORT="${BRIDGE_WS_PORT:-8787}"
-LOCAL_PROXY_PORT="${BRIDGE_LOCAL_PROXY_PORT:-3001}"
+WS_PORT="${BRIDGE_WS_PORT:-3001}"
+LOCAL_PROXY_PORT="${BRIDGE_LOCAL_PROXY_PORT:-3002}"
 REPO_DIR="${BB_HOME:-$HOME/.browser-bridge}/repo"
 LOG_DIR="${BB_HOME:-$HOME/.browser-bridge}/logs"
 RUN_DIR="${BB_HOME:-$HOME/.browser-bridge}/run"
@@ -65,12 +65,11 @@ cmd_doctor() {
 port_in_use() {
   python3 -c "
 import socket, sys
-s = socket.socket()
 try:
-    s.bind(('127.0.0.1', int('$1')))
+    s = socket.create_connection(('localhost', int('$1')), timeout=1)
     s.close()
     sys.exit(0)
-except OSError:
+except (OSError, socket.timeout):
     sys.exit(1)
 " 2>/dev/null
 }
@@ -82,7 +81,12 @@ start_service() {
     info "$name already running (pid $(cat "$pidfile"))"
     return 0
   fi
-  ( cd "$cwd" && nohup bun run start >"$logfile" 2>&1 & echo $! >"$pidfile" )
+  if port_in_use "$port"; then
+    die "BB-E010: $name port $port is already in use"
+  fi
+  ( cd "$cwd" && exec bun run start >"$logfile" 2>&1 ) & pid=$!
+  disown
+  echo "$pid" >"$pidfile"
   for _ in {1..50}; do
     if ! port_in_use "$port"; then
       sleep 0.1
@@ -98,8 +102,8 @@ start_service() {
 cmd_up() {
   [[ -d "$REPO_DIR" ]] || die "BB-E002: install not run. Execute the install script first."
   mkdir -p "$LOG_DIR" "$RUN_DIR"
-  start_service ws-server    "$REPO_DIR/apps/websocket"  "$WS_PORT"
-  start_service local-proxy  "$REPO_DIR/apps/local-proxy" "$LOCAL_PROXY_PORT"
+  BRIDGE_WS_PORT="$WS_PORT" start_service ws-server "$REPO_DIR/apps/websocket" "$WS_PORT"
+  BRIDGE_LOCAL_PORT="$LOCAL_PROXY_PORT" BRIDGE_LOCAL_PROXY_PORT="$LOCAL_PROXY_PORT" BRIDGE_WS_URL="ws://127.0.0.1:$WS_PORT" start_service local-proxy "$REPO_DIR/apps/local-proxy" "$LOCAL_PROXY_PORT"
   info "bridge up: ws-server=$(cat "$RUN_DIR/ws-server.pid"), local-proxy=$(cat "$RUN_DIR/local-proxy.pid")"
 }
 

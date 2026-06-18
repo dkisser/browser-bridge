@@ -83,9 +83,9 @@ curl -fsSL https://raw.githubusercontent.com/dkisser/browser-bridge/main/install
 1. Verify `~/.browser-bridge/repo/` exists; if not, print "Run the install script first" and exit `BB-E002`.
 2. `mkdir -p run logs`.
 3. Start ws-server: `cd ~/.browser-bridge/repo/apps/websocket && nohup bun run start > "$LOG_DIR/ws-server.log" 2>&1 & echo $! > "$RUN_DIR/ws-server.pid"`.
-4. Poll the ws-server port (default 8787, configurable via `BRIDGE_WS_PORT`) for up to 5 seconds. On timeout, kill the spawned process and exit `BB-E011`.
+4. Poll the ws-server port (default 3001, configurable via `BRIDGE_WS_PORT`) for up to 5 seconds. On timeout, kill the spawned process and exit `BB-E011`.
 5. Start local-proxy with the same pattern.
-6. Poll its port (default 3001).
+6. Poll its port (default 3002).
 7. Print summary with PIDs and log paths.
 
 ### Shutdown sequence (`bridge down`)
@@ -100,9 +100,9 @@ curl -fsSL https://raw.githubusercontent.com/dkisser/browser-bridge/main/install
 
 | Var | Default | Purpose |
 |---|---|---|
-| `BRIDGE_WS_URL` | `ws://127.0.0.1:8787` | ws-server URL the local-proxy connects to. Single-machine default; future remote mode overrides here. |
-| `BRIDGE_WS_PORT` | `8787` | Port ws-server binds. |
-| `BRIDGE_LOCAL_PROXY_PORT` | `3001` | Port local-proxy's local WS server binds. |
+| `BRIDGE_WS_URL` | `ws://127.0.0.1:3001` | ws-server URL the local-proxy connects to. Single-machine default; future remote mode overrides here. |
+| `BRIDGE_WS_PORT` | `3001` | Port ws-server binds. |
+| `BRIDGE_LOCAL_PROXY_PORT` | `3002` | Port local-proxy's local WS server binds. |
 | `BRIDGE_API_KEYS` | _(unset)_ | When set, ws-server enables handshake auth. Single-machine mode leaves it unset. |
 | `BRIDGE_API_TOKEN` | _(unset)_ | When set, local-proxy sends it as `Authorization: Bearer <token>` on handshake. |
 

@@ -26,7 +26,15 @@ make_fake_bun() {
 #!/usr/bin/env bash
 # Fake bun for tests. Honors BB_FAKE_BUN_BEHAVIOR env var.
 case "${BB_FAKE_BUN_BEHAVIOR:-ok}" in
-  ok)        echo "fake-bun: $*"; exit 0 ;;
+  ok)
+    port="${BRIDGE_WS_PORT:-${BRIDGE_LOCAL_PROXY_PORT:-${BRIDGE_LOCAL_PORT:-}}}"
+    if [[ -n "$port" ]]; then
+      # Simulate a real service by binding the expected port.
+      exec python3 -c "import socket, time; s=socket.socket(); s.bind(('', int('$port'))); s.listen(); time.sleep(9999)"
+    fi
+    echo "fake-bun: $*"
+    exit 0
+    ;;
   fail)      echo "fake-bun: $*"; exit 1 ;;
   hang)      sleep 999 ;;
 esac
@@ -53,6 +61,12 @@ helpers_teardown() {
   stop_mock_http
   # Kill anything still running from the test.
   pkill -P $$ 2>/dev/null || true
+  # Also clean up any listeners the orchestrator may have left on default ports.
+  for port in 3001 3002; do
+    for pid in $(lsof -t -i ":$port" 2>/dev/null); do
+      kill "$pid" 2>/dev/null || true
+    done
+  done
 }
 
 teardown() { helpers_teardown; }

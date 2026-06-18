@@ -49,16 +49,16 @@ EOF
   [[ "$output" == *"BB-E002"* ]]
 }
 
-@test "bridge up fails with BB-E011 when ws-server port is taken" {
+@test "bridge up fails with BB-E010 when ws-server port is taken" {
   setup_up
   # Occupy the ws-server port.
-  python3 -c "import socket; s=socket.socket(); s.bind(('127.0.0.1',8787)); s.listen(); import time; time.sleep(30)" &
+  python3 -c "import socket; s=socket.socket(); s.bind(('127.0.0.1',3001)); s.listen(); import time; time.sleep(30)" &
   SOCAT_PID=$!
   sleep 0.3
   BB_FAKE_BUN_BEHAVIOR=ok run bash "$BRIDGE_TMPL" up
   kill "$SOCAT_PID" 2>/dev/null || true
   [ "$status" -ne 0 ]
-  [[ "$output" == *"BB-E011"* ]]
+  [[ "$output" == *"BB-E010"* ]]
 }
 
 @test "bridge down stops running service via SIGTERM and removes PID file" {

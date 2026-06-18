@@ -19,7 +19,10 @@ function isLocalhostUrl(url: string): boolean {
 }
 
 async function main() {
-  const serverUrl = process.env.BRIDGE_SERVER_URL || DEFAULT_SERVER_URL;
+  const serverUrl =
+    process.env.BRIDGE_WS_URL ||
+    process.env.BRIDGE_SERVER_URL ||
+    DEFAULT_SERVER_URL;
   const localPort = Number(process.env.BRIDGE_LOCAL_PORT) || DEFAULT_LOCAL_PORT;
   const apiToken = process.env.BRIDGE_API_TOKEN;
 
