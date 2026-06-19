@@ -151,7 +151,7 @@ download_runtime() {
   mkdir -p "$BB_HOME"
   tar xzf "${tmpdir}/${tarball}" -C "$BB_HOME"
 
-  local extracted="$BB_HOME/browser-bridge-macos-${arch}"
+  local extracted="$BB_HOME/browser-bridge-macos-${arch}-${version}"
   [[ -d "$extracted/bin" ]] || die "BB-E032: tarball missing bin/ directory"
   [[ -x "$extracted/bin/ws-server" ]] || die "BB-E032: tarball missing ws-server binary"
   [[ -x "$extracted/bin/local-proxy" ]] || die "BB-E032: tarball missing local-proxy binary"
@@ -160,6 +160,7 @@ download_runtime() {
   mkdir -p "$BB_HOME/bin"
   mv "$extracted/bin/ws-server" "$extracted/bin/local-proxy" "$extracted/bin/bridge-cmd" "$BB_HOME/bin/"
   rm -rf "$extracted"
+  trap - RETURN
 }
 
 main() {
