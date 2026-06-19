@@ -14,8 +14,6 @@ curl -fsSL https://raw.githubusercontent.com/dkisser/browser-bridge/main/install
 
 To pin a version: `BB_VERSION=v1.2.3 curl ... | bash`.
 
-To install from a fork: `curl -fsSL https://raw.githubusercontent.com/dkisser/browser-bridge/main/install/install.sh | bash -s -- --source https://github.com/dkisser/browser-bridge.git`.
-
 ## Prerequisites
 
 | Tool | Required | Notes |
@@ -23,8 +21,8 @@ To install from a fork: `curl -fsSL https://raw.githubusercontent.com/dkisser/br
 | bash ≥ 4 | yes | macOS users: pre-installed. |
 | curl | yes | pre-installed. |
 | unzip | yes | `brew install unzip` if missing. |
-| git | yes | for cloning source. |
-| bun | yes | `curl -fsSL https://bun.sh/install \| bash` if missing. |
+| shasum | yes | pre-installed on macOS. |
+| python3 | yes | pre-installed on macOS. |
 
 ## What It Does
 
@@ -32,9 +30,9 @@ To install from a fork: `curl -fsSL https://raw.githubusercontent.com/dkisser/br
 2. Resolves the target version (latest release, or `BB_VERSION` override).
 3. Downloads `browser-bridge-extension-{version}.zip` and its `.sha256` from the GitHub Release; aborts on mismatch.
 4. Extracts the extension into `~/.browser-bridge/extension/`.
-5. Shallow-clones (or updates) `https://github.com/dkisser/browser-bridge` into `~/.browser-bridge/repo/` at the matching tag.
-6. Runs `bun install --frozen-lockfile` in the cloned repo.
-7. Compiles the command-line client to `~/.browser-bridge/bin/bridge-cmd`.
+5. Detects the macOS architecture (arm64 or x64).
+6. Downloads the matching runtime tarball (`browser-bridge-macos-{arch}-{version}.tar.gz`) and its `.sha256`; aborts on mismatch.
+7. Extracts the three binaries (`ws-server`, `local-proxy`, `bridge-cmd`) into `~/.browser-bridge/bin/`.
 8. Writes `~/.browser-bridge/bin/bridge` (templated from `install/bridge.sh.tmpl`) and symlinks it into `~/.local/bin/bridge`.
 9. Writes the resolved version to `~/.browser-bridge/version`.
 10. Prints next steps: PATH export, Chrome "load unpacked" pointer (on macOS the extension folder is under a hidden directory; press `Command + Shift + .` in the file picker to reveal it), `bridge up`.
@@ -73,24 +71,31 @@ Run `bridge --help` for the full command list.
 | Code | Meaning | Fix |
 |---|---|---|
 | `BB-E000` | Bash < 4 or missing | Upgrade bash. |
-| `BB-E001` | Prerequisite missing | Install `bun`, `git`, `curl`, or `unzip`. |
+| `BB-E001` | Prerequisite missing | Install `curl`, `unzip`, `shasum`, or `python3`. |
 | `BB-E002` | `bridge` invoked without install | Run the install script. |
 | `BB-E010` | Port already in use | `lsof -i :3001` (ws-server) or `lsof -i :3002` (local-proxy), kill the conflict. |
 | `BB-E011` | Service failed to bind port | Check `~/.browser-bridge/logs/`. |
 | `BB-E020` | Extension zip SHA-256 mismatch | Re-run; check network/proxy. |
 | `BB-E021` | Download failed (HTTP error) | Check network, retry. |
 | `BB-E022` | Invalid version string | Use `vX.Y.Z` format. |
-| `BB-E023` | Git fetch failed | Check network/credentials. |
-| `BB-E024` | Clone or reset failed | Check disk space. |
-| `BB-E025` | `bun install` failed | Inspect `~/.browser-bridge/repo/`. |
-| `BB-E026` | CLI build failed | Check `bun run build:cli` output in `~/.browser-bridge/repo/`. |
-| `BB-E027` | CLI binary copy failed | Check disk space / permissions in `~/.browser-bridge/bin/`. |
+| `BB-E028` | Runtime tarball download failed | Check network; verify the release includes a tarball for your architecture. |
+| `BB-E029` | Runtime tarball SHA-256 mismatch | Re-run; check network/proxy. |
+| `BB-E032` | Runtime tarball extraction failed | Inspect `~/.browser-bridge/bin/`. |
+| `BB-E033` | Unsupported architecture | Only macOS arm64 and x64 are supported. |
 | `BB-E030` | Tag/version mismatch on release | Fix `package.json` and re-tag. |
 | `BB-E031` | CHANGELOG missing entry for release | Add an entry, re-tag. |
 | `BB-E100` | Subcommand stub (during dev) | Implementation pending. |
 | `BB-E101` | Unknown subcommand | Run `bridge` for help. |
 | `BB-E102` | Unknown log target | Use `ws-server` or `local-proxy`. |
 | `BB-E103` | Cannot locate installer (update) | Re-run the install script manually. |
+
+### macOS Gatekeeper
+
+If macOS blocks the downloaded binaries with "cannot be opened because the developer cannot be verified", remove the quarantine attribute:
+
+```bash
+xattr -d com.apple.quarantine ~/.browser-bridge/bin/*
+```
 
 ## Tests
 
