@@ -17,9 +17,9 @@ check_prereqs() {
   (( BASH_VERSINFO[0] >= 4 )) || die "BB-E000: bash >= 4 required"
   command -v curl >/dev/null  || die "BB-E001: curl not found"
   command -v unzip >/dev/null || die "BB-E001: unzip not found"
+  command -v shasum >/dev/null || die "BB-E001: shasum not found"
+  command -v python3 >/dev/null || die "BB-E001: python3 not found"
   [[ -w "$HOME/.local" || ! -e "$HOME/.local" ]] || die "BB-E001: \$HOME/.local not writable"
-  command -v bun >/dev/null || die "BB-E001: bun not found. Install from https://bun.sh"
-  command -v git >/dev/null || die "BB-E001: git not found"
 }
 # ---- END PREREQ ----
 

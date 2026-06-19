@@ -14,33 +14,11 @@ find_modern_bash() {
   return 1
 }
 
-@test "install.sh exits BB-E001 when bun missing" {
-  cat > "$BB_TEST_TMP/install.sh" <<EOF
-#!/usr/bin/env bash
-set -euo pipefail
-$(sed -n '/^set -euo pipefail$/,/END PREREQ/p' "$INSTALL_SH" | sed '/END PREREQ/d')
-check_prereqs
-EOF
-  chmod +x "$BB_TEST_TMP/install.sh"
+@test "install.sh check_prereqs succeeds when all required tools are present" {
   bash_path=$(find_modern_bash)
-  # Run with a minimal PATH so bun (and other tools) are not found.
-  run env -i HOME="$HOME" PATH="/usr/bin:/bin" "$bash_path" "$BB_TEST_TMP/install.sh"
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"BB-E001"* ]]
-}
-
-@test "install.sh succeeds bun check when bun present" {
-  make_fake_bun
-  cat > "$BB_TEST_TMP/install.sh" <<EOF
-#!/usr/bin/env bash
-set -euo pipefail
-$(sed -n '/^set -euo pipefail$/,/END PREREQ/p' "$INSTALL_SH" | sed '/END PREREQ/d')
-check_prereqs
-echo "OK"
-EOF
-  chmod +x "$BB_TEST_TMP/install.sh"
-  bash_path=$(find_modern_bash)
-  run env -i HOME="$HOME" PATH="$BB_TEST_TMP/bin:/usr/bin:/bin" "$bash_path" "$BB_TEST_TMP/install.sh"
+  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_prereq.sh"
+  echo 'check_prereqs; echo OK' >> "$BB_TEST_TMP/test_prereq.sh"
+  run "$bash_path" "$BB_TEST_TMP/test_prereq.sh"
   [ "$status" -eq 0 ]
   [[ "$output" == *"OK"* ]]
 }
