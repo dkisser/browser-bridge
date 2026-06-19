@@ -9,6 +9,11 @@ export class CloudClient {
   private apiToken: string;
   private browserId: string;
   private reconnectAttempts = 0;
+  private manualDisconnect = false;
+
+  get isManualDisconnect(): boolean {
+    return this.manualDisconnect;
+  }
 
   constructor(opts: {
     serverUrl: string;
@@ -23,6 +28,7 @@ export class CloudClient {
   }
 
   connect(): Promise<void> {
+    this.manualDisconnect = false;
     return new Promise((resolve, reject) => {
       this.client = createClient({
         url: this.serverUrl,
@@ -99,6 +105,7 @@ export class CloudClient {
   }
 
   close(): void {
+    this.manualDisconnect = true;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.client?.close();
     this.client = null;
