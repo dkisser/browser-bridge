@@ -53,6 +53,14 @@ async function main() {
     },
     onConnect: () => router.handleExtensionConnect(),
     onDisconnect: () => router.handleExtensionDisconnect(),
+    cloud: {
+      isConnected: () => cloud.isConnected,
+      isManualDisconnect: () => cloud.isManualDisconnect,
+      connect: () => cloud.connect(),
+      disconnect: () => cloud.close(),
+      browserId: state.browserId,
+      serverUrl,
+    },
   });
 
   const cloud = new CloudClient({

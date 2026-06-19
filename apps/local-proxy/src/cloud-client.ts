@@ -11,6 +11,10 @@ export class CloudClient {
   private reconnectAttempts = 0;
   private manualDisconnect = false;
 
+  get isConnected(): boolean {
+    return this.client !== null && this.client.readyState === WebSocket.OPEN;
+  }
+
   get isManualDisconnect(): boolean {
     return this.manualDisconnect;
   }
