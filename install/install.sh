@@ -6,7 +6,6 @@ ORG="dkisser"  # substituted at emit time
 REPO="browser-bridge"
 BB_VERSION="${BB_VERSION:-}"
 BB_HOME="${BB_HOME:-$HOME/.browser-bridge}"
-REPO_DIR="$BB_HOME/repo"
 
 die() { printf 'Error: %s\n' "$*" >&2; exit 1; }
 info() { printf '%s\n' "$*"; }
@@ -23,39 +22,36 @@ check_prereqs() {
 }
 # ---- END PREREQ ----
 
-clone_source() {
-  local version="$1"
-  local src="${BB_GIT_REMOTE:-https://github.com/${ORG}/${REPO}.git}"
-  if [[ -d "$BB_HOME/repo/.git" ]]; then
-    info "Updating existing repo at $BB_HOME/repo"
-    git -C "$BB_HOME/repo" fetch --depth 1 origin "$version" \
-      || die "BB-E023: failed to fetch $version from $src"
-    git -C "$BB_HOME/repo" reset --hard FETCH_HEAD \
-      || die "BB-E024: failed to reset to $version"
-  else
-    info "Cloning $src (tag $version) into $BB_HOME/repo"
-    git clone --depth 1 --branch "$version" "$src" "$BB_HOME/repo" \
-      || die "BB-E024: clone failed"
+detect_arch() {
+  if [[ -n "${BB_INSTALL_ARCH:-}" ]]; then
+    echo "$BB_INSTALL_ARCH"
+    return 0
   fi
-  info "Installing dependencies"
-  ( cd "$BB_HOME/repo" && bun install --frozen-lockfile ) \
-    || die "BB-E025: bun install failed"
+  local arch
+  arch=$(uname -m)
+  case "$arch" in
+    arm64)  echo "arm64" ;;
+    x86_64) echo "x64"   ;;
+    *) die "BB-E033: unsupported architecture '$arch'" ;;
+  esac
 }
-# Path to the bridge template, baked into install.sh via a heredoc at emit time.
-BRIDGE_TEMPLATE_PATH="${BRIDGE_TEMPLATE_PATH:-$REPO_DIR/install/bridge.sh.tmpl}"
 
-build_cli() {
-  info "Building bridge command binary"
-  ( cd "$REPO_DIR" && bun run build:cli ) \
-    || die "BB-E026: failed to build bridge CLI"
-  mkdir -p "$BB_HOME/bin"
-  cp "$REPO_DIR/dist/bridge" "$BB_HOME/bin/bridge-cmd" \
-    || die "BB-E027: failed to copy bridge command binary"
-  chmod +x "$BB_HOME/bin/bridge-cmd"
+# Path to the bridge template, baked into install.sh via a heredoc at emit time.
+BRIDGE_TEMPLATE_PATH="${BRIDGE_TEMPLATE_PATH:-}"
+
+fetch_bridge_template() {
+  [[ -n "${BRIDGE_TEMPLATE_PATH:-}" && -f "$BRIDGE_TEMPLATE_PATH" ]] && return 0
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  local url="https://raw.githubusercontent.com/${ORG}/${REPO}/main/install/bridge.sh.tmpl"
+  curl -fsSL "$url" -o "${tmpdir}/bridge.sh.tmpl" \
+    || die "BB-E021: failed to fetch bridge template"
+  BRIDGE_TEMPLATE_PATH="${tmpdir}/bridge.sh.tmpl"
 }
 
 write_artifacts() {
   local version="$1"
+  fetch_bridge_template
   mkdir -p "$BB_HOME/bin"
   info "Writing bridge to $BB_HOME/bin/bridge"
   sed -e "s|{{BRIDGE_VERSION}}|${version}|g" -e "s|{{ORG}}|${ORG}|g" "$BRIDGE_TEMPLATE_PATH" > "$BB_HOME/bin/bridge"
@@ -133,14 +129,58 @@ download_extension() {
   info "Extension installed to $BB_HOME/extension"
 }
 
+download_runtime() {
+  local version="$1" arch="$2" base="$3"
+  local tarball="browser-bridge-macos-${arch}-${version}.tar.gz"
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  trap 'rm -rf "$tmpdir"' RETURN
+
+  info "Downloading $tarball"
+  curl -fsSL "${base}/${tarball}" -o "${tmpdir}/${tarball}" \
+    || die "BB-E028: download failed for ${base}/${tarball}"
+  curl -fsSL "${base}/${tarball}.sha256" -o "${tmpdir}/${tarball}.sha256" \
+    || die "BB-E028: download failed for ${base}/${tarball}.sha256"
+
+  local expected actual
+  expected=$(awk '{print $1}' "${tmpdir}/${tarball}.sha256")
+  actual=$(shasum -a 256 "${tmpdir}/${tarball}" | awk '{print $1}')
+  [[ "$expected" == "$actual" ]] || die "BB-E029: sha256 mismatch (expected $expected, got $actual)"
+
+  info "Extracting runtime"
+  mkdir -p "$BB_HOME"
+  tar xzf "${tmpdir}/${tarball}" -C "$BB_HOME"
+
+  local extracted="$BB_HOME/browser-bridge-macos-${arch}"
+  [[ -d "$extracted/bin" ]] || die "BB-E032: tarball missing bin/ directory"
+  [[ -x "$extracted/bin/ws-server" ]] || die "BB-E032: tarball missing ws-server binary"
+  [[ -x "$extracted/bin/local-proxy" ]] || die "BB-E032: tarball missing local-proxy binary"
+  [[ -x "$extracted/bin/bridge-cmd" ]] || die "BB-E032: tarball missing bridge-cmd binary"
+
+  mkdir -p "$BB_HOME/bin"
+  mv "$extracted/bin/ws-server" "$extracted/bin/local-proxy" "$extracted/bin/bridge-cmd" "$BB_HOME/bin/"
+  rm -rf "$extracted"
+}
+
 main() {
   check_prereqs
   local version
   version=$(resolve_version)
   info "Installing Browser Bridge ${version}"
+
+  local base
+  if [[ "$ORG" =~ ^[0-9a-zA-Z.-]+:[0-9]+$ ]]; then
+    base="http://${ORG}"
+  else
+    base="https://github.com/${ORG}/${REPO}/releases/download/${version}"
+  fi
+
   download_extension "$version"
-  clone_source "$version"
-  build_cli
+
+  local arch
+  arch=$(detect_arch)
+  download_runtime "$version" "$arch" "$base"
+
   write_artifacts "$version"
   print_next_steps "$version"
 }
