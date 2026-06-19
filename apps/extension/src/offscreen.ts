@@ -3,7 +3,9 @@
 // so we move the WebSocket here. Commands from the proxy are relayed to the SW
 // via chrome.runtime.sendMessage, and responses are sent back through this doc.
 
-const LOCAL_WS_URL = 'ws://localhost:3002';
+import { LOCAL_WS_PORT } from '@browser-bridge/shared';
+
+const LOCAL_WS_URL = `ws://localhost:${LOCAL_WS_PORT}`;
 
 let ws: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
