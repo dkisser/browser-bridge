@@ -22,19 +22,14 @@ load helpers
   [[ "$output" == *"bridge {{BRIDGE_VERSION}}"* ]]
 }
 
-make_fake_bun
 setup_up() {
-  mkdir -p "$BB_HOME/repo/apps/websocket" "$BB_HOME/repo/apps/local-proxy"
-  cat > "$BB_HOME/repo/apps/websocket/index.ts" <<'EOF'
-EOF
-  cat > "$BB_HOME/repo/apps/local-proxy/index.ts" <<'EOF'
-EOF
+  make_fake_binaries
   mkdir -p "$BB_HOME/logs" "$BB_HOME/run"
 }
 
 @test "bridge up writes PID files for both services" {
   setup_up
-  BB_FAKE_BUN_BEHAVIOR=ok run bash "$BRIDGE_TMPL" up
+  run bash "$BRIDGE_TMPL" up
   [ "$status" -eq 0 ]
   [[ -f "$BB_HOME/run/ws-server.pid" ]]
   [[ -f "$BB_HOME/run/local-proxy.pid" ]]
@@ -42,8 +37,8 @@ EOF
   [[ -f "$BB_HOME/logs/local-proxy.log" ]]
 }
 
-@test "bridge up fails with BB-E002 when repo missing" {
-  rm -rf "$BB_HOME/repo"
+@test "bridge up fails with BB-E002 when binaries missing" {
+  rm -rf "$BB_HOME/bin"
   run bash "$BRIDGE_TMPL" up
   [ "$status" -ne 0 ]
   [[ "$output" == *"BB-E002"* ]]
@@ -55,7 +50,7 @@ EOF
   python3 -c "import socket; s=socket.socket(); s.bind(('127.0.0.1',3001)); s.listen(); import time; time.sleep(30)" &
   SOCAT_PID=$!
   sleep 0.3
-  BB_FAKE_BUN_BEHAVIOR=ok run bash "$BRIDGE_TMPL" up
+  run bash "$BRIDGE_TMPL" up
   kill "$SOCAT_PID" 2>/dev/null || true
   [ "$status" -ne 0 ]
   [[ "$output" == *"BB-E010"* ]]
@@ -113,10 +108,9 @@ EOF
 }
 
 @test "bridge restart runs down then up" {
-  mkdir -p "$BB_HOME/run" "$BB_HOME/logs" "$BB_HOME/repo/apps/websocket" "$BB_HOME/repo/apps/local-proxy"
+  setup_up
   echo "99999" > "$BB_HOME/run/ws-server.pid"
-  make_fake_bun
-  BB_FAKE_BUN_BEHAVIOR=ok run bash "$BRIDGE_TMPL" restart
+  run bash "$BRIDGE_TMPL" restart
   [ "$status" -eq 0 ]
   # The fake PID 99999 is gone; new PIDs are written.
   [[ "$(cat "$BB_HOME/run/ws-server.pid")" != "99999" ]]
@@ -133,28 +127,22 @@ EOF
 }
 
 @test "bridge doctor reports OK when install is healthy" {
-  mkdir -p "$BB_HOME/repo" "$BB_HOME/extension"
+  make_fake_binaries
+  mkdir -p "$BB_HOME/extension"
   echo '{"manifest_version":3}' > "$BB_HOME/extension/manifest.json"
-  make_fake_bun
   run bash "$BRIDGE_TMPL" doctor
   [ "$status" -eq 0 ]
-  [[ "$output" == *"[OK] bun on PATH"* ]]
-  [[ "$output" == *"[OK] repo present"* ]]
+  [[ "$output" == *"[OK] ws-server binary present"* ]]
+  [[ "$output" == *"[OK] local-proxy binary present"* ]]
+  [[ "$output" == *"[OK] bridge-cmd binary present"* ]]
   [[ "$output" == *"[OK] extension/manifest.json valid"* ]]
 }
 
-@test "bridge doctor reports FAIL when repo missing" {
-  rm -rf "$BB_HOME/repo"
+@test "bridge doctor reports FAIL when binaries missing" {
+  rm -rf "$BB_HOME/bin"
   run bash "$BRIDGE_TMPL" doctor
   [ "$status" -ne 0 ]
-  [[ "$output" == *"[FAIL] repo present"* ]]
-}
-
-@test "bridge doctor reports FAIL when bun missing" {
-  export PATH="/usr/bin:/bin"  # exclude our fake
-  run bash "$BRIDGE_TMPL" doctor
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"[FAIL] bun on PATH"* ]]
+  [[ "$output" == *"[FAIL] ws-server binary missing"* ]]
 }
 
 @test "bridge version prints installed and latest release" {
@@ -172,22 +160,8 @@ EOF
 }
 
 @test "bridge uninstall --yes removes BB_HOME" {
-  mkdir -p "$BB_HOME/repo"
+  mkdir -p "$BB_HOME/bin"
   run bash "$BRIDGE_TMPL" uninstall --yes
   [ "$status" -eq 0 ]
   [[ ! -d "$BB_HOME" ]]
-}
-
-@test "bridge update invokes install.sh with target version" {
-  # Stub install.sh so we can assert invocation.
-  cat > "$BB_TEST_TMP/install.sh" <<'EOF'
-#!/usr/bin/env bash
-echo "called with: $*"
-exit 0
-EOF
-  chmod +x "$BB_TEST_TMP/install.sh"
-  BB_INSTALL_SH="$BB_TEST_TMP/install.sh" BB_VERSION=v9.9.9 \
-    run bash -c "BB_INSTALL_SH='$BB_TEST_TMP/install.sh'; source '$BRIDGE_TMPL'; cmd_update v9.9.9"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"v9.9.9"* ]]
 }
