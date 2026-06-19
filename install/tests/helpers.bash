@@ -49,6 +49,56 @@ EOF
   export PATH="$BB_TEST_TMP/bin:$PATH"
 }
 
+# Create fake runtime binaries under $BB_HOME/bin for bridge.bats tests.
+make_fake_binaries() {
+  mkdir -p "$BB_HOME/bin"
+  cat > "$BB_HOME/bin/ws-server" <<'EOF'
+#!/usr/bin/env bash
+port="${BRIDGE_WS_PORT:-3001}"
+exec python3 -c "import socket, time; s=socket.socket(); s.bind(('', int('$port'))); s.listen(); time.sleep(9999)"
+EOF
+  cat > "$BB_HOME/bin/local-proxy" <<'EOF'
+#!/usr/bin/env bash
+port="${BRIDGE_LOCAL_PORT:-${BRIDGE_LOCAL_PROXY_PORT:-3002}}"
+exec python3 -c "import socket, time; s=socket.socket(); s.bind(('', int('$port'))); s.listen(); time.sleep(9999)"
+EOF
+  cat > "$BB_HOME/bin/bridge-cmd" <<'EOF'
+#!/usr/bin/env bash
+echo "fake-bridge-cmd: $*"
+EOF
+  chmod +x "$BB_HOME/bin/ws-server" "$BB_HOME/bin/local-proxy" "$BB_HOME/bin/bridge-cmd"
+}
+
+# Create a fake runtime tarball for install.bats tests.
+# Returns the path to the tarball.
+make_fake_runtime_tarball() {
+  local version="${1:-v9.9.9}" arch="${2:-arm64}"
+  local name="browser-bridge-macos-${arch}-${version}"
+  local stage="$BB_TEST_TMP/${name}"
+  mkdir -p "$stage/bin"
+
+  cat > "$stage/bin/ws-server" <<'EOF'
+#!/usr/bin/env bash
+port="${BRIDGE_WS_PORT:-3001}"
+exec python3 -c "import socket, time; s=socket.socket(); s.bind(('', int('$port'))); s.listen(); time.sleep(9999)"
+EOF
+  cat > "$stage/bin/local-proxy" <<'EOF'
+#!/usr/bin/env bash
+port="${BRIDGE_LOCAL_PORT:-${BRIDGE_LOCAL_PROXY_PORT:-3002}}"
+exec python3 -c "import socket, time; s=socket.socket(); s.bind(('', int('$port'))); s.listen(); time.sleep(9999)"
+EOF
+  cat > "$stage/bin/bridge-cmd" <<'EOF'
+#!/usr/bin/env bash
+echo "fake-bridge-cmd: $*"
+EOF
+  chmod +x "$stage/bin/"/*
+
+  ( cd "$BB_TEST_TMP" && tar czf "${name}.tar.gz" "$name" )
+  ( cd "$BB_TEST_TMP" && shasum -a 256 "${name}.tar.gz" > "${name}.tar.gz.sha256" )
+
+  echo "$BB_TEST_TMP/${name}.tar.gz"
+}
+
 # Start a tiny Python HTTP server on a free port serving $BB_TEST_TMP/www.
 start_mock_http() {
   mkdir -p "$BB_TEST_TMP/www"
