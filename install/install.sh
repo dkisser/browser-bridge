@@ -2,8 +2,8 @@
 # Browser Bridge installer.
 set -euo pipefail
 
-ORG="dkisser"  # substituted at emit time
-REPO="browser-bridge"
+ORG="${ORG:-dkisser}"  # substituted at emit time; env override enables testing/mirrors
+REPO="${REPO:-browser-bridge}"
 BB_VERSION="${BB_VERSION:-}"
 BB_HOME="${BB_HOME:-$HOME/.browser-bridge}"
 
@@ -54,8 +54,11 @@ write_artifacts() {
   fetch_bridge_template
   mkdir -p "$BB_HOME/bin"
   info "Writing bridge to $BB_HOME/bin/bridge"
-  sed -e "s|{{BRIDGE_VERSION}}|${version}|g" -e "s|{{ORG}}|${ORG}|g" "$BRIDGE_TEMPLATE_PATH" > "$BB_HOME/bin/bridge"
-  chmod +x "$BB_HOME/bin/bridge"
+  local tmp_bridge
+  tmp_bridge=$(mktemp "$BB_HOME/bin/bridge.XXXXXX")
+  sed -e "s|{{BRIDGE_VERSION}}|${version}|g" -e "s|{{ORG}}|${ORG}|g" -e "s|{{REPO}}|${REPO}|g" "$BRIDGE_TEMPLATE_PATH" > "$tmp_bridge"
+  chmod +x "$tmp_bridge"
+  mv "$tmp_bridge" "$BB_HOME/bin/bridge"
   echo "$version" > "$BB_HOME/version"
   mkdir -p "$HOME/.local/bin"
   ln -sf "$BB_HOME/bin/bridge" "$HOME/.local/bin/bridge"

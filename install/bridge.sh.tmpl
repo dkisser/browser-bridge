@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Browser Bridge orchestrator. Sourced into install.sh and emitted at install time.
-# Template markers {{BRIDGE_VERSION}} and {{ORG}} are substituted at emit time.
+# See install/install.sh write_artifacts() for substitution details.
 set -euo pipefail
 
 BRIDGE_VERSION="{{BRIDGE_VERSION}}"
@@ -177,7 +177,7 @@ cmd_restart() {
 
 cmd_update() {
   local target="${1:-latest}"
-  local installer_url="https://raw.githubusercontent.com/${ORG}/${REPO}/main/install/install.sh"
+  local installer_url="https://raw.githubusercontent.com/{{ORG}}/{{REPO}}/main/install/install.sh"
   info "Updating to $target"
   BB_VERSION="$target" bash -c "$(curl -fsSL "$installer_url")" \
     || die "BB-E103: update failed"
