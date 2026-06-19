@@ -95,18 +95,15 @@ See [`docs/architecture-diagram.html`](./docs/architecture-diagram.html) for the
 curl -fsSL https://raw.githubusercontent.com/dkisser/browser-bridge/main/install/install.sh | bash
 ```
 
-### Option B: Build from source
+### Option B: Build from source (contributors only)
 
-```bash
-git clone https://github.com/dkisser/browser-bridge.git
-cd browser-bridge
-bun install
-bun run build:cli
-```
+See the [Development](#-development) section below. You only need this if you are contributing to Browser Bridge.
 
 ---
 
 ## 🛠️ Development
+
+> The steps below are for contributors/developers only. End users do not need to install `bun` or `git`.
 
 ```bash
 # 1. Install dependencies

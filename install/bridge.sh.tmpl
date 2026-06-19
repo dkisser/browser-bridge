@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 # Browser Bridge orchestrator. Sourced into install.sh and emitted at install time.
-# Template markers {{BRIDGE_VERSION}} and {{ORG}} are substituted at emit time.
+# See install/install.sh write_artifacts() for substitution details.
 set -euo pipefail
 
 BRIDGE_VERSION="{{BRIDGE_VERSION}}"
 
 WS_PORT="${BRIDGE_WS_PORT:-3001}"
 LOCAL_PROXY_PORT="${BRIDGE_LOCAL_PROXY_PORT:-3002}"
-REPO_DIR="${BB_HOME:-$HOME/.browser-bridge}/repo"
 LOG_DIR="${BB_HOME:-$HOME/.browser-bridge}/logs"
 RUN_DIR="${BB_HOME:-$HOME/.browser-bridge}/run"
 
@@ -53,10 +52,9 @@ cmd_version() {
 
 cmd_doctor() {
   local rc=0
-  command -v bun >/dev/null && echo "[OK] bun on PATH ($(command -v bun))" \
-    || { echo "[FAIL] bun on PATH"; rc=1; }
-  [[ -d "$REPO_DIR" ]] && echo "[OK] repo present" \
-    || { echo "[FAIL] repo present"; rc=1; }
+  [[ -x "$BB_HOME/bin/ws-server" ]]   && echo "[OK] ws-server binary present"   || { echo "[FAIL] ws-server binary missing"; rc=1; }
+  [[ -x "$BB_HOME/bin/local-proxy" ]] && echo "[OK] local-proxy binary present" || { echo "[FAIL] local-proxy binary missing"; rc=1; }
+  [[ -x "$BB_HOME/bin/bridge-cmd" ]]  && echo "[OK] bridge-cmd binary present"  || { echo "[FAIL] bridge-cmd binary missing"; rc=1; }
   if [[ -f "$BB_HOME/extension/manifest.json" ]] && python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$BB_HOME/extension/manifest.json" 2>/dev/null; then
     echo "[OK] extension/manifest.json valid"
   else
@@ -83,7 +81,7 @@ except (OSError, socket.timeout):
 }
 
 start_service() {
-  local name="$1" cwd="$2" port="$3"
+  local name="$1" binary="$2" port="$3"
   local logfile="$LOG_DIR/${name}.log" pidfile="$RUN_DIR/${name}.pid"
   if [[ -f "$pidfile" ]] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
     info "$name already running (pid $(cat "$pidfile"))"
@@ -92,7 +90,7 @@ start_service() {
   if port_in_use "$port"; then
     die "BB-E010: $name port $port is already in use"
   fi
-  ( cd "$cwd" && exec bun run start >"$logfile" 2>&1 ) & pid=$!
+  ( exec "$binary" >"$logfile" 2>&1 ) & pid=$!
   disown
   echo "$pid" >"$pidfile"
   for _ in {1..50}; do
@@ -108,10 +106,11 @@ start_service() {
 }
 
 cmd_up() {
-  [[ -d "$REPO_DIR" ]] || die "BB-E002: install not run. Execute the install script first."
+  [[ -x "$BB_HOME/bin/ws-server" ]] || die "BB-E002: install not run. Execute the install script first."
+  [[ -x "$BB_HOME/bin/local-proxy" ]] || die "BB-E002: install not run. Execute the install script first."
   mkdir -p "$LOG_DIR" "$RUN_DIR"
-  BRIDGE_WS_PORT="$WS_PORT" start_service ws-server "$REPO_DIR/apps/websocket" "$WS_PORT"
-  BRIDGE_LOCAL_PORT="$LOCAL_PROXY_PORT" BRIDGE_LOCAL_PROXY_PORT="$LOCAL_PROXY_PORT" BRIDGE_WS_URL="ws://127.0.0.1:$WS_PORT" start_service local-proxy "$REPO_DIR/apps/local-proxy" "$LOCAL_PROXY_PORT"
+  BRIDGE_WS_PORT="$WS_PORT" start_service ws-server "$BB_HOME/bin/ws-server" "$WS_PORT"
+  BRIDGE_LOCAL_PORT="$LOCAL_PROXY_PORT" BRIDGE_LOCAL_PROXY_PORT="$LOCAL_PROXY_PORT" BRIDGE_WS_URL="ws://127.0.0.1:$WS_PORT" start_service local-proxy "$BB_HOME/bin/local-proxy" "$LOCAL_PROXY_PORT"
   info "bridge up: ws-server=$(cat "$RUN_DIR/ws-server.pid"), local-proxy=$(cat "$RUN_DIR/local-proxy.pid")"
 }
 
@@ -178,14 +177,11 @@ cmd_restart() {
 
 cmd_update() {
   local target="${1:-latest}"
-  local installer="${BB_INSTALL_SH:-$REPO_DIR/install/install.sh}"
-  if [[ ! -x "$installer" ]]; then
-    die "BB-E103: cannot find installer at $installer"
-  fi
+  local installer_url="https://raw.githubusercontent.com/{{ORG}}/{{REPO}}/main/install/install.sh"
   info "Updating to $target"
-  BB_VERSION="$target" "$installer" "$target"
-  # Restart only if the install left us a usable repo (e.g. a stub in tests won't).
-  [[ -d "$REPO_DIR" ]] && cmd_restart || true
+  BB_VERSION="$target" bash -c "$(curl -fsSL "$installer_url")" \
+    || die "BB-E103: update failed"
+  [[ -d "$BB_HOME" ]] && cmd_restart || true
 }
 
 cmd_uninstall() {
