@@ -101,7 +101,7 @@ export class LocalServer {
           ws.send(encode('event', { event: 'connected' }));
           self.handlers.onConnect();
         },
-        message(ws, message) {
+        message(_ws, message) {
           const text =
             typeof message === 'string'
               ? message

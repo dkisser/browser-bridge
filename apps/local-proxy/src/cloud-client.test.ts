@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, test, expect } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { CloudClient } from './cloud-client';
 
 describe('CloudClient', () => {
