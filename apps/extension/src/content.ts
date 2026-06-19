@@ -15,9 +15,10 @@ function querySelectorByText(text: string): Element {
     document.body,
     NodeFilter.SHOW_ELEMENT,
   );
-  let node: Element | null;
-  while ((node = walker.nextNode() as Element | null)) {
+  let node: Element | null = walker.nextNode() as Element | null;
+  while (node) {
     if (node.textContent?.trim() === text) return node;
+    node = walker.nextNode() as Element | null;
   }
   throw new Error(`Element with text not found: ${text}`);
 }

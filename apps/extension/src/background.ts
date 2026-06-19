@@ -5,7 +5,7 @@
 
 const OFFSCREEN_DOCUMENT_URL = 'offscreen.html';
 
-let wsConnected = false;
+let _wsConnected = false;
 let creatingOffscreen: Promise<void> | null = null;
 
 async function ensureOffscreenDocument(): Promise<void> {
@@ -231,7 +231,7 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
 
   // Status update from offscreen document
   if (request.type === 'ws_status') {
-    wsConnected = request.connected;
+    _wsConnected = request.connected;
     return false;
   }
 
