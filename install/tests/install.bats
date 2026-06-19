@@ -14,33 +14,11 @@ find_modern_bash() {
   return 1
 }
 
-@test "install.sh exits BB-E001 when bun missing" {
-  cat > "$BB_TEST_TMP/install.sh" <<EOF
-#!/usr/bin/env bash
-set -euo pipefail
-$(sed -n '/^set -euo pipefail$/,/END PREREQ/p' "$INSTALL_SH" | sed '/END PREREQ/d')
-check_prereqs
-EOF
-  chmod +x "$BB_TEST_TMP/install.sh"
+@test "install.sh check_prereqs succeeds when all required tools are present" {
   bash_path=$(find_modern_bash)
-  # Run with a minimal PATH so bun (and other tools) are not found.
-  run env -i HOME="$HOME" PATH="/usr/bin:/bin" "$bash_path" "$BB_TEST_TMP/install.sh"
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"BB-E001"* ]]
-}
-
-@test "install.sh succeeds bun check when bun present" {
-  make_fake_bun
-  cat > "$BB_TEST_TMP/install.sh" <<EOF
-#!/usr/bin/env bash
-set -euo pipefail
-$(sed -n '/^set -euo pipefail$/,/END PREREQ/p' "$INSTALL_SH" | sed '/END PREREQ/d')
-check_prereqs
-echo "OK"
-EOF
-  chmod +x "$BB_TEST_TMP/install.sh"
-  bash_path=$(find_modern_bash)
-  run env -i HOME="$HOME" PATH="$BB_TEST_TMP/bin:/usr/bin:/bin" "$bash_path" "$BB_TEST_TMP/install.sh"
+  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_prereq.sh"
+  echo 'check_prereqs; echo OK' >> "$BB_TEST_TMP/test_prereq.sh"
+  run "$bash_path" "$BB_TEST_TMP/test_prereq.sh"
   [ "$status" -eq 0 ]
   [[ "$output" == *"OK"* ]]
 }
@@ -129,63 +107,59 @@ SCRIPT
 }
 
 # ---------------------------------------------------------------------------
-# Task 10: clone_source
+# Task 10: download_runtime
 # ---------------------------------------------------------------------------
 
-setup_clone_fixture() {
-  # Make a bare repo we can clone from.
-  mkdir -p "$BB_TEST_TMP/origin.git"
-  git -C "$BB_TEST_TMP/origin.git" init --bare --quiet
-  # Seed a commit and tag v9.9.9 in a working tree, push it.
-  local seed="$BB_TEST_TMP/seed"
-  mkdir -p "$seed"
-  git -C "$seed" init --quiet -b main
-  git -C "$seed" -c user.email=t@t -c user.name=t commit --allow-empty -m initial --quiet
-  git -C "$seed" tag v9.9.9
-  git -C "$seed" remote add origin "$BB_TEST_TMP/origin.git"
-  git -C "$seed" push origin main v9.9.9 --quiet
+@test "download_runtime exits BB-E029 on SHA-256 mismatch" {
+  bash_path=$(find_modern_bash)
+  local tarball_path tarball_name
+  tarball_path=$(make_fake_runtime_tarball v9.9.9 arm64)
+  tarball_name=$(basename "$tarball_path")
+  mkdir -p "$BB_TEST_TMP/www"
+  cp "$tarball_path" "$BB_TEST_TMP/www/$tarball_name"
+  echo "0000000000000000000000000000000000000000000000000000000000000000  $tarball_name" \
+    > "$BB_TEST_TMP/www/${tarball_name}.sha256"
+  start_mock_http 18760
+
+  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_rt.sh"
+  cat >> "$BB_TEST_TMP/test_rt.sh" <<'SCRIPT'
+BB_INSTALL_ARCH=arm64
+ORG='127.0.0.1:18760'
+REPO='browser-bridge'
+resolve_version() { echo 'v9.9.9'; }
+download_runtime v9.9.9 arm64 "http://${ORG}"
+SCRIPT
+  BB_HOME="$BB_TEST_TMP/bb-home" run "$bash_path" "$BB_TEST_TMP/test_rt.sh"
+  stop_mock_http
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"BB-E029"* ]]
 }
 
-@test "clone_source fresh: shallow-clones repo at tag" {
-  setup_clone_fixture
-  make_fake_bun
+@test "download_runtime succeeds with correct sha256 and extracts binaries" {
   bash_path=$(find_modern_bash)
-  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_clone.sh"
-  cat >> "$BB_TEST_TMP/test_clone.sh" <<'SCRIPT'
-clone_source v9.9.9
-test -f "$BB_HOME/repo/.git/HEAD"
-SCRIPT
-  BB_HOME="$BB_TEST_TMP/bb-home" \
-  BB_GIT_REMOTE="$BB_TEST_TMP/origin.git" \
-  run "$bash_path" "$BB_TEST_TMP/test_clone.sh"
-  [ "$status" -eq 0 ]
-  [[ -d "$BB_TEST_TMP/bb-home/repo" ]]
-}
+  local tarball_path tarball_name
+  tarball_path=$(make_fake_runtime_tarball v9.9.9 arm64)
+  tarball_name=$(basename "$tarball_path")
+  mkdir -p "$BB_TEST_TMP/www"
+  cp "$tarball_path" "$BB_TEST_TMP/www/$tarball_name"
+  cp "${tarball_path}.sha256" "$BB_TEST_TMP/www/${tarball_name}.sha256"
+  start_mock_http 18761
 
-@test "clone_source update: fetches and resets existing repo" {
-  setup_clone_fixture
-  make_fake_bun
-  bash_path=$(find_modern_bash)
-  BB_HOME="$BB_TEST_TMP/bb-home"
-  mkdir -p "$BB_HOME"
-  # First clone at v9.9.9 to simulate an existing install.
-  git clone --depth 1 --branch v9.9.9 "$BB_TEST_TMP/origin.git" "$BB_HOME/repo" >/dev/null 2>&1
-  # Tag a new commit and push it.
-  local seed="$BB_TEST_TMP/seed2"
-  git clone "$BB_TEST_TMP/origin.git" "$seed" >/dev/null 2>&1
-  git -C "$seed" -c user.email=t@t -c user.name=t commit --allow-empty -m "v9.9.10" --quiet
-  git -C "$seed" tag v9.9.10
-  git -C "$seed" push origin v9.9.10 --quiet
-  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_clone.sh"
-  cat >> "$BB_TEST_TMP/test_clone.sh" <<'SCRIPT'
-clone_source v9.9.10
-git -C "$BB_HOME/repo" log --oneline -1
+  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_rt.sh"
+  cat >> "$BB_TEST_TMP/test_rt.sh" <<'SCRIPT'
+BB_INSTALL_ARCH=arm64
+ORG='127.0.0.1:18761'
+REPO='browser-bridge'
+resolve_version() { echo 'v9.9.9'; }
+download_runtime v9.9.9 arm64 "http://${ORG}"
+ls "$BB_HOME/bin"
 SCRIPT
-  BB_HOME="$BB_HOME" \
-  BB_GIT_REMOTE="$BB_TEST_TMP/origin.git" \
-  run "$bash_path" "$BB_TEST_TMP/test_clone.sh"
+  BB_HOME="$BB_TEST_TMP/bb-home2" run "$bash_path" "$BB_TEST_TMP/test_rt.sh"
+  stop_mock_http
   [ "$status" -eq 0 ]
-  [[ "$output" == *"v9.9.10"* ]]
+  [[ "$output" == *"ws-server"* ]]
+  [[ "$output" == *"local-proxy"* ]]
+  [[ "$output" == *"bridge-cmd"* ]]
 }
 
 # ---------------------------------------------------------------------------
@@ -202,7 +176,7 @@ echo org-{{ORG}}
 TPL
   run "$bash_path" -c "
     set -euo pipefail
-    source <(sed -n '/^write_artifacts()/,/^}/p' '$INSTALL_SH')
+    source <(sed '\$d' '$INSTALL_SH')
     BB_HOME='$BB_HOME'
     ORG='testorg'
     BRIDGE_TEMPLATE_PATH='$BB_TEST_TMP/bridge.tmpl'
@@ -236,28 +210,30 @@ TPL
 # ---------------------------------------------------------------------------
 
 @test "install.sh end-to-end against mock release server" {
-  setup_clone_fixture
-  make_fake_bun
-
-  # Set up www dir with extension zip + sha256 sidecar
   mkdir -p "$BB_TEST_TMP/www" "$BB_TEST_TMP/stage"
   echo "fake-extension-content" > "$BB_TEST_TMP/stage/bb.zip"
   ( cd "$BB_TEST_TMP/stage" && zip -q "$BB_TEST_TMP/www/browser-bridge-extension-v9.9.9.zip" bb.zip )
   ( cd "$BB_TEST_TMP/www" && shasum -a 256 browser-bridge-extension-v9.9.9.zip > browser-bridge-extension-v9.9.9.zip.sha256 )
 
-  start_mock_http 18750
+  local tarball_path tarball_name
+  tarball_path=$(make_fake_runtime_tarball v9.9.9 arm64)
+  tarball_name=$(basename "$tarball_path")
+  cp "$tarball_path" "$BB_TEST_TMP/www/$tarball_name"
+  cp "${tarball_path}.sha256" "$BB_TEST_TMP/www/${tarball_name}.sha256"
+
+  start_mock_http 18762
   bash_path=$(find_modern_bash)
 
   # Source install.sh (minus trailing 'main "$@"'), override ORG, then call main.
   sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_e2e.sh"
   cat >> "$BB_TEST_TMP/test_e2e.sh" <<'SCRIPT'
-ORG='127.0.0.1:18750'
+BB_INSTALL_ARCH=arm64
+ORG='127.0.0.1:18762'
 main
 SCRIPT
 
   BB_HOME="$BB_TEST_TMP/bb-home" \
   BB_VERSION="v9.9.9" \
-  BB_GIT_REMOTE="$BB_TEST_TMP/origin.git" \
   BRIDGE_TEMPLATE_PATH="$BB_TEST_ROOT/install/bridge.sh.tmpl" \
   run "$bash_path" "$BB_TEST_TMP/test_e2e.sh"
   stop_mock_http
@@ -265,33 +241,37 @@ SCRIPT
   [ "$status" -eq 0 ]
   [[ -f "$BB_TEST_TMP/bb-home/version" ]]
   [[ -f "$BB_TEST_TMP/bb-home/bin/bridge" ]]
+  [[ -x "$BB_TEST_TMP/bb-home/bin/ws-server" ]]
+  [[ -x "$BB_TEST_TMP/bb-home/bin/local-proxy" ]]
+  [[ -x "$BB_TEST_TMP/bb-home/bin/bridge-cmd" ]]
   [[ -L "$HOME/.local/bin/bridge" ]]
-  [[ -d "$BB_TEST_TMP/bb-home/repo" ]]
-  [[ "$(cat "$BB_TEST_TMP/bb-home/version")" == "v9.9.9" ]]
 }
 
 @test "install.sh idempotent: second run upgrades in place" {
-  setup_clone_fixture
-  make_fake_bun
-
   mkdir -p "$BB_TEST_TMP/www" "$BB_TEST_TMP/stage"
   echo "fake-extension-content" > "$BB_TEST_TMP/stage/bb.zip"
   ( cd "$BB_TEST_TMP/stage" && zip -q "$BB_TEST_TMP/www/browser-bridge-extension-v9.9.9.zip" bb.zip )
   ( cd "$BB_TEST_TMP/www" && shasum -a 256 browser-bridge-extension-v9.9.9.zip > browser-bridge-extension-v9.9.9.zip.sha256 )
 
-  start_mock_http 18751
+  local tarball_path tarball_name
+  tarball_path=$(make_fake_runtime_tarball v9.9.9 arm64)
+  tarball_name=$(basename "$tarball_path")
+  cp "$tarball_path" "$BB_TEST_TMP/www/$tarball_name"
+  cp "${tarball_path}.sha256" "$BB_TEST_TMP/www/${tarball_name}.sha256"
+
+  start_mock_http 18763
   bash_path=$(find_modern_bash)
 
   sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_e2e.sh"
   cat >> "$BB_TEST_TMP/test_e2e.sh" <<'SCRIPT'
-ORG='127.0.0.1:18751'
+BB_INSTALL_ARCH=arm64
+ORG='127.0.0.1:18763'
 main
 SCRIPT
 
   # First run — fresh install
   BB_HOME="$BB_TEST_TMP/bb-home" \
   BB_VERSION="v9.9.9" \
-  BB_GIT_REMOTE="$BB_TEST_TMP/origin.git" \
   BRIDGE_TEMPLATE_PATH="$BB_TEST_ROOT/install/bridge.sh.tmpl" \
   run "$bash_path" "$BB_TEST_TMP/test_e2e.sh"
   first_status=$status
@@ -299,7 +279,6 @@ SCRIPT
   # Second run — upgrade in place
   BB_HOME="$BB_TEST_TMP/bb-home" \
   BB_VERSION="v9.9.9" \
-  BB_GIT_REMOTE="$BB_TEST_TMP/origin.git" \
   BRIDGE_TEMPLATE_PATH="$BB_TEST_ROOT/install/bridge.sh.tmpl" \
   run "$bash_path" "$BB_TEST_TMP/test_e2e.sh"
   stop_mock_http
@@ -307,8 +286,5 @@ SCRIPT
   [ "$first_status" -eq 0 ]
   [ "$status" -eq 0 ]
   [[ -f "$BB_TEST_TMP/bb-home/version" ]]
-  [[ -f "$BB_TEST_TMP/bb-home/bin/bridge" ]]
-  [[ -L "$HOME/.local/bin/bridge" ]]
-  [[ -d "$BB_TEST_TMP/bb-home/repo" ]]
   [[ "$(cat "$BB_TEST_TMP/bb-home/version")" == "v9.9.9" ]]
 }

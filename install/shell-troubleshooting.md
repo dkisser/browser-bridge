@@ -1,6 +1,6 @@
 # Shell 环境排查指南
 
-Browser Bridge 的安装脚本需要 Bash ≥ 4，而项目日常开发通常使用 zsh。本指南整理 macOS 上常见的 shell 相关问题：Bash 升级、PATH 顺序、默认 shell 切换等。
+Browser Bridge 的安装脚本要求 Bash ≥ 4。macOS 系统自带的 `/bin/bash` 长期停留在 3.2.x，因此需要先升级到新版 Bash。本指南只保留 Bash 升级步骤；安装完成后不再需要额外配置 PATH 来加载 `bun` 或源码目录。
 
 ---
 
@@ -172,59 +172,3 @@ GNU bash, version 5.3.15(1)-release
 - [ ] `chsh -s <brew-bash-path>` 已执行并重新登录
 - [ ] `~/.bash_profile` 中 `PATH` 将 Homebrew `bin` 排在前面
 - [ ] `bash --version` 显示 5.x
-
----
-
-## 排查当前终端使用的 Shell
-
-安装脚本本身依赖 Bash（≥ 4），但安装完成后启动项目时，你的终端可能是 **zsh** 或 **bash**。`.zshrc` 只对 zsh 生效，`.bashrc`/`.bash_profile` 只对 bash 生效。如果环境变量（例如 `bun` 的 PATH）看起来没有生效，首先要确认当前终端实际使用的是哪个 shell。
-
-### 查看当前 shell
-
-```bash
-echo "默认登录 shell: $SHELL"
-echo "当前 shell: $0"
-```
-
-也可以直接查看账户配置：
-
-```bash
-dscl . -read /Users/$USER UserShell
-```
-
-### 为什么终端默认是 bash
-
-macOS 从 Catalina（10.15）开始，新建账户默认使用 zsh。但如果你是从更早的系统升级上来的，或者之前手动执行过 `chsh -s /bin/bash`，账户的默认 shell 可能仍然是 bash。
-
-### 切换到 zsh
-
-```bash
-chsh -s /bin/zsh
-```
-
-按提示输入密码。之后**完全退出终端**（按 `Cmd + Q`，不能只关窗口）并重新打开。
-
-验证：
-
-```zsh
-echo $SHELL
-# 应该输出 /bin/zsh
-```
-
-### 终端应用可能强制指定 bash
-
-即使账户默认 shell 已是 zsh，终端应用仍可能被配置为启动 bash：
-
-- **Terminal.app**：`Settings → General → Shells open with`，选择 `Default login shell`。
-- **iTerm2**：`Settings → Profiles → Default → General → Command`，选择 `Login shell`。
-- **VS Code 集成终端**：检查 `settings.json` 中的 `terminal.integrated.defaultProfile.osx`，确保是 `zsh`，或删除该配置以跟随系统默认。
-
-### 切换后让配置生效
-
-如果 `.zshrc` 里已经配置了 bun 等环境变量，切换到 zsh 后手动 source 一次：
-
-```zsh
-source ~/.zshrc
-```
-
-下次打开新终端时，`.zshrc` 会自动加载。

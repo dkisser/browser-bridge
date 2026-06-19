@@ -44,9 +44,13 @@ describe('build-extension-zip.sh', () => {
     expect(existsSync(zipPath)).toBe(true);
     expect(existsSync(shaPath)).toBe(true);
 
-    const listed = spawnSync('unzip', ['-l', zipPath], { encoding: 'utf8' });
-    expect(listed.stdout).toContain('manifest.json');
-    expect(listed.stdout).toContain('background.js');
+    const listed = spawnSync('unzip', ['-Z1', zipPath], { encoding: 'utf8' });
+    const entries = listed.stdout.split('\n').map((line) => line.trim());
+    // Flat zip: files sit at the root so Chrome "Load unpacked" and install.sh
+    // find manifest.json directly under ~/.browser-bridge/extension/.
+    expect(entries).toContain('manifest.json');
+    expect(entries).toContain('background.js');
+    expect(entries).not.toContain('browser-bridge-extension-v1.2.3/');
 
     const expectedSha = readFileSync(shaPath, 'utf8').split(/\s+/)[0];
     const actual = spawnSync('shasum', ['-a', '256', zipPath], {

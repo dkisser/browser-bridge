@@ -13,8 +13,9 @@ fi
 
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
-mkdir -p "$STAGE/$NAME"
-cp -R "$DIST/." "$STAGE/$NAME/"
+# Copy dist contents flat so the zip root is the extension root (manifest.json
+# is at the top level), matching what install.sh and Chrome "Load unpacked" expect.
+cp -R "$DIST/." "$STAGE/"
 
 OUT_DIR="${OUT_DIR:-.}"
 # Resolve to an absolute path so the subshell `cd "$STAGE"` below
@@ -23,8 +24,8 @@ OUT_DIR="$(cd "$OUT_DIR" && pwd)"
 ZIP_PATH="$OUT_DIR/${NAME}.zip"
 SHA_PATH="${ZIP_PATH}.sha256"
 
-( cd "$STAGE" && zip -qr "$ZIP_PATH" "$NAME" )
-( cd "$STAGE" && shasum -a 256 "$ZIP_PATH" | awk -v f="$(basename "$ZIP_PATH")" '{print $1"  "f}' > "$SHA_PATH" )
+( cd "$STAGE" && zip -qr "$ZIP_PATH" . )
+( cd "$OUT_DIR" && shasum -a 256 "$ZIP_PATH" | awk -v f="$(basename "$ZIP_PATH")" '{print $1"  "f}' > "$SHA_PATH" )
 
 echo "$ZIP_PATH"
 echo "$SHA_PATH"
