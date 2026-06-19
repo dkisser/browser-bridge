@@ -95,18 +95,15 @@ bridge navigate https://github.com --browser <browser-id>
 curl -fsSL https://raw.githubusercontent.com/dkisser/browser-bridge/main/install/install.sh | bash
 ```
 
-### 方案 B：从源码构建
+### 方案 B：从源码构建（仅贡献者）
 
-```bash
-git clone https://github.com/dkisser/browser-bridge.git
-cd browser-bridge
-bun install
-bun run build:cli
-```
+普通用户无需执行。开发者请参考下方的 [🛠️ 开发](#-开发) 章节。
 
 ---
 
 ## 🛠️ 开发
+
+> 以下步骤仅适用于贡献者/开发者，终端用户无需安装 `bun` 或 `git`。
 
 ```bash
 # 1. 安装依赖
