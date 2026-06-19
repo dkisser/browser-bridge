@@ -15,6 +15,10 @@ export class CloudClient {
     return this.manualDisconnect;
   }
 
+  get reconnectAttemptsForTest(): number {
+    return this.reconnectAttempts;
+  }
+
   constructor(opts: {
     serverUrl: string;
     apiToken: string;
@@ -41,7 +45,9 @@ export class CloudClient {
         onClose: () => {
           console.log('[cloud] disconnected');
           this.client = null;
-          this.scheduleReconnect();
+          if (!this.manualDisconnect) {
+            this.scheduleReconnect();
+          }
         },
       });
 
