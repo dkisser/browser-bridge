@@ -174,3 +174,40 @@ setup_up() {
   [ "$status" -eq 0 ]
   [[ ! -d "$BB_HOME" ]]
 }
+
+@test "bridge update fetches the self-contained release installer" {
+  local tmpl="$BB_TEST_TMP/bridge-substituted.sh"
+  sed -e "s|{{ORG}}|dkisser|g" -e "s|{{REPO}}|browser-bridge|g" "$BRIDGE_TMPL" > "$tmpl"
+
+  cat > "$BB_TEST_TMP/update_test.sh" <<EOF
+BB_HOME=/nonexistent
+source '$tmpl'
+curl() { printf '%s\n' "curl-url: \${*: -1}" >> '$BB_TEST_TMP/update.log'; printf '#!/usr/bin/env bash\necho installed\n'; }
+bash() { printf '%s\n' "bash-args: \$*" >> '$BB_TEST_TMP/update.log'; }
+cmd_update 'v9.9.9'
+EOF
+
+  run bash "$BB_TEST_TMP/update_test.sh"
+  [ "$status" -eq 0 ]
+  [[ -f "$BB_TEST_TMP/update.log" ]]
+  grep -q 'curl-url: https://github.com/dkisser/browser-bridge/releases/download/v9.9.9/install.sh' "$BB_TEST_TMP/update.log"
+}
+
+@test "bridge update latest fetches the latest release installer" {
+  local tmpl="$BB_TEST_TMP/bridge-substituted-latest.sh"
+  sed -e "s|{{ORG}}|dkisser|g" -e "s|{{REPO}}|browser-bridge|g" "$BRIDGE_TMPL" > "$tmpl"
+
+  cat > "$BB_TEST_TMP/update_latest_test.sh" <<EOF
+BB_HOME=/nonexistent
+source '$tmpl'
+curl() { printf '%s\n' "curl-url: \${*: -1}" >> '$BB_TEST_TMP/update-latest.log'; printf '#!/usr/bin/env bash\necho installed\n'; }
+bash() { printf '%s\n' "bash-args: \$*" >> '$BB_TEST_TMP/update-latest.log'; }
+cmd_update
+EOF
+
+  run bash "$BB_TEST_TMP/update_latest_test.sh"
+  [ "$status" -eq 0 ]
+  [[ -f "$BB_TEST_TMP/update-latest.log" ]]
+  grep -q 'curl-url: https://github.com/dkisser/browser-bridge/releases/latest/download/install.sh' "$BB_TEST_TMP/update-latest.log"
+}
+

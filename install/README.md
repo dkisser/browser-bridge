@@ -9,7 +9,7 @@ One-line install for macOS and Linux.
 ## Quick Start
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dkisser/browser-bridge/main/install/install.sh | bash
+curl -fsSL https://github.com/dkisser/browser-bridge/releases/latest/download/install.sh | bash
 ```
 
 To pin a version: `BB_VERSION=v1.2.3 curl ... | bash`.

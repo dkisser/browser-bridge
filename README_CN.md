@@ -40,7 +40,7 @@
 ### 1. 安装 CLI 和扩展
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dkisser/browser-bridge/main/install/install.sh | bash
+curl -fsSL https://github.com/dkisser/browser-bridge/releases/latest/download/install.sh | bash
 ```
 
 在 Chrome 中加载 `~/.browser-bridge/extension/` 作为解压扩展，然后运行：
@@ -92,7 +92,7 @@ bridge navigate https://github.com --browser <browser-id>
 ### 方案 A：一行命令安装（推荐）
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dkisser/browser-bridge/main/install/install.sh | bash
+curl -fsSL https://github.com/dkisser/browser-bridge/releases/latest/download/install.sh | bash
 ```
 
 ### 方案 B：从源码构建（仅贡献者）

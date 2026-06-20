@@ -40,7 +40,7 @@
 ### 1. Install the CLI and extension
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dkisser/browser-bridge/main/install/install.sh | bash
+curl -fsSL https://github.com/dkisser/browser-bridge/releases/latest/download/install.sh | bash
 ```
 
 Load `~/.browser-bridge/extension/` as an unpacked extension in Chrome, then run:
@@ -92,7 +92,7 @@ See [`docs/architecture-diagram.html`](./docs/architecture-diagram.html) for the
 ### Option A: One-line installer (recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dkisser/browser-bridge/main/install/install.sh | bash
+curl -fsSL https://github.com/dkisser/browser-bridge/releases/latest/download/install.sh | bash
 ```
 
 ### Option B: Build from source (contributors only)

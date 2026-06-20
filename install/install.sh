@@ -43,7 +43,18 @@ fetch_bridge_template() {
   [[ -n "${BRIDGE_TEMPLATE_PATH:-}" && -f "$BRIDGE_TEMPLATE_PATH" ]] && return 0
   local tmpdir
   tmpdir=$(mktemp -d)
-  local url="https://raw.githubusercontent.com/${ORG}/${REPO}/main/install/bridge.sh.tmpl"
+
+  # Self-contained release installers embed the template after these markers.
+  if grep -q '^__BB_TEMPLATE_BEGIN__$' "$0" 2>/dev/null && grep -q '^__BB_TEMPLATE_END__$' "$0" 2>/dev/null; then
+    awk '/^__BB_TEMPLATE_BEGIN__$/{f=1;next}/^__BB_TEMPLATE_END__$/{f=0}f' "$0" > "${tmpdir}/bridge.sh.tmpl"
+    BRIDGE_TEMPLATE_PATH="${tmpdir}/bridge.sh.tmpl"
+    return 0
+  fi
+
+  # Development fallback: fetch the template from the same release tag as the assets.
+  local version="${1:-}"
+  local tag="${version:-main}"
+  local url="https://raw.githubusercontent.com/${ORG}/${REPO}/${tag}/install/bridge.sh.tmpl"
   curl -fsSL "$url" -o "${tmpdir}/bridge.sh.tmpl" \
     || die "BB-E021: failed to fetch bridge template"
   BRIDGE_TEMPLATE_PATH="${tmpdir}/bridge.sh.tmpl"
@@ -51,7 +62,7 @@ fetch_bridge_template() {
 
 write_artifacts() {
   local version="$1"
-  fetch_bridge_template
+  fetch_bridge_template "$version"
   mkdir -p "$BB_HOME/bin"
   info "Writing bridge to $BB_HOME/bin/bridge"
   local tmp_bridge

@@ -14,6 +14,7 @@
     "build:cli": "bun build --compile apps/cli/src/index.ts --outfile dist/bridge",
     "build:binaries": "bash .github/scripts/build-binaries.sh",
     "build:tarball": "bash .github/scripts/build-tarball.sh",
+    "build:installer": "bash .github/scripts/build-installer.sh",
     "cli": "bun --cwd apps/cli start",
     "dev:local-proxy": "bun --cwd apps/local-proxy dev",
     "type-check": "tsc --noEmit",

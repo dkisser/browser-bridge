@@ -288,3 +288,64 @@ SCRIPT
   [[ -f "$BB_TEST_TMP/bb-home/version" ]]
   [[ "$(cat "$BB_TEST_TMP/bb-home/version")" == "v9.9.9" ]]
 }
+
+@test "build-installer.sh embeds bridge.sh.tmpl into install.sh" {
+  bash "$BB_TEST_ROOT/.github/scripts/build-installer.sh" "$BB_TEST_TMP/self-contained-install.sh"
+  [ -x "$BB_TEST_TMP/self-contained-install.sh" ]
+  grep -q '^__BB_TEMPLATE_BEGIN__$' "$BB_TEST_TMP/self-contained-install.sh"
+  grep -q '^__BB_TEMPLATE_END__$' "$BB_TEST_TMP/self-contained-install.sh"
+  awk '/^__BB_TEMPLATE_BEGIN__$/{f=1;next}/^__BB_TEMPLATE_END__$/{f=0}f' "$BB_TEST_TMP/self-contained-install.sh" > "$BB_TEST_TMP/extracted.tmpl"
+  diff -u "$BB_TEST_ROOT/install/bridge.sh.tmpl" "$BB_TEST_TMP/extracted.tmpl"
+}
+
+@test "self-contained install.sh installs without fetching template from main" {
+  mkdir -p "$BB_TEST_TMP/www" "$BB_TEST_TMP/stage"
+  echo "fake-extension-content" > "$BB_TEST_TMP/stage/bb.zip"
+  ( cd "$BB_TEST_TMP/stage" && zip -q "$BB_TEST_TMP/www/browser-bridge-extension-v9.9.9.zip" bb.zip )
+  ( cd "$BB_TEST_TMP/www" && shasum -a 256 browser-bridge-extension-v9.9.9.zip > browser-bridge-extension-v9.9.9.zip.sha256 )
+
+  local tarball_path tarball_name
+  tarball_path=$(make_fake_runtime_tarball v9.9.9 arm64)
+  tarball_name=$(basename "$tarball_path")
+  cp "$tarball_path" "$BB_TEST_TMP/www/$tarball_name"
+  cp "${tarball_path}.sha256" "$BB_TEST_TMP/www/${tarball_name}.sha256"
+
+  bash "$BB_TEST_ROOT/.github/scripts/build-installer.sh" "$BB_TEST_TMP/self-contained-install.sh"
+
+  start_mock_http 18764
+  bash_path=$(find_modern_bash)
+
+  BB_HOME="$BB_TEST_TMP/bb-home-sc" \
+  BB_VERSION="v9.9.9" \
+  BB_INSTALL_ARCH=arm64 \
+  ORG='127.0.0.1:18764' \
+  REPO='browser-bridge' \
+  run "$bash_path" "$BB_TEST_TMP/self-contained-install.sh"
+  stop_mock_http
+
+  [ "$status" -eq 0 ]
+  [[ -f "$BB_TEST_TMP/bb-home-sc/version" ]]
+  [[ "$(cat "$BB_TEST_TMP/bb-home-sc/version")" == "v9.9.9" ]]
+  [[ -x "$BB_TEST_TMP/bb-home-sc/bin/bridge" ]]
+  [[ -x "$BB_TEST_TMP/bb-home-sc/bin/ws-server" ]]
+  [[ -x "$BB_TEST_TMP/bb-home-sc/bin/local-proxy" ]]
+  [[ -x "$BB_TEST_TMP/bb-home-sc/bin/bridge-cmd" ]]
+}
+
+@test "fetch_bridge_template falls back to versioned tag when no embedded template" {
+  bash_path=$(find_modern_bash)
+  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_fbt.sh"
+  cat >> "$BB_TEST_TMP/test_fbt.sh" <<SCRIPT
+resolve_version() { echo "v9.9.9"; }
+curl() {
+  printf '%s\n' "\$@" > "$BB_TEST_TMP/curl_args.txt"
+  touch "\${4:-$BB_TEST_TMP/bridge.sh.tmpl}"
+}
+fetch_bridge_template "v9.9.9"
+cat "$BB_TEST_TMP/curl_args.txt"
+SCRIPT
+  run "$bash_path" "$BB_TEST_TMP/test_fbt.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"v9.9.9/install/bridge.sh.tmpl"* ]]
+}
+
