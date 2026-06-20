@@ -4,6 +4,15 @@ All notable changes to Browser Bridge are documented here. The format follows [K
 
 ## [Unreleased]
 
+## [0.0.3] - 2026-06-20
+
+### Added
+- Self-contained `install.sh` release asset. The installer now embeds the `bridge` orchestrator template so installations no longer fetch scripts from the `main` branch.
+- `bridge update [version]` fetches the installer from the matching release asset URL.
+
+### Fixed
+- `bridge up` failing with an unbound `BB_HOME` variable when the environment did not export it.
+
 ## [0.0.2] - 2026-06-19
 
 ### Added
