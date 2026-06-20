@@ -3,6 +3,7 @@
 # See install/install.sh write_artifacts() for substitution details.
 set -euo pipefail
 
+BB_HOME="${BB_HOME:-$HOME/.browser-bridge}"
 BRIDGE_VERSION="{{BRIDGE_VERSION}}"
 
 WS_PORT="${BRIDGE_WS_PORT:-3001}"

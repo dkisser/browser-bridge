@@ -22,6 +22,15 @@ load helpers
   [[ "$output" == *"bridge {{BRIDGE_VERSION}}"* ]]
 }
 
+@test "bridge works when BB_HOME is not set in environment" {
+  make_fake_binaries
+  mkdir -p "$BB_HOME/extension"
+  echo '{"manifest_version":3}' > "$BB_HOME/extension/manifest.json"
+  run env -u BB_HOME bash "$BRIDGE_TMPL" doctor
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[OK] ws-server binary present"* ]]
+}
+
 setup_up() {
   make_fake_binaries
   mkdir -p "$BB_HOME/logs" "$BB_HOME/run"
