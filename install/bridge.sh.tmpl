@@ -7,7 +7,9 @@ BB_HOME="${BB_HOME:-$HOME/.browser-bridge}"
 BRIDGE_VERSION="{{BRIDGE_VERSION}}"
 
 WS_PORT="${BRIDGE_WS_PORT:-3001}"
+WS_HOSTNAME="${BRIDGE_WS_HOSTNAME:-127.0.0.1}"
 LOCAL_PROXY_PORT="${BRIDGE_LOCAL_PROXY_PORT:-3002}"
+LOCAL_PROXY_HOSTNAME="${BRIDGE_LOCAL_HOSTNAME:-127.0.0.1}"
 LOG_DIR="${BB_HOME:-$HOME/.browser-bridge}/logs"
 RUN_DIR="${BB_HOME:-$HOME/.browser-bridge}/run"
 
@@ -110,8 +112,8 @@ cmd_up() {
   [[ -x "$BB_HOME/bin/ws-server" ]] || die "BB-E002: install not run. Execute the install script first."
   [[ -x "$BB_HOME/bin/local-proxy" ]] || die "BB-E002: install not run. Execute the install script first."
   mkdir -p "$LOG_DIR" "$RUN_DIR"
-  BRIDGE_WS_PORT="$WS_PORT" start_service ws-server "$BB_HOME/bin/ws-server" "$WS_PORT"
-  BRIDGE_LOCAL_PORT="$LOCAL_PROXY_PORT" BRIDGE_LOCAL_PROXY_PORT="$LOCAL_PROXY_PORT" BRIDGE_WS_URL="ws://127.0.0.1:$WS_PORT" start_service local-proxy "$BB_HOME/bin/local-proxy" "$LOCAL_PROXY_PORT"
+  BRIDGE_WS_PORT="$WS_PORT" BRIDGE_WS_HOSTNAME="$WS_HOSTNAME" start_service ws-server "$BB_HOME/bin/ws-server" "$WS_PORT"
+  BRIDGE_LOCAL_PORT="$LOCAL_PROXY_PORT" BRIDGE_LOCAL_HOSTNAME="$LOCAL_PROXY_HOSTNAME" BRIDGE_LOCAL_PROXY_PORT="$LOCAL_PROXY_PORT" BRIDGE_WS_URL="ws://127.0.0.1:$WS_PORT" start_service local-proxy "$BB_HOME/bin/local-proxy" "$LOCAL_PROXY_PORT"
   info "bridge up: ws-server=$(cat "$RUN_DIR/ws-server.pid"), local-proxy=$(cat "$RUN_DIR/local-proxy.pid")"
 }
 

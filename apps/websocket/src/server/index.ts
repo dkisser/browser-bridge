@@ -11,12 +11,14 @@ import type { WsData } from './types';
 export function startServer(
   port = WEBSOCKET_PORT,
   authProvider: AuthProvider = new NoopAuthProvider(),
+  hostname = '127.0.0.1',
 ) {
   const registry = new ConnectionRegistry(authProvider);
   const cliConnections = new Set<ServerWebSocket<WsData>>();
 
   const server = Bun.serve<WsData>({
     port,
+    hostname,
     async fetch(req, server) {
       const url = new URL(req.url);
       const host = url.hostname;

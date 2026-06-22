@@ -1,6 +1,10 @@
 #!/usr/bin/env bun
 import { CloudClient } from './cloud-client';
-import { DEFAULT_LOCAL_PORT, DEFAULT_SERVER_URL } from './config';
+import {
+  DEFAULT_LOCAL_HOSTNAME,
+  DEFAULT_LOCAL_PORT,
+  DEFAULT_SERVER_URL,
+} from './config';
 import { LocalServer } from './local-server';
 import { Router } from './router';
 import { StateManager } from './state';
@@ -24,6 +28,8 @@ async function main() {
     process.env.BRIDGE_SERVER_URL ||
     DEFAULT_SERVER_URL;
   const localPort = Number(process.env.BRIDGE_LOCAL_PORT) || DEFAULT_LOCAL_PORT;
+  const localHostname =
+    process.env.BRIDGE_LOCAL_HOSTNAME || DEFAULT_LOCAL_HOSTNAME;
   const apiToken = process.env.BRIDGE_API_TOKEN;
 
   if (!apiToken && !isLocalhostUrl(serverUrl)) {
@@ -45,23 +51,27 @@ async function main() {
 
   let router: Router;
 
-  const local = new LocalServer(localPort, {
-    onCommand: (envelope) => {
-      if (envelope.type === 'response') {
-        router.handleExtensionResponse(envelope);
-      }
+  const local = new LocalServer(
+    localPort,
+    {
+      onCommand: (envelope) => {
+        if (envelope.type === 'response') {
+          router.handleExtensionResponse(envelope);
+        }
+      },
+      onConnect: () => router.handleExtensionConnect(),
+      onDisconnect: () => router.handleExtensionDisconnect(),
+      cloud: {
+        isConnected: () => cloud.isConnected,
+        isManualDisconnect: () => cloud.isManualDisconnect,
+        connect: () => cloud.connect(),
+        disconnect: () => cloud.close(),
+        browserId: state.browserId,
+        serverUrl,
+      },
     },
-    onConnect: () => router.handleExtensionConnect(),
-    onDisconnect: () => router.handleExtensionDisconnect(),
-    cloud: {
-      isConnected: () => cloud.isConnected,
-      isManualDisconnect: () => cloud.isManualDisconnect,
-      connect: () => cloud.connect(),
-      disconnect: () => cloud.close(),
-      browserId: state.browserId,
-      serverUrl,
-    },
-  });
+    localHostname,
+  );
 
   const cloud = new CloudClient({
     serverUrl,

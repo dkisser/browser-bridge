@@ -23,16 +23,23 @@ export class LocalServer {
   private extensionWs: ServerWebSocket<undefined> | null = null;
   private handlers: LocalServerHandlers;
   private port: number;
+  private hostname: string;
 
-  constructor(port: number, handlers: LocalServerHandlers) {
+  constructor(
+    port: number,
+    handlers: LocalServerHandlers,
+    hostname = '127.0.0.1',
+  ) {
     this.port = port;
     this.handlers = handlers;
+    this.hostname = hostname;
   }
 
   start(): void {
     const self = this;
     this.server = Bun.serve<undefined>({
       port: this.port,
+      hostname: this.hostname,
       async fetch(req, server) {
         if (server.upgrade(req, { data: undefined })) return;
 
