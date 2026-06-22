@@ -10,6 +10,21 @@ import {
 import { resolve } from 'node:path';
 import { defineConfig } from 'vite';
 
+const LOGO_PATH = '../../docs/assets/logo.png';
+
+function copyBuildArtifact(
+  sourcePath: string,
+  destinationPath: string,
+  label: string,
+): void {
+  if (!existsSync(sourcePath)) {
+    throw new Error(
+      `[flatten-html] ${label} not found at ${sourcePath}. Ensure the source file exists.`,
+    );
+  }
+  copyFileSync(sourcePath, destinationPath);
+}
+
 export default defineConfig({
   base: './',
   build: {
@@ -55,9 +70,16 @@ export default defineConfig({
           rmdirSync(srcDir);
         }
 
-        copyFileSync(
+        copyBuildArtifact(
           resolve(__dirname, 'manifest.json'),
           resolve(distDir, 'manifest.json'),
+          'manifest',
+        );
+
+        copyBuildArtifact(
+          resolve(__dirname, LOGO_PATH),
+          resolve(distDir, 'icon.png'),
+          'logo',
         );
       },
     },
