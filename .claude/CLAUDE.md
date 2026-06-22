@@ -26,6 +26,12 @@ Run these from the repository root:
 
 Per-package scripts also exist under `apps/<name>/` and `packages/shared/`.
 
+## Testing notes
+
+- `bun run test` runs the Bun unit/integration tests.
+- `bun run test:install` runs the BATS installer tests. These tests spawn real subprocesses and can hang in some environments if background services are not detached cleanly.
+- **If the BATS installer tests fail or hang twice in a row, fall back to direct bash validation**: simulate `bridge up` with fake binaries, verify ports bind to `127.0.0.1`, and check that external IPs cannot connect. Do not keep retrying BATS indefinitely.
+
 ## Extension build quirks
 
 `apps/extension/vite.config.ts` uses a custom `closeBundle` plugin:

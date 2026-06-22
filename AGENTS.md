@@ -11,3 +11,11 @@ For project structure, commands, architecture, and conventions, see [README.md](
 - **Extension tsconfig**: `apps/extension/tsconfig.json` sets `types: ["chrome"]` only — node-style globals are unavailable.
 - **Extension Vite plugin**: `apps/extension/vite.config.ts` flattens popup.html and copies manifest.json in `closeBundle`. See README for details.
 - **CLI bin entry**: `apps/cli/package.json` points `bin.mycli` at `./src/index.ts` (raw TS, works via Bun).
+
+## Testing
+
+- Use `bun run test` for the Bun unit/integration test suite.
+- Use `bun run test:install` for the BATS installer tests.
+- BATS tests spawn real subprocesses and may hang if background services are not detached cleanly.
+- **If the BATS installer tests fail or hang twice in a row, stop using BATS and validate directly with bash.** Simulate `bridge up` with fake binaries, confirm services bind to `127.0.0.1`, and verify external IPs cannot connect.
+
