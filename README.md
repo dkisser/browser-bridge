@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./apps/extension/public/icon.png" alt="Browser Bridge Logo" width="160" />
+  <img src="./docs/assets/logo.png" alt="Browser Bridge Logo" width="160" />
 </p>
 
 <h1 align="center">Browser Bridge</h1>

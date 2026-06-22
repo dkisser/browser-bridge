@@ -32,6 +32,7 @@ Per-package scripts also exist under `apps/<name>/` and `packages/shared/`.
 
 - It flattens `dist/src/popup.html` to `dist/popup.html` and rewrites `../` asset paths to `./`.
 - It copies `manifest.json` into `dist/` manually.
+- It copies the centralized logo (`docs/assets/logo.png`) to `dist/icon.png` so the Chrome extension package has a single source of truth for the project logo.
 
 When adding new entry points or HTML assets, verify the output paths in `dist/` and update the plugin if the flat layout changes.
 
