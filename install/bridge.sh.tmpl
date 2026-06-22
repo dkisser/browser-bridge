@@ -166,19 +166,32 @@ cmd_status() {
 
 cmd_logs() {
   local name="${1:-}"
+  local pyscript="$BB_HOME/.bridge-logs.py"
+  cat > "$pyscript" <<'PYEOF'
+import sys, subprocess, datetime, signal
+files = sys.argv[1:]
+proc = subprocess.Popen(['tail', '-f'] + files, stdout=subprocess.PIPE, text=True)
+def cleanup(signum, frame):
+    proc.terminate()
+    try:
+        proc.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+    sys.exit(0)
+signal.signal(signal.SIGTERM, cleanup)
+signal.signal(signal.SIGINT, cleanup)
+try:
+    for line in proc.stdout:
+        sys.stdout.write('%s %s' % (datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), line))
+        sys.stdout.flush()
+except BrokenPipeError:
+    cleanup(None, None)
+PYEOF
   case "$name" in
-    ws-server|local-proxy) tail -f "$LOG_DIR/${name}.log" | timestamp_lines ;;
-    "")                    tail -f "$LOG_DIR/ws-server.log" "$LOG_DIR/local-proxy.log" | timestamp_lines ;;
+    ws-server|local-proxy) exec python3 -u "$pyscript" "$LOG_DIR/${name}.log" ;;
+    "")                    exec python3 -u "$pyscript" "$LOG_DIR/ws-server.log" "$LOG_DIR/local-proxy.log" ;;
     *) die "BB-E102: unknown log target '$name' (use ws-server | local-proxy)" ;;
   esac
-}
-
-# Prefix each line read from stdin with the current timestamp.
-timestamp_lines() {
-  local line
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$line"
-  done
 }
 
 cmd_restart() {
