@@ -1,10 +1,14 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import {
-  ApiKeyAuthProvider,
-  NoopAuthProvider,
-} from '@browser-bridge/shared/auth';
+import { ApiKeyAuthProvider } from '@browser-bridge/shared/auth';
+import type { ServerWebSocket } from 'bun';
 import { startServer } from '../index';
 import { ConnectionRegistry } from '../registry';
+import type { WsData } from '../types';
+
+function wsWithAuth(url: string, key: string): WebSocket {
+  const opts = { headers: { Authorization: `Bearer ${key}` } };
+  return new WebSocket(url, opts as never);
+}
 
 describe('WS server routing', () => {
   let server: ReturnType<typeof startServer>;
@@ -91,9 +95,7 @@ describe('WS server handshake auth', () => {
   });
 
   it('closes connection with wrong API key', async () => {
-    const ws = new WebSocket(`ws://localhost:${AUTH_PORT}`, {
-      headers: { Authorization: 'Bearer wrong-key' },
-    } as any);
+    const ws = wsWithAuth(`ws://localhost:${AUTH_PORT}`, 'wrong-key');
 
     const closeEvent = await new Promise<CloseEvent>((resolve) => {
       ws.addEventListener('close', (e) => resolve(e));
@@ -104,9 +106,7 @@ describe('WS server handshake auth', () => {
   });
 
   it('accepts connection with valid API key', async () => {
-    const ws = new WebSocket(`ws://localhost:${AUTH_PORT}`, {
-      headers: { Authorization: `Bearer ${VALID_KEY}` },
-    } as any);
+    const ws = wsWithAuth(`ws://localhost:${AUTH_PORT}`, VALID_KEY);
 
     const message = await new Promise<string>((resolve) => {
       ws.addEventListener('message', (e) => {
@@ -123,8 +123,8 @@ describe('WS server handshake auth', () => {
 
 describe('ConnectionRegistry', () => {
   it('registers a browser and tracks status', async () => {
-    const registry = new ConnectionRegistry(new NoopAuthProvider());
-    const mockWs = { data: {} } as any;
+    const registry = new ConnectionRegistry();
+    const mockWs = { data: {} } as unknown as ServerWebSocket<WsData>;
 
     const result = await registry.register(mockWs, 'b-1');
     expect(result.success).toBe(true);
@@ -135,10 +135,10 @@ describe('ConnectionRegistry', () => {
   });
 
   it('always succeeds (auth happened at handshake)', async () => {
-    const registry = new ConnectionRegistry(
-      new ApiKeyAuthProvider({ 'good-key': 'user-1' }),
-    );
-    const mockWs = { data: { userId: 'user-1' } } as any;
+    const registry = new ConnectionRegistry();
+    const mockWs = {
+      data: { userId: 'user-1' },
+    } as unknown as ServerWebSocket<WsData>;
 
     const result = await registry.register(mockWs, 'b-2');
     expect(result.success).toBe(true);

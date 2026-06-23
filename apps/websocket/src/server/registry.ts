@@ -1,5 +1,4 @@
 import type { BrowserConnection, BrowserStatus } from '@browser-bridge/shared';
-import type { AuthProvider } from '@browser-bridge/shared/auth';
 import type { ServerWebSocket } from 'bun';
 import type { WsData } from './types';
 
@@ -13,11 +12,6 @@ interface RegistryEntry {
 
 export class ConnectionRegistry {
   private browsers = new Map<string, RegistryEntry>();
-  private authProvider: AuthProvider;
-
-  constructor(authProvider: AuthProvider) {
-    this.authProvider = authProvider;
-  }
 
   async register(
     ws: ServerWebSocket<WsData>,

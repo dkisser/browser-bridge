@@ -1,9 +1,5 @@
 import { WEBSOCKET_PORT } from '@browser-bridge/shared';
-import type {
-  CommandPayload,
-  Envelope,
-  ResponsePayload,
-} from '@browser-bridge/shared/types';
+import type { CommandPayload, Envelope } from '@browser-bridge/shared/types';
 import { decode, encode } from '../protocol';
 
 export interface ClientOptions {
@@ -30,7 +26,7 @@ export function createClient(options: ClientOptions = {}) {
   } = options;
 
   const socket = headers
-    ? new WebSocket(url, { headers } as any)
+    ? new WebSocket(url, { headers } as never)
     : new WebSocket(url);
   const pending = new Map<string, PendingRequest>();
 
@@ -42,8 +38,9 @@ export function createClient(options: ClientOptions = {}) {
     try {
       const envelope = decode(event.data as string);
       // Resolve pending request if this is a response
-      if (envelope.type === 'response' && pending.has(envelope.id)) {
-        const req = pending.get(envelope.id)!;
+      const req =
+        envelope.type === 'response' ? pending.get(envelope.id) : undefined;
+      if (req) {
         clearTimeout(req.timer);
         pending.delete(envelope.id);
         req.resolve(envelope);

@@ -13,7 +13,7 @@ export function startServer(
   authProvider: AuthProvider = new NoopAuthProvider(),
   hostname = '127.0.0.1',
 ) {
-  const registry = new ConnectionRegistry(authProvider);
+  const registry = new ConnectionRegistry();
   const cliConnections = new Set<ServerWebSocket<WsData>>();
 
   const server = Bun.serve<WsData>({

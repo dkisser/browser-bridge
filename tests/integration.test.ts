@@ -6,6 +6,11 @@ const TEST_PORT = 3080;
 const TEST_API_KEY = 'test-key-123';
 const TEST_USER_ID = 'test-user';
 
+function wsWithAuth(url: string, key: string): WebSocket {
+  const opts = { headers: { Authorization: `Bearer ${key}` } };
+  return new WebSocket(url, opts as never);
+}
+
 describe('Integration: CLI → Server → Local Proxy', () => {
   let server: ReturnType<typeof startServer>;
 
@@ -21,9 +26,7 @@ describe('Integration: CLI → Server → Local Proxy', () => {
   });
 
   it('rejects command to unregistered browser', async () => {
-    const cli = new WebSocket(`ws://localhost:${TEST_PORT}`, {
-      headers: { Authorization: `Bearer ${TEST_API_KEY}` },
-    } as any);
+    const cli = wsWithAuth(`ws://localhost:${TEST_PORT}`, TEST_API_KEY);
 
     await new Promise<void>((resolve) => {
       cli.addEventListener('open', () => resolve());
@@ -59,9 +62,7 @@ describe('Integration: CLI → Server → Local Proxy', () => {
 
   it('registers a Local Proxy and routes command to it', async () => {
     // 1. Connect a mock Local Proxy WITH auth header
-    const proxy = new WebSocket(`ws://localhost:${TEST_PORT}`, {
-      headers: { Authorization: `Bearer ${TEST_API_KEY}` },
-    } as any);
+    const proxy = wsWithAuth(`ws://localhost:${TEST_PORT}`, TEST_API_KEY);
     await new Promise<void>((resolve) => {
       proxy.addEventListener('open', () => resolve());
     });
@@ -122,9 +123,7 @@ describe('Integration: CLI → Server → Local Proxy', () => {
     expect(JSON.parse(onlineResponse).payload.status).toBe('ok');
 
     // 4. Connect CLI and send command
-    const cli = new WebSocket(`ws://localhost:${TEST_PORT}`, {
-      headers: { Authorization: `Bearer ${TEST_API_KEY}` },
-    } as any);
+    const cli = wsWithAuth(`ws://localhost:${TEST_PORT}`, TEST_API_KEY);
     await new Promise<void>((resolve) => {
       cli.addEventListener('open', () => resolve());
     });
@@ -216,9 +215,7 @@ describe('Integration: CLI → Server → Local Proxy', () => {
   });
 
   it('rejects connection with wrong API key', async () => {
-    const ws = new WebSocket(`ws://localhost:${TEST_PORT}`, {
-      headers: { Authorization: 'Bearer wrong-key' },
-    } as any);
+    const ws = wsWithAuth(`ws://localhost:${TEST_PORT}`, 'wrong-key');
 
     const closeEvent = await new Promise<CloseEvent>((resolve) => {
       ws.addEventListener('close', (e) => resolve(e));

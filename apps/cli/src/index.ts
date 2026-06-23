@@ -1,12 +1,9 @@
 #!/usr/bin/env bun
 import { WEBSOCKET_PORT } from '@browser-bridge/shared';
-import type {
-  BrowserConnection,
-  CommandPayload,
-  ResponsePayload,
-} from '@browser-bridge/shared/types';
-import { createClient } from '@browser-bridge/websocket/client';
+import type { CommandType } from '@browser-bridge/shared/types';
 import { Command } from 'commander';
+import { listBrowsers } from './commands/listBrowsers';
+import { sendCommand } from './commands/sendCommand';
 
 const program = new Command();
 program.name('bridge').description('Browser Bridge CLI').version('0.0.1');
@@ -48,87 +45,24 @@ function outputError(
   process.exit(1);
 }
 
-async function listBrowsers(server: string): Promise<BrowserConnection[]> {
-  const client = createClient({ url: server });
-
-  await new Promise<void>((resolve, reject) => {
-    const check = setInterval(() => {
-      if (client.readyState === WebSocket.OPEN) {
-        clearInterval(check);
-        clearTimeout(timeout);
-        resolve();
-      }
-    }, 50);
-    const timeout = setTimeout(() => {
-      clearInterval(check);
-      reject(new Error('Connection timeout'));
-    }, 5000);
-  });
-
-  try {
-    const response = await client.request(
-      'event',
-      { event: 'list_browsers' },
-      { timeout: 10000 },
-    );
-    const payload = response.payload as ResponsePayload;
-    if (payload.status === 'error') {
-      throw new Error(payload.message ?? payload.error ?? 'unknown');
-    }
-    return (payload.data as BrowserConnection[]) ?? [];
-  } finally {
-    client.close();
-  }
-}
-
-async function sendCommand(
+async function dispatchCommand(
   global: GlobalOptions,
-  command: CommandPayload['command'],
+  command: CommandType,
   params: Record<string, unknown> = {},
 ): Promise<void> {
-  if (!global.browser) {
-    outputError(global, 'missing_browser', 'Required: --browser <id>');
-    return;
-  }
-
-  const client = createClient({ url: global.server });
-
-  await new Promise<void>((resolve, reject) => {
-    const check = setInterval(() => {
-      if (client.readyState === WebSocket.OPEN) {
-        clearInterval(check);
-        clearTimeout(timeout);
-        resolve();
-      }
-    }, 50);
-    const timeout = setTimeout(() => {
-      clearInterval(check);
-      reject(new Error('Connection timeout'));
-    }, 5000);
-  });
-
   try {
-    const response = await client.sendCommand(
-      global.browser,
-      { command, params },
-      { timeout: global.timeout },
+    const data = await sendCommand(
+      {
+        server: global.server,
+        browser: global.browser,
+        timeout: global.timeout,
+      },
+      command,
+      params,
     );
-    const payload = response.payload as ResponsePayload;
-
-    if (payload.status === 'error') {
-      outputError(
-        global,
-        payload.error ?? 'unknown',
-        payload.message ?? 'Unknown error',
-      );
-      return;
-    }
-
-    output(global, payload.data ?? { status: 'ok' });
+    output(global, data);
   } catch (err) {
     outputError(global, 'command_failed', String(err));
-  } finally {
-    client.close();
   }
 }
 
@@ -145,7 +79,7 @@ program
   .description('Navigate to URL')
   .action(async (url: string) => {
     const global = getGlobalOptions(program.opts());
-    await sendCommand(global, 'navigate', { url });
+    await dispatchCommand(global, 'navigate', { url });
   });
 
 program
@@ -153,7 +87,7 @@ program
   .description('Go back in browser history')
   .action(async () => {
     const global = getGlobalOptions(program.opts());
-    await sendCommand(global, 'goBack');
+    await dispatchCommand(global, 'goBack');
   });
 
 program
@@ -161,7 +95,7 @@ program
   .description('Go forward in browser history')
   .action(async () => {
     const global = getGlobalOptions(program.opts());
-    await sendCommand(global, 'goForward');
+    await dispatchCommand(global, 'goForward');
   });
 
 program
@@ -169,7 +103,7 @@ program
   .description('Refresh current page')
   .action(async () => {
     const global = getGlobalOptions(program.opts());
-    await sendCommand(global, 'refresh');
+    await dispatchCommand(global, 'refresh');
   });
 
 // Tab management
@@ -178,7 +112,7 @@ program
   .description('List all open tabs')
   .action(async () => {
     const global = getGlobalOptions(program.opts());
-    await sendCommand(global, 'tab:list');
+    await dispatchCommand(global, 'tab:list');
   });
 
 program
@@ -186,7 +120,7 @@ program
   .description('Open a new tab')
   .action(async (url: string | undefined) => {
     const global = getGlobalOptions(program.opts());
-    await sendCommand(global, 'tab:new', { url });
+    await dispatchCommand(global, 'tab:new', { url });
   });
 
 program
@@ -194,7 +128,7 @@ program
   .description('Close a tab by ID')
   .action(async (tabId: string) => {
     const global = getGlobalOptions(program.opts());
-    await sendCommand(global, 'tab:close', { tabId: Number(tabId) });
+    await dispatchCommand(global, 'tab:close', { tabId: Number(tabId) });
   });
 
 program
@@ -202,7 +136,7 @@ program
   .description('Switch to a tab by ID')
   .action(async (tabId: string) => {
     const global = getGlobalOptions(program.opts());
-    await sendCommand(global, 'tab:switch', { tabId: Number(tabId) });
+    await dispatchCommand(global, 'tab:switch', { tabId: Number(tabId) });
   });
 
 // DOM interaction
@@ -211,7 +145,7 @@ program
   .description('Click an element')
   .action(async (selector: string) => {
     const global = getGlobalOptions(program.opts());
-    await sendCommand(global, 'click', { selector });
+    await dispatchCommand(global, 'click', { selector });
   });
 
 program
@@ -219,7 +153,7 @@ program
   .description('Type text into an element')
   .action(async (selector: string, text: string) => {
     const global = getGlobalOptions(program.opts());
-    await sendCommand(global, 'type', { selector, text });
+    await dispatchCommand(global, 'type', { selector, text });
   });
 
 program
@@ -227,7 +161,7 @@ program
   .description('Select an option in a dropdown')
   .action(async (selector: string, value: string) => {
     const global = getGlobalOptions(program.opts());
-    await sendCommand(global, 'select', { selector, value });
+    await dispatchCommand(global, 'select', { selector, value });
   });
 
 program
@@ -235,7 +169,7 @@ program
   .description('Scroll page by x,y pixels')
   .action(async (x: string, y: string) => {
     const global = getGlobalOptions(program.opts());
-    await sendCommand(global, 'scroll', {
+    await dispatchCommand(global, 'scroll', {
       selector: 'page',
       x: Number(x),
       y: Number(y),
@@ -247,7 +181,7 @@ program
   .description('Hover over an element')
   .action(async (selector: string) => {
     const global = getGlobalOptions(program.opts());
-    await sendCommand(global, 'hover', { selector });
+    await dispatchCommand(global, 'hover', { selector });
   });
 
 // Data extraction
@@ -256,7 +190,7 @@ program
   .description('Get text content of an element')
   .action(async (selector: string) => {
     const global = getGlobalOptions(program.opts());
-    await sendCommand(global, 'gettext', { selector });
+    await dispatchCommand(global, 'gettext', { selector });
   });
 
 program
@@ -264,7 +198,7 @@ program
   .description('Get inner HTML of an element')
   .action(async (selector: string) => {
     const global = getGlobalOptions(program.opts());
-    await sendCommand(global, 'gethtml', { selector });
+    await dispatchCommand(global, 'gethtml', { selector });
   });
 
 program
@@ -272,7 +206,7 @@ program
   .description('Take a screenshot')
   .action(async () => {
     const global = getGlobalOptions(program.opts());
-    await sendCommand(global, 'screenshot', {});
+    await dispatchCommand(global, 'screenshot', {});
   });
 
 program
@@ -280,7 +214,7 @@ program
   .description('Get current page info')
   .action(async () => {
     const global = getGlobalOptions(program.opts());
-    await sendCommand(global, 'pageinfo');
+    await dispatchCommand(global, 'pageinfo');
   });
 
 // Wait / utility
@@ -290,7 +224,7 @@ program
   .option('--timeout <ms>', 'Timeout in ms', '10000')
   .action(async (selector: string, opts: Record<string, unknown>) => {
     const global = getGlobalOptions(program.opts());
-    await sendCommand(global, 'wait:element', {
+    await dispatchCommand(global, 'wait:element', {
       selector,
       timeout: Number(opts.timeout || 10000),
     });
@@ -302,7 +236,7 @@ program
   .option('--timeout <ms>', 'Timeout in ms', '10000')
   .action(async (opts: Record<string, unknown>) => {
     const global = getGlobalOptions(program.opts());
-    await sendCommand(global, 'wait:navigation', {
+    await dispatchCommand(global, 'wait:navigation', {
       timeout: Number(opts.timeout || 10000),
     });
   });
