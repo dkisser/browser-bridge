@@ -101,7 +101,19 @@ See [`docs/architecture-diagram.html`](./docs/architecture-diagram.html) for the
 curl -fsSL https://github.com/dkisser/browser-bridge/releases/latest/download/install.sh | bash
 ```
 
-### Option B: Build from source (contributors only)
+### Option B: One-line installer with Claude Code skills
+
+If you already have [Claude Code](https://claude.ai/code), clone the repo and run the installer from the project root. It will install Browser Bridge plus the ready-to-use skill in `./skills`:
+
+```bash
+git clone https://github.com/dkisser/browser-bridge.git
+cd browser-bridge
+./install/install.sh
+```
+
+Use `--skills-dir <path>` if you want to install skills somewhere other than `~/.claude/skills/`. Use `--no-skills` to skip the skill installation.
+
+### Option C: Build from source (contributors only)
 
 See the [Development](#-development) section below. You only need this if you are contributing to Browser Bridge.
 
