@@ -7,7 +7,8 @@
 <h3 align="center">Browser as a Tool for Any Agent</h3>
 
 <p align="center">
-  Let any AI agent, LLM, or script control your local browser through a simple CLI.<br />
+  Let any AI agent, LLM, or script control your local browser.<br />
+  Use the included CLI, the Claude Code skill, or any integration that speaks the bridge protocol.<br />
   Your sessions, cookies, and credentials stay local.
 </p>
 
@@ -32,9 +33,9 @@
 
 ## ✨ Features
 
-- 🤖 **Agent-ready CLI** — LLMs and scripts call one command to drive the browser.
+- 🤖 **Agent-ready interface** — one bridge protocol, consumed via CLI, Claude Code skill, or custom integration.
 - 🔒 **Local session, cloud control** — reuse your logged-in browser; no cloud browser or cookie sync needed.
-- 🌉 **WebSocket bridge** — CLI talks to a server, server talks to a local proxy, proxy talks to Chrome.
+- 🌉 **WebSocket bridge** — agents talk to a server, server talks to a local proxy, proxy talks to Chrome.
 - 🧩 **Chrome Extension (MV3)** — built with Vite, loads as an unpacked extension.
 - ⚡ **Bun + TypeScript** — fast startup, strict types, one package manager for the whole monorepo.
 - 🧪 **Dev-friendly** — hot reload for server, proxy, and extension.
@@ -43,7 +44,7 @@
 
 ## 🚀 Quick Start
 
-### 1. Install the CLI and extension
+### 1. Install the bridge and extension
 
 ```bash
 curl -fsSL https://github.com/dkisser/browser-bridge/releases/latest/download/install.sh | bash
@@ -65,6 +66,10 @@ That’s it. The command travels from CLI → WebSocket server → local proxy �
 
 > Use `bridge browser:list` to see the `<browser-id>` of your connected Chrome instance.
 
+### 3. Use it from any agent
+
+The `bridge` CLI is just one consumer of the bridge protocol. Browser Bridge ships with a ready-to-use Claude Code skill in [`./skills`](./skills/browser-bridge-user/SKILL.md), and anything that can open a WebSocket — for example, an MCP server you build, a custom SDK, or another agent framework — can send commands the same way.
+
 ---
 
 ## 🏗️ Architecture
@@ -84,7 +89,7 @@ That’s it. The command travels from CLI → WebSocket server → local proxy �
 
 | Layer | Component | Role |
 |-------|-----------|------|
-| Cloud / shared | CLI | Human or agent-facing command interface. |
+| Cloud / shared | Interfaces | Agent-facing entry points: CLI, Claude Code skill, or any custom integration. |
 | Cloud / shared | WebSocket Server | Routes commands to the right local proxy. |
 | Local | Local Proxy | Maintains the outbound connection from your machine. |
 | Local | Chrome Extension | Receives messages and executes browser actions. |
@@ -101,7 +106,7 @@ See [`docs/architecture-diagram.html`](./docs/architecture-diagram.html) for the
 curl -fsSL https://github.com/dkisser/browser-bridge/releases/latest/download/install.sh | bash
 ```
 
-### Option B: One-line installer with Claude Code skills
+### Option B: One-line installer with Claude Code skill
 
 If you already have [Claude Code](https://claude.ai/code), clone the repo and run the installer from the project root. It will install Browser Bridge plus the ready-to-use skill in `./skills`:
 
@@ -149,7 +154,7 @@ bun run cli
 ```
 Browser-Bridge/
 ├── apps/
-│   ├── cli/            # CLI entrypoint
+│   ├── cli/            # CLI entrypoint (one bridge protocol consumer)
 │   ├── extension/      # Chrome Extension (Manifest V3, Vite)
 │   ├── local-proxy/    # Local WebSocket proxy
 │   └── websocket/      # WebSocket server, client, and protocol

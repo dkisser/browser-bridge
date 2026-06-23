@@ -7,7 +7,8 @@
 <h3 align="center">让浏览器成为任何 Agent 的工具</h3>
 
 <p align="center">
-  让任何 AI Agent、LLM 或脚本通过简单 CLI 控制你的本地浏览器。<br />
+  让任何 AI Agent、LLM 或脚本控制你的本地浏览器。<br />
+  可以使用内置 CLI、Claude Code skill，或任何能使用 bridge 协议的集成。<br />
   会话、Cookie 和凭证始终保留在本地。
 </p>
 
@@ -32,9 +33,9 @@
 
 ## ✨ 功能特性
 
-- 🤖 **Agent 就绪的 CLI** —— LLM 和脚本只需调用一个命令即可驱动浏览器。
+- 🤖 **Agent 就绪的接口** —— 一个 bridge 协议，可通过 CLI、Claude Code skill 或自定义集成来消费。
 - 🔒 **本地会话，云端控制** —— 复用你已登录的浏览器，无需云端浏览器或同步 Cookie。
-- 🌉 **WebSocket 桥接** —— CLI → 服务端 → 本地代理 → Chrome。
+- 🌉 **WebSocket 桥接** —— Agent 与服务端通信，服务端路由到本地代理，再连接到 Chrome。
 - 🧩 **Chrome 扩展（MV3）** —— 基于 Vite 构建，以解压扩展形式加载。
 - ⚡ **Bun + TypeScript** —— 启动快、类型严格、整个 monorepo 一个包管理器。
 - 🧪 **开发友好** —— 服务端、代理、扩展均支持热重载。
@@ -43,7 +44,7 @@
 
 ## 🚀 快速开始
 
-### 1. 安装 CLI 和扩展
+### 1. 安装 bridge 与扩展
 
 ```bash
 curl -fsSL https://github.com/dkisser/browser-bridge/releases/latest/download/install.sh | bash
@@ -65,6 +66,10 @@ bridge navigate https://github.com --browser <browser-id>
 
 > 使用 `bridge browser:list` 查看已连接 Chrome 实例的 `<browser-id>`。
 
+### 3. 从任意 Agent 使用
+
+`bridge` CLI 只是 bridge 协议的一种消费者。Browser Bridge 在 [`./skills`](./skills/browser-bridge-user/SKILL.md) 中内置了开箱即用的 Claude Code skill；任何能打开 WebSocket 的客户端——例如你自己构建的 MCP server、自定义 SDK 或其他 Agent 框架——都可以用同样的方式发送命令。
+
 ---
 
 ## 🏗️ 架构
@@ -84,7 +89,7 @@ bridge navigate https://github.com --browser <browser-id>
 
 | 层级 | 组件 | 职责 |
 |------|------|------|
-| 云端 / 共享 | CLI | 面向人或 Agent 的命令接口。 |
+| 云端 / 共享 | 接口层 | 面向 Agent 的入口：CLI、Claude Code skill 或任何自定义集成。 |
 | 云端 / 共享 | WebSocket Server | 将命令路由到对应的本地代理。 |
 | 本地 | Local Proxy | 从本机维持与服务端的长连接。 |
 | 本地 | Chrome Extension | 接收消息并执行浏览器操作。 |
@@ -149,7 +154,7 @@ bun run cli
 ```
 Browser-Bridge/
 ├── apps/
-│   ├── cli/            # CLI 入口
+│   ├── cli/            # CLI 入口（bridge 协议消费者之一）
 │   ├── extension/      # Chrome 扩展（Manifest V3，Vite）
 │   ├── local-proxy/    # 本地 WebSocket 代理
 │   └── websocket/      # WebSocket 服务端、客户端和协议
