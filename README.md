@@ -5,7 +5,9 @@
 <h1 align="center">Browser Bridge</h1>
 
 <p align="center">
-  <strong>Let AI agents and scripts control your local browser through a simple CLI — keeping your sessions, cookies, and credentials local.</strong>
+  <strong>Browser as a Tool for Any Agent</strong>
+  <br />
+  Let any AI agent, LLM, or script control your local browser through a simple CLI — keeping your sessions, cookies, and credentials local.
 </p>
 
 <p align="center">
@@ -20,7 +22,7 @@
   <img src="./docs/assets/demo.gif" alt="Browser Bridge Demo" width="720" />
 </p>
 
-> **One-line pitch:** Browser Bridge connects a Chrome extension to a WebSocket relay, turning any LLM, script, or terminal command into a real-browser automation tool — while keeping your sessions, cookies, and credentials local.
+> **One-line pitch:** Browser Bridge turns your local Chrome into a reusable tool for any agent. One browser, any LLM, script, or terminal command — while keeping your sessions, cookies, and credentials local.
 
 ---
 

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Browser Bridge",
   "version": "0.0.1",
-  "description": "Make the agent use the browser just like you.",
+  "description": "Browser as a tool for any agent.",
   "background": {
     "service_worker": "background.js",
     "type": "module"

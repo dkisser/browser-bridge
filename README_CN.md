@@ -5,7 +5,9 @@
 <h1 align="center">Browser Bridge</h1>
 
 <p align="center">
-  <strong>让 AI Agent 和脚本通过简单 CLI 控制你的本地浏览器——会话、Cookie 和凭证始终保留在本地。</strong>
+  <strong>让浏览器成为任何 Agent 的工具</strong>
+  <br />
+  让任何 AI Agent、LLM 或脚本通过简单 CLI 控制你的本地浏览器——会话、Cookie 和凭证始终保留在本地。
 </p>
 
 <p align="center">
@@ -20,7 +22,7 @@
   <img src="./docs/assets/demo.gif" alt="Browser Bridge Demo" width="720" />
 </p>
 
-> **一句话介绍：** Browser Bridge 把 Chrome 扩展与 WebSocket 中继连接起来，让任何 LLM、脚本或终端命令都能像人一样操作真实浏览器——同时把你的会话、Cookie 和凭证保留在本地。
+> **一句话介绍：** Browser Bridge 让你的本地 Chrome 成为任何 Agent 的可复用工具。一个浏览器，任意 LLM、脚本或终端命令——同时把你的会话、Cookie 和凭证保留在本地。
 
 ---
 
