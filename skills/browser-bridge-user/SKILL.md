@@ -114,6 +114,18 @@ Global options:
 - `screenshot` — take a screenshot of the visible page
 - `pageinfo` — get current URL, title, and tab id
 
+## Extraction strategy
+
+When fetching information from a page, prefer text-based extraction over screenshots.
+
+1. **Try `gettext` or `gethtml` first.** These commands are faster, cheaper, and return structured text that is easy to summarize, search, or act on.
+2. **Use `screenshot` only when necessary**, such as:
+   - The user explicitly asked for a screenshot.
+   - You need visual or layout information that text cannot convey (colors, positioning, whether an element is visible, etc.).
+   - `gettext`/`gethtml` returned empty, insufficient, or unclear results after a reasonable attempt.
+
+When a command returns no data, try a broader selector or `pageinfo` to verify the current URL/title before falling back to a screenshot.
+
 ### Waiting
 
 - `wait:element <selector>` — wait until an element appears

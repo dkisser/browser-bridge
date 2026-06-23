@@ -1,0 +1,38 @@
+{
+  "skill_name": "browser-bridge-user",
+  "evals": [
+    {
+      "id": 0,
+      "prompt": "Open Gmail and tell me the subjects of the last 5 emails in my inbox.",
+      "expected_output": "A plan that uses bridge gettext/gethtml to extract email subjects and does not use screenshot unless text extraction fails.",
+      "files": [],
+      "expectations": [
+        "The plan uses `gettext` or `gethtml` to extract email subjects.",
+        "The plan does not use `screenshot` before attempting text extraction.",
+        "The plan navigates to Gmail."
+      ]
+    },
+    {
+      "id": 1,
+      "prompt": "Take a screenshot of my GitHub notifications page and save it as a PNG.",
+      "expected_output": "A plan that uses bridge screenshot because the user explicitly asked for one.",
+      "files": [],
+      "expectations": [
+        "The plan includes a `screenshot` command.",
+        "The plan navigates to the GitHub notifications page.",
+        "The plan mentions saving the screenshot as a PNG."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Check the status message on the current page (selector: .status-message). If the text is missing or unclear, take a screenshot so I can see what's happening.",
+      "expected_output": "A plan that first tries bridge gettext on .status-message, then falls back to screenshot only if needed.",
+      "files": [],
+      "expectations": [
+        "The plan first attempts `gettext` on the `.status-message` selector.",
+        "The plan falls back to `screenshot` only after text extraction fails or is unclear.",
+        "The plan does not take a screenshot unconditionally."
+      ]
+    }
+  ]
+}
