@@ -55,10 +55,11 @@ async function listBrowsers(server: string): Promise<BrowserConnection[]> {
     const check = setInterval(() => {
       if (client.readyState === WebSocket.OPEN) {
         clearInterval(check);
+        clearTimeout(timeout);
         resolve();
       }
     }, 50);
-    setTimeout(() => {
+    const timeout = setTimeout(() => {
       clearInterval(check);
       reject(new Error('Connection timeout'));
     }, 5000);
@@ -96,10 +97,11 @@ async function sendCommand(
     const check = setInterval(() => {
       if (client.readyState === WebSocket.OPEN) {
         clearInterval(check);
+        clearTimeout(timeout);
         resolve();
       }
     }, 50);
-    setTimeout(() => {
+    const timeout = setTimeout(() => {
       clearInterval(check);
       reject(new Error('Connection timeout'));
     }, 5000);

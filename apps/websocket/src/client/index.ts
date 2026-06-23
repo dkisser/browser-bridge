@@ -35,7 +35,7 @@ export function createClient(options: ClientOptions = {}) {
   const pending = new Map<string, PendingRequest>();
 
   socket.addEventListener('open', () => {
-    console.log('Connected to server');
+    // Connection established; no-op.
   });
 
   socket.addEventListener('message', (event) => {
