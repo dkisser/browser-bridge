@@ -21,7 +21,15 @@
 </p>
 
 <p align="center">
-  <img src="./docs/assets/demo.gif" alt="Browser Bridge Demo" width="720" />
+  <video src="./docs/assets/查新闻.mp4" width="720" controls></video>
+  <br />
+  <em>Browsing news with an agent</em>
+</p>
+
+<p align="center">
+  <video src="./docs/assets/gmail管理.mp4" width="720" controls></video>
+  <br />
+  <em>Managing Gmail with an agent</em>
 </p>
 
 <p align="center">
