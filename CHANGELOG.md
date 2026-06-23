@@ -4,6 +4,14 @@ All notable changes to Browser Bridge are documented here. The format follows [K
 
 ## [Unreleased]
 
+## [0.0.5] - 2026-06-23
+
+### Fixed
+- CLI commands no longer hang for ~5 seconds after printing output; the WebSocket connection timeout timer is now cleared as soon as the socket opens.
+
+### Removed
+- Stray `console.log('Connected to server')` from the WebSocket client.
+
 ## [0.0.4] - 2026-06-23
 
 ### Added
