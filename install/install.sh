@@ -7,6 +7,11 @@ REPO="${REPO:-browser-bridge}"
 BB_VERSION="${BB_VERSION:-}"
 BB_HOME="${BB_HOME:-$HOME/.browser-bridge}"
 
+# Skills installation options (also configurable via environment variables).
+BB_SKILLS_TARGET_DIR="${BB_SKILLS_TARGET_DIR:-}"  # destination agent skills directory
+BB_WITH_SKILLS="${BB_WITH_SKILLS:-false}"          # download skills from the release
+BB_NO_SKILLS="${BB_NO_SKILLS:-false}"              # skip local ./skills even if present
+
 die() { printf 'Error: %s\n' "$*" >&2; exit 1; }
 info() { printf '%s\n' "$*"; }
 
@@ -76,10 +81,13 @@ write_artifacts() {
 }
 
 print_next_steps() {
-  local version="$1"
+  local version="$1" skills_note=""
+  if [[ "${NO_SKILLS:-}" != "true" ]] && { [[ "${WITH_SKILLS:-}" == "true" ]] || local_skills_available; }; then
+    skills_note="\n  Installed skills are available the next time you start Claude Code.\n"
+  fi
   cat <<EOF
 
-Browser Bridge ${version} installed.
+Browser Bridge ${version} installed.${skills_note}
 
 Next steps:
   1. Ensure ~/.local/bin is on your PATH:
@@ -94,6 +102,37 @@ Next steps:
        bridge --browser <browserId> navigate https://example.com
 
 To uninstall later: bridge uninstall --yes
+EOF
+}
+
+print_install_help() {
+  cat <<'EOF'
+Usage: install.sh [options]
+
+Options:
+  --skills-dir <dir> Install skills into <dir> instead of the default ~/.claude/skills/.
+  --with-skills      Download skills from the release and install them (requires the
+                     release to include a skills tarball).
+  --no-skills        Skip installing local skills even if ./skills exists.
+  --help, -h         Show this help message.
+
+Environment variables:
+  BB_VERSION              Install a specific release version (default: latest).
+  BB_HOME                 Installation prefix (default: ~/.browser-bridge).
+  BB_SKILLS_TARGET_DIR    Same as --skills-dir.
+  BB_WITH_SKILLS          Set to "true" to enable --with-skills.
+  BB_NO_SKILLS            Set to "true" to skip local skills.
+  ORG, REPO               GitHub org/repo used for downloads.
+
+Examples:
+  Install bridge and extension only:
+    install.sh
+
+  Install bridge, extension, and local skills (when ./skills exists):
+    install.sh
+
+  Install skills into a custom directory:
+    install.sh --skills-dir ~/.my-agent/skills
 EOF
 }
 
@@ -177,7 +216,113 @@ download_runtime() {
   trap - RETURN
 }
 
+detect_default_skills_dir() {
+  local claude_dir="$HOME/.claude/skills"
+  if [[ -d "$claude_dir" ]]; then
+    echo "$claude_dir"
+    return 0
+  fi
+  return 1
+}
+
+install_skills() {
+  local src="$1" dest="$2"
+  [[ -d "$src" ]] || die "BB-E200: skills source directory not found: $src"
+  [[ -n "$dest" ]] || die "BB-E201: skills destination directory not specified"
+  mkdir -p "$dest"
+
+  local installed=0
+  if [[ -f "$src/SKILL.md" ]]; then
+    local name
+    name=$(basename "$src")
+    rm -rf "${dest}/${name}"
+    cp -R "$src" "${dest}/${name}"
+    info "Installed skill: $name"
+    installed=1
+  else
+    for skill_dir in "$src"/*/; do
+      [[ -d "$skill_dir" ]] || continue
+      [[ -f "$skill_dir/SKILL.md" ]] || continue
+      local name
+      name=$(basename "$skill_dir")
+      rm -rf "${dest}/${name}"
+      cp -R "$skill_dir" "${dest}/${name}"
+      info "Installed skill: $name"
+      installed=$((installed + 1))
+    done
+  fi
+
+  [[ "$installed" -gt 0 ]] || die "BB-E202: no valid skills found in $src"
+  info "Skills installed to $dest"
+}
+
+download_skills() {
+  local version="$1" dest="$2" base
+  if [[ "$ORG" =~ ^[0-9a-zA-Z.-]+:[0-9]+$ ]]; then
+    base="http://${ORG}"
+  else
+    base="https://github.com/${ORG}/${REPO}/releases/download/${version}"
+  fi
+
+  local tarball="browser-bridge-skills-${version}.tar.gz"
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  trap 'rm -rf "$tmpdir"' RETURN
+
+  info "Downloading $tarball"
+  curl -fsSL "${base}/${tarball}" -o "${tmpdir}/${tarball}" \
+    || die "BB-E203: download failed for ${base}/${tarball}"
+  curl -fsSL "${base}/${tarball}.sha256" -o "${tmpdir}/${tarball}.sha256" \
+    || die "BB-E203: download failed for ${base}/${tarball}.sha256"
+
+  local expected actual
+  expected=$(awk '{print $1}' "${tmpdir}/${tarball}.sha256")
+  actual=$(shasum -a 256 "${tmpdir}/${tarball}" | awk '{print $1}')
+  [[ "$expected" == "$actual" ]] || die "BB-E204: sha256 mismatch (expected $expected, got $actual)"
+
+  mkdir -p "$tmpdir/extract"
+  tar xzf "${tmpdir}/${tarball}" -C "$tmpdir/extract"
+  install_skills "$tmpdir/extract" "$dest"
+  trap - RETURN
+}
+
+parse_install_args() {
+  SKILLS_TARGET_DIR="${BB_SKILLS_TARGET_DIR:-}"
+  WITH_SKILLS="${BB_WITH_SKILLS:-false}"
+  NO_SKILLS="${BB_NO_SKILLS:-false}"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --skills-dir)
+        [[ -n "${2:-}" ]] || die "BB-E205: --skills-dir requires a directory argument"
+        SKILLS_TARGET_DIR="$2"
+        shift 2
+        ;;
+      --with-skills)
+        WITH_SKILLS=true
+        shift
+        ;;
+      --no-skills)
+        NO_SKILLS=true
+        shift
+        ;;
+      --help|-h)
+        print_install_help
+        exit 0
+        ;;
+      *)
+        die "BB-E206: unknown option '$1'. Run 'install.sh --help' for usage."
+        ;;
+    esac
+  done
+}
+
+local_skills_available() {
+  [[ -d "./skills" ]] && [[ -n "$(find ./skills -maxdepth 2 -name 'SKILL.md' -print -quit 2>/dev/null)" ]]
+}
+
 main() {
+  parse_install_args "$@"
   check_prereqs
   local version
   version=$(resolve_version)
@@ -188,6 +333,19 @@ main() {
     base="http://${ORG}"
   else
     base="https://github.com/${ORG}/${REPO}/releases/download/${version}"
+  fi
+
+  if [[ "$NO_SKILLS" != "true" ]] && { [[ "$WITH_SKILLS" == "true" ]] || local_skills_available; }; then
+    local dest_dir="$SKILLS_TARGET_DIR"
+    if [[ -z "$dest_dir" ]]; then
+      dest_dir=$(detect_default_skills_dir) || die "BB-E207: could not detect Claude skills directory. Specify --skills-dir or create ~/.claude/skills/"
+    fi
+
+    if [[ "$WITH_SKILLS" == "true" ]]; then
+      download_skills "$version" "$dest_dir"
+    else
+      install_skills "./skills" "$dest_dir"
+    fi
   fi
 
   download_extension "$version"

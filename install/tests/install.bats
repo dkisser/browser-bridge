@@ -229,7 +229,7 @@ TPL
   cat >> "$BB_TEST_TMP/test_e2e.sh" <<'SCRIPT'
 BB_INSTALL_ARCH=arm64
 ORG='127.0.0.1:18762'
-main
+main --no-skills
 SCRIPT
 
   BB_HOME="$BB_TEST_TMP/bb-home" \
@@ -266,7 +266,7 @@ SCRIPT
   cat >> "$BB_TEST_TMP/test_e2e.sh" <<'SCRIPT'
 BB_INSTALL_ARCH=arm64
 ORG='127.0.0.1:18763'
-main
+main --no-skills
 SCRIPT
 
   # First run — fresh install
@@ -318,6 +318,7 @@ SCRIPT
   BB_HOME="$BB_TEST_TMP/bb-home-sc" \
   BB_VERSION="v9.9.9" \
   BB_INSTALL_ARCH=arm64 \
+  BB_NO_SKILLS=true \
   ORG='127.0.0.1:18764' \
   REPO='browser-bridge' \
   run "$bash_path" "$BB_TEST_TMP/self-contained-install.sh"
@@ -347,5 +348,118 @@ SCRIPT
   run "$bash_path" "$BB_TEST_TMP/test_fbt.sh"
   [ "$status" -eq 0 ]
   [[ "$output" == *"v9.9.9/install/bridge.sh.tmpl"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# Task 13: skills installation
+# ---------------------------------------------------------------------------
+
+@test "install_skills installs a single skill directory" {
+  bash_path=$(find_modern_bash)
+  local src dest
+  src=$(mktemp -d)
+  dest=$(mktemp -d)
+  mkdir -p "$src/single-test-skill"
+  cat > "$src/single-test-skill/SKILL.md" <<'EOF'
+---
+name: single-test-skill
+description: test
+---
+EOF
+
+  run "$bash_path" -c "
+    set -euo pipefail
+    source <(sed '\$d' '$INSTALL_SH')
+    install_skills '$src/single-test-skill' '$dest'
+  "
+  [ "$status" -eq 0 ]
+  [[ -f "$dest/single-test-skill/SKILL.md" ]]
+  rm -rf "$src" "$dest"
+}
+
+@test "install_skills installs multiple skills from a collection directory" {
+  bash_path=$(find_modern_bash)
+  local src dest
+  src=$(mktemp -d)
+  dest=$(mktemp -d)
+  mkdir -p "$src/skill-a" "$src/skill-b"
+  echo "name: skill-a" > "$src/skill-a/SKILL.md"
+  echo "name: skill-b" > "$src/skill-b/SKILL.md"
+
+  run "$bash_path" -c "
+    set -euo pipefail
+    source <(sed '\$d' '$INSTALL_SH')
+    install_skills '$src' '$dest'
+  "
+  [ "$status" -eq 0 ]
+  [[ -f "$dest/skill-a/SKILL.md" ]]
+  [[ -f "$dest/skill-b/SKILL.md" ]]
+  rm -rf "$src" "$dest"
+}
+
+@test "install_skills fails when source has no valid skills" {
+  bash_path=$(find_modern_bash)
+  local src dest
+  src=$(mktemp -d)
+  dest=$(mktemp -d)
+
+  run "$bash_path" -c "
+    set -euo pipefail
+    source <(sed '\$d' '$INSTALL_SH')
+    install_skills '$src' '$dest'
+  "
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"BB-E202"* ]]
+  rm -rf "$src" "$dest"
+}
+
+@test "parse_install_args handles --skills-dir" {
+  bash_path=$(find_modern_bash)
+  run "$bash_path" -c "
+    set -euo pipefail
+    source <(sed '\$d' '$INSTALL_SH')
+    parse_install_args --skills-dir /tmp/agent-skills
+    [[ \"\$SKILLS_TARGET_DIR\" == '/tmp/agent-skills' ]]
+    echo OK
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"OK"* ]]
+}
+
+@test "install.sh end-to-end installs bridge, extension, and local skills" {
+  mkdir -p "$BB_TEST_TMP/www" "$BB_TEST_TMP/stage"
+  echo "fake-extension-content" > "$BB_TEST_TMP/stage/bb.zip"
+  ( cd "$BB_TEST_TMP/stage" && zip -q "$BB_TEST_TMP/www/browser-bridge-extension-v9.9.9.zip" bb.zip )
+  ( cd "$BB_TEST_TMP/www" && shasum -a 256 browser-bridge-extension-v9.9.9.zip > browser-bridge-extension-v9.9.9.zip.sha256 )
+
+  local tarball_path tarball_name
+  tarball_path=$(make_fake_runtime_tarball v9.9.9 arm64)
+  tarball_name=$(basename "$tarball_path")
+  cp "$tarball_path" "$BB_TEST_TMP/www/$tarball_name"
+  cp "${tarball_path}.sha256" "$BB_TEST_TMP/www/${tarball_name}.sha256"
+
+  mkdir -p "$HOME/.claude/skills"
+
+  start_mock_http 18765
+  bash_path=$(find_modern_bash)
+
+  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_e2e_skills.sh"
+  cat >> "$BB_TEST_TMP/test_e2e_skills.sh" <<'SCRIPT'
+BB_INSTALL_ARCH=arm64
+ORG='127.0.0.1:18765'
+main
+SCRIPT
+
+  BB_HOME="$BB_TEST_TMP/bb-home" \
+  BB_VERSION="v9.9.9" \
+  BRIDGE_TEMPLATE_PATH="$BB_TEST_ROOT/install/bridge.sh.tmpl" \
+  run "$bash_path" "$BB_TEST_TMP/test_e2e_skills.sh"
+  stop_mock_http
+
+  [ "$status" -eq 0 ]
+  [[ -f "$BB_TEST_TMP/bb-home/version" ]]
+  [[ -f "$BB_TEST_TMP/bb-home/bin/bridge" ]]
+  [[ -L "$HOME/.local/bin/bridge" ]]
+  [[ -f "$HOME/.claude/skills/browser-bridge-user/SKILL.md" ]]
 }
 

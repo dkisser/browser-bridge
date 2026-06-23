@@ -101,7 +101,19 @@ bridge navigate https://github.com --browser <browser-id>
 curl -fsSL https://github.com/dkisser/browser-bridge/releases/latest/download/install.sh | bash
 ```
 
-### 方案 B：从源码构建（仅贡献者）
+### 方案 B：一行命令安装并附带 Claude Code skill
+
+如果你已经在使用 [Claude Code](https://claude.ai/code)，先克隆仓库，然后在项目根目录运行安装脚本。它会同时安装 Browser Bridge 和 `./skills` 目录下的 skill：
+
+```bash
+git clone https://github.com/dkisser/browser-bridge.git
+cd browser-bridge
+./install/install.sh
+```
+
+如果你想把 skill 安装到 `~/.claude/skills/` 以外的目录，请使用 `--skills-dir <路径>` 指定。使用 `--no-skills` 可跳过 skill 安装。
+
+### 方案 C：从源码构建（仅贡献者）
 
 普通用户无需执行。开发者请参考下方的 [🛠️ 开发](#-开发) 章节。
 
