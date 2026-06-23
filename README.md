@@ -21,13 +21,13 @@
 </p>
 
 <p align="center">
-  <video src="./docs/assets/查新闻.mp4" width="720" controls></video>
+  <img src="./docs/assets/news-demo.gif" alt="Browsing news with an agent" width="720" />
   <br />
   <em>Browsing news with an agent</em>
 </p>
 
 <p align="center">
-  <video src="./docs/assets/gmail管理.mp4" width="720" controls></video>
+  <img src="./docs/assets/gmail-demo.gif" alt="Managing Gmail with an agent" width="720" />
   <br />
   <em>Managing Gmail with an agent</em>
 </p>

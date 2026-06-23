@@ -21,13 +21,13 @@
 </p>
 
 <p align="center">
-  <video src="./docs/assets/查新闻.mp4" width="720" controls></video>
+  <img src="./docs/assets/news-demo.gif" alt="查新闻" width="720" />
   <br />
   <em>查新闻</em>
 </p>
 
 <p align="center">
-  <video src="./docs/assets/gmail管理.mp4" width="720" controls></video>
+  <img src="./docs/assets/gmail-demo.gif" alt="管理邮件" width="720" />
   <br />
   <em>管理邮件</em>
 </p>
