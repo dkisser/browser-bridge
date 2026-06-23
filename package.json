@@ -1,7 +1,7 @@
 {
   "name": "browser-bridge",
   "private": true,
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "A pure TypeScript + Bun monorepo bridging browser extensions and WebSocket services.",
   "workspaces": [
     "apps/*",

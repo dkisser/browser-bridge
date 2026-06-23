@@ -4,6 +4,27 @@ All notable changes to Browser Bridge are documented here. The format follows [K
 
 ## [Unreleased]
 
+## [0.0.4] - 2026-06-23
+
+### Added
+- User-facing `browser-bridge-user` skill under `skills/browser-bridge-user/` with installation and usage guide.
+- `install.sh` auto-discovers and installs the bundled `./skills` directory by default, with `--skills-dir` and `--no-skills` overrides.
+- Timestamped `bridge logs` output via a lightweight Python helper for cross-platform compatibility.
+- `install/tests/install.bats` coverage for skills installation, including default detection, custom directory, and opt-out.
+
+### Changed
+- README and extension manifest now lead with the cross-agent positioning: "Browser as a tool for any agent."
+- README layout refreshed to highlight cross-agent / multi-agent compatibility.
+- Project logo centralized in `docs/assets/logo.png`; extension build copies it automatically to `dist/icon.png`.
+- `bridge.sh.tmpl` updated to support the new installer flags and logging behavior.
+
+### Fixed
+- `bridge up` unbound `BB_HOME` variable guard strengthened for environments that do not export it.
+- `install.sh` option parsing and help text cleaned up after flag renames.
+
+### Security
+- Local WebSocket and proxy servers now bind to `127.0.0.1` only, preventing external network connections.
+
 ## [0.0.3] - 2026-06-20
 
 ### Added
