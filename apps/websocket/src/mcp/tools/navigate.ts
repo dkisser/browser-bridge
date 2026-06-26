@@ -1,8 +1,8 @@
-import { z } from 'zod';
 import type { FastMCP } from 'fastmcp';
-import { sendCommand } from '../command-client';
+import { z } from 'zod';
 import { resolveTargetBrowser } from '../browser-lookup';
-import type { ToolContext, ServerContext } from '../tool-context';
+import { sendCommand } from '../command-client';
+import type { ServerContext, ToolContext } from '../tool-context';
 
 export const NavigateInputSchema = z.object({
   url: z.string().url(),

@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'bun:test';
-import type { Server } from 'bun';
-import { executeNavigate } from '../../tools/navigate';
-import { createBrowserSessionStore } from '../../browser-session';
-import { encode, decode } from '@browser-bridge/websocket/protocol';
 import type { Envelope } from '@browser-bridge/shared';
+import { decode, encode } from '@browser-bridge/websocket/protocol';
+import { createBrowserSessionStore } from '../../browser-session';
+import { executeNavigate } from '../../tools/navigate';
 
 describe('executeNavigate', () => {
   it('navigates to url and returns success', async () => {
