@@ -19,9 +19,12 @@ export interface McpServerOptions {
 export async function startMcpServer(
   options: McpServerOptions,
 ): Promise<FastMCP> {
+  const semverVersion =
+    options.version.match(/^(\d+\.\d+\.\d+)/)?.[0] ?? '0.0.0';
+
   const server = new FastMCP({
     name: 'Browser Bridge',
-    version: options.version as `${number}.${number}.${number}`,
+    version: semverVersion as `${number}.${number}.${number}`,
   });
 
   const sessions = createBrowserSessionStore(options.defaultTimeoutMs);
