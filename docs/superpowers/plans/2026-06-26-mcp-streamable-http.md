@@ -16,7 +16,7 @@
 |------|----------------|
 | `apps/websocket/package.json` | Add `fastmcp` and `zod` dependencies |
 | `apps/websocket/src/index.ts` | Bootstrap FastMCP alongside Bun.serve |
-| `apps/websocket/src/mcp/browser-session.ts` | Per-MCP-session state: selected browserId and timeout |
+| `apps/websocket/src/mcp/browser-session.ts` | Per-MCP-session state: immutable session snapshots, mutable store |
 | `apps/websocket/src/mcp/tool-context.ts` | `ToolContext` and `ServerContext` types |
 | `apps/websocket/src/mcp/browser-resolver.ts` | Resolve target browserId: explicit → auto-detect single → error |
 | `apps/websocket/src/mcp/command-client.ts` | Short-lived WebSocket client wrappers: `sendCommand`, `sendEvent` |
@@ -104,7 +104,7 @@ git commit -m "chore: add fastmcp and zod to websocket app"
 - Create: `apps/websocket/src/mcp/browser-session.ts`
 - Create: `apps/websocket/src/mcp/__tests__/browser-session.test.ts`
 
-**Goal:** Store selected browserId and timeout per MCP session.
+**Goal:** Store selected browserId and timeout per MCP session. Session snapshots are immutable; the store owns mutable state.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -117,32 +117,46 @@ import { createBrowserSessionStore } from '../browser-session';
 describe('BrowserSessionStore', () => {
   it('creates a session with defaults', () => {
     const store = createBrowserSessionStore(15000);
-    const session = store.createSession('session-1');
-    expect(session.getBrowser()).toBeUndefined();
+    const session = store.getSession('session-1');
+    expect(session.browserId).toBeUndefined();
     expect(session.defaultTimeoutMs).toBe(15000);
   });
 
   it('sets and retrieves browserId', () => {
     const store = createBrowserSessionStore(10000);
-    const session = store.createSession('session-1');
-    session.setBrowser('browser-a');
-    expect(session.getBrowser()).toBe('browser-a');
+    const session = store.setBrowser('session-1', 'browser-a');
+    expect(session.browserId).toBe('browser-a');
+    expect(store.getSession('session-1').browserId).toBe('browser-a');
   });
 
   it('clears browserId', () => {
     const store = createBrowserSessionStore(10000);
-    const session = store.createSession('session-1');
-    session.setBrowser('browser-a');
-    session.clearBrowser();
-    expect(session.getBrowser()).toBeUndefined();
+    store.setBrowser('session-1', 'browser-a');
+    const session = store.clearBrowser('session-1');
+    expect(session.browserId).toBeUndefined();
+    expect(store.getSession('session-1').browserId).toBeUndefined();
   });
 
   it('is isolated per session', () => {
     const store = createBrowserSessionStore(10000);
-    const a = store.createSession('a');
-    const b = store.createSession('b');
-    a.setBrowser('browser-a');
-    expect(b.getBrowser()).toBeUndefined();
+    store.setBrowser('a', 'browser-a');
+    expect(store.getSession('b').browserId).toBeUndefined();
+  });
+
+  it('returns the same session object for repeated getSession calls', () => {
+    const store = createBrowserSessionStore(10000);
+    const a = store.getSession('session-1');
+    const b = store.getSession('session-1');
+    expect(a).toBe(b);
+  });
+
+  it('returns an updated immutable session when setBrowser is called', () => {
+    const store = createBrowserSessionStore(10000);
+    const original = store.getSession('session-1');
+    const updated = store.setBrowser('session-1', 'browser-a');
+    expect(updated).not.toBe(original);
+    expect(original.browserId).toBeUndefined();
+    expect(updated.browserId).toBe('browser-a');
   });
 });
 ```
@@ -164,38 +178,40 @@ Create `apps/websocket/src/mcp/browser-session.ts`:
 ```typescript
 export interface BrowserSession {
   readonly defaultTimeoutMs: number;
-  getBrowser(): string | undefined;
-  setBrowser(browserId: string): void;
-  clearBrowser(): void;
+  readonly browserId: string | undefined;
 }
 
 export interface BrowserSessionStore {
-  createSession(sessionId: string): BrowserSession;
+  getSession(sessionId: string): BrowserSession;
+  setBrowser(sessionId: string, browserId: string): BrowserSession;
+  clearBrowser(sessionId: string): BrowserSession;
 }
 
 export function createBrowserSessionStore(defaultTimeoutMs: number): BrowserSessionStore {
   const sessions = new Map<string, BrowserSession>();
 
-  return {
-    createSession(sessionId: string): BrowserSession {
-      const existing = sessions.get(sessionId);
-      if (existing) return existing;
-
-      let browserId: string | undefined;
-
-      const session: BrowserSession = {
-        defaultTimeoutMs,
-        getBrowser: () => browserId,
-        setBrowser: (id: string) => {
-          browserId = id;
-        },
-        clearBrowser: () => {
-          browserId = undefined;
-        },
-      };
-
+  function ensureSession(sessionId: string): BrowserSession {
+    let session = sessions.get(sessionId);
+    if (!session) {
+      session = { defaultTimeoutMs, browserId: undefined };
       sessions.set(sessionId, session);
-      return session;
+    }
+    return session;
+  }
+
+  return {
+    getSession: ensureSession,
+    setBrowser(sessionId: string, browserId: string): BrowserSession {
+      const session = ensureSession(sessionId);
+      const updated = { ...session, browserId };
+      sessions.set(sessionId, updated);
+      return updated;
+    },
+    clearBrowser(sessionId: string): BrowserSession {
+      const session = ensureSession(sessionId);
+      const updated = { ...session, browserId: undefined };
+      sessions.set(sessionId, updated);
+      return updated;
     },
   };
 }
@@ -215,7 +231,7 @@ Expected: PASS.
 
 ```bash
 git add apps/websocket/src/mcp/browser-session.ts apps/websocket/src/mcp/__tests__/browser-session.test.ts
-git commit -m "feat(mcp): add per-session browser state store"
+git commit -m "feat(mcp): add immutable per-session browser state store"
 ```
 
 ---
@@ -232,10 +248,11 @@ git commit -m "feat(mcp): add per-session browser state store"
 Create `apps/websocket/src/mcp/tool-context.ts`:
 
 ```typescript
-import type { BrowserSession, BrowserSessionStore } from './browser-session';
+import type { BrowserSessionStore } from './browser-session';
 
 export interface ToolContext {
-  session: BrowserSession;
+  sessionId: string;
+  sessions: BrowserSessionStore;
   websocketUrl: string;
 }
 
@@ -725,15 +742,20 @@ function createListServer(browsers: unknown[]) {
   });
 }
 
+function makeContext(server: ReturnType<typeof createListServer>, sessionId: string) {
+  const sessions = createBrowserSessionStore(10000);
+  return {
+    sessionId,
+    sessions,
+    websocketUrl: `ws://127.0.0.1:${server.port}/ws`,
+  };
+}
+
 describe('fetchBrowserList', () => {
   it('returns parsed browser list', async () => {
     const server = createListServer([{ browserId: 'a', status: 'online' }]);
-    const sessions = createBrowserSessionStore(10000);
-    const session = sessions.createSession('s1');
-    const list = await fetchBrowserList(
-      { session, websocketUrl: `ws://127.0.0.1:${server.port}/ws` },
-      1000,
-    );
+    const context = makeContext(server, 's1');
+    const list = await fetchBrowserList(context, 1000);
     expect(list).toHaveLength(1);
     expect(list[0].browserId).toBe('a');
     server.stop();
@@ -746,14 +768,10 @@ describe('resolveTargetBrowser', () => {
       { browserId: 'a', userId: 'u', status: 'online', lastSeen: Date.now() },
       { browserId: 'b', userId: 'u', status: 'online', lastSeen: Date.now() },
     ]);
-    const sessions = createBrowserSessionStore(10000);
-    const session = sessions.createSession('s1');
-    session.setBrowser('a');
+    const context = makeContext(server, 's1');
+    context.sessions.setBrowser('s1', 'a');
 
-    const result = await resolveTargetBrowser(
-      { session, websocketUrl: `ws://127.0.0.1:${server.port}/ws` },
-      1000,
-    );
+    const result = await resolveTargetBrowser(context, 1000);
 
     expect(result.success).toBe(true);
     if (result.success) expect(result.browserId).toBe('a');
@@ -764,13 +782,9 @@ describe('resolveTargetBrowser', () => {
     const server = createListServer([
       { browserId: 'a', userId: 'u', status: 'online', lastSeen: Date.now() },
     ]);
-    const sessions = createBrowserSessionStore(10000);
-    const session = sessions.createSession('s1');
+    const context = makeContext(server, 's1');
 
-    const result = await resolveTargetBrowser(
-      { session, websocketUrl: `ws://127.0.0.1:${server.port}/ws` },
-      1000,
-    );
+    const result = await resolveTargetBrowser(context, 1000);
 
     expect(result.success).toBe(true);
     if (result.success) expect(result.browserId).toBe('a');
@@ -821,7 +835,7 @@ export async function resolveTargetBrowser(
   context: ToolContext,
   timeoutMs: number,
 ): Promise<BrowserResolutionResult> {
-  const explicit = context.session.getBrowser();
+  const explicit = context.sessions.getSession(context.sessionId).browserId;
   const browsers = await fetchBrowserList(context, timeoutMs);
   return resolveBrowser(explicit, browsers);
 }
@@ -900,9 +914,8 @@ describe('executeListBrowsers', () => {
     });
 
     const sessions = createBrowserSessionStore(10000);
-    const session = sessions.createSession('s1');
     const result = await executeListBrowsers(
-      { session, websocketUrl: `ws://127.0.0.1:${server.port}/ws` },
+      { sessionId: 's1', sessions, websocketUrl: `ws://127.0.0.1:${server.port}/ws` },
       {},
     );
 
@@ -940,7 +953,7 @@ export async function executeListBrowsers(
   context: ToolContext,
   args: z.infer<typeof ListBrowsersInputSchema>,
 ): Promise<string> {
-  const timeoutMs = args.timeout_ms ?? context.session.defaultTimeoutMs;
+  const timeoutMs = args.timeout_ms ?? context.sessions.getSession(context.sessionId).defaultTimeoutMs;
 
   const result = await sendEvent({
     serverUrl: context.websocketUrl,
@@ -969,8 +982,11 @@ export function registerListBrowsersTool(server: FastMCP, serverContext: ServerC
     description: 'List all browsers connected to Browser Bridge.',
     parameters: ListBrowsersInputSchema,
     execute: async (args, { sessionId }) => {
-      const session = serverContext.sessions.createSession(sessionId ?? 'anonymous');
-      return executeListBrowsers({ websocketUrl: serverContext.websocketUrl, session }, args);
+      const resolvedSessionId = sessionId ?? 'anonymous';
+      return executeListBrowsers(
+        { sessionId: resolvedSessionId, sessions: serverContext.sessions, websocketUrl: serverContext.websocketUrl },
+        args,
+      );
     },
   });
 }
@@ -1015,13 +1031,12 @@ import { createBrowserSessionStore } from '../../browser-session';
 describe('executeSetBrowser', () => {
   it('sets the browser in session state', async () => {
     const sessions = createBrowserSessionStore(10000);
-    const session = sessions.createSession('s1');
     const result = await executeSetBrowser(
-      { session, websocketUrl: 'ws://localhost:3001' },
+      { sessionId: 's1', sessions, websocketUrl: 'ws://localhost:3001' },
       { browserId: 'browser-a' },
     );
     expect(result).toContain('browser-a');
-    expect(session.getBrowser()).toBe('browser-a');
+    expect(sessions.getSession('s1').browserId).toBe('browser-a');
   });
 });
 ```
@@ -1053,7 +1068,7 @@ export async function executeSetBrowser(
   context: ToolContext,
   args: z.infer<typeof SetBrowserInputSchema>,
 ): Promise<string> {
-  context.session.setBrowser(args.browserId);
+  context.sessions.setBrowser(context.sessionId, args.browserId);
   return `Browser set to "${args.browserId}" for this session.`;
 }
 
@@ -1063,8 +1078,11 @@ export function registerSetBrowserTool(server: FastMCP, serverContext: ServerCon
     description: 'Explicitly choose which connected browser to control for this MCP session.',
     parameters: SetBrowserInputSchema,
     execute: async (args, { sessionId }) => {
-      const session = serverContext.sessions.createSession(sessionId ?? 'anonymous');
-      return executeSetBrowser({ websocketUrl: serverContext.websocketUrl, session }, args);
+      const resolvedSessionId = sessionId ?? 'anonymous';
+      return executeSetBrowser(
+        { sessionId: resolvedSessionId, sessions: serverContext.sessions, websocketUrl: serverContext.websocketUrl },
+        args,
+      );
     },
   });
 }
@@ -1146,10 +1164,9 @@ describe('executeNavigate', () => {
     });
 
     const sessions = createBrowserSessionStore(10000);
-    const session = sessions.createSession('s1');
 
     const result = await executeNavigate(
-      { session, websocketUrl: `ws://127.0.0.1:${server.port}/ws` },
+      { sessionId: 's1', sessions, websocketUrl: `ws://127.0.0.1:${server.port}/ws` },
       { url: 'https://example.com' },
     );
 
@@ -1189,7 +1206,7 @@ export async function executeNavigate(
   context: ToolContext,
   args: z.infer<typeof NavigateInputSchema>,
 ): Promise<string> {
-  const timeoutMs = args.timeout_ms ?? context.session.defaultTimeoutMs;
+  const timeoutMs = args.timeout_ms ?? context.sessions.getSession(context.sessionId).defaultTimeoutMs;
   const resolution = await resolveTargetBrowser(context, timeoutMs);
 
   if (!resolution.success) {
@@ -1217,8 +1234,11 @@ export function registerNavigateTool(server: FastMCP, serverContext: ServerConte
     description: 'Navigate the active tab of the selected browser to a URL.',
     parameters: NavigateInputSchema,
     execute: async (args, { sessionId }) => {
-      const session = serverContext.sessions.createSession(sessionId ?? 'anonymous');
-      return executeNavigate({ websocketUrl: serverContext.websocketUrl, session }, args);
+      const resolvedSessionId = sessionId ?? 'anonymous';
+      return executeNavigate(
+        { sessionId: resolvedSessionId, sessions: serverContext.sessions, websocketUrl: serverContext.websocketUrl },
+        args,
+      );
     },
   });
 }
@@ -1300,9 +1320,8 @@ describe('executeClick', () => {
     });
 
     const sessions = createBrowserSessionStore(10000);
-    const session = sessions.createSession('s1');
     const result = await executeClick(
-      { session, websocketUrl: `ws://127.0.0.1:${server.port}/ws` },
+      { sessionId: 's1', sessions, websocketUrl: `ws://127.0.0.1:${server.port}/ws` },
       { selector: '#submit' },
     );
     expect(result).toContain('Clicked');
@@ -1341,7 +1360,7 @@ export async function executeClick(
   context: ToolContext,
   args: z.infer<typeof ClickInputSchema>,
 ): Promise<string> {
-  const timeoutMs = args.timeout_ms ?? context.session.defaultTimeoutMs;
+  const timeoutMs = args.timeout_ms ?? context.sessions.getSession(context.sessionId).defaultTimeoutMs;
   const resolution = await resolveTargetBrowser(context, timeoutMs);
   if (!resolution.success) throw new Error(resolution.message);
 
@@ -1363,8 +1382,11 @@ export function registerClickTool(server: FastMCP, serverContext: ServerContext)
     description: 'Click an element in the selected browser by CSS selector.',
     parameters: ClickInputSchema,
     execute: async (args, { sessionId }) => {
-      const session = serverContext.sessions.createSession(sessionId ?? 'anonymous');
-      return executeClick({ websocketUrl: serverContext.websocketUrl, session }, args);
+      const resolvedSessionId = sessionId ?? 'anonymous';
+      return executeClick(
+        { sessionId: resolvedSessionId, sessions: serverContext.sessions, websocketUrl: serverContext.websocketUrl },
+        args,
+      );
     },
   });
 }
@@ -1446,9 +1468,8 @@ describe('executeType', () => {
     });
 
     const sessions = createBrowserSessionStore(10000);
-    const session = sessions.createSession('s1');
     const result = await executeType(
-      { session, websocketUrl: `ws://127.0.0.1:${server.port}/ws` },
+      { sessionId: 's1', sessions, websocketUrl: `ws://127.0.0.1:${server.port}/ws` },
       { selector: '#search', text: 'hello' },
     );
     expect(result).toContain('Typed');
@@ -1489,7 +1510,7 @@ export async function executeType(
   context: ToolContext,
   args: z.infer<typeof TypeInputSchema>,
 ): Promise<string> {
-  const timeoutMs = args.timeout_ms ?? context.session.defaultTimeoutMs;
+  const timeoutMs = args.timeout_ms ?? context.sessions.getSession(context.sessionId).defaultTimeoutMs;
   const resolution = await resolveTargetBrowser(context, timeoutMs);
   if (!resolution.success) throw new Error(resolution.message);
 
@@ -1511,8 +1532,11 @@ export function registerTypeTool(server: FastMCP, serverContext: ServerContext):
     description: 'Type text into an input element in the selected browser.',
     parameters: TypeInputSchema,
     execute: async (args, { sessionId }) => {
-      const session = serverContext.sessions.createSession(sessionId ?? 'anonymous');
-      return executeType({ websocketUrl: serverContext.websocketUrl, session }, args);
+      const resolvedSessionId = sessionId ?? 'anonymous';
+      return executeType(
+        { sessionId: resolvedSessionId, sessions: serverContext.sessions, websocketUrl: serverContext.websocketUrl },
+        args,
+      );
     },
   });
 }
@@ -1597,9 +1621,8 @@ describe('executeScreenshot', () => {
     });
 
     const sessions = createBrowserSessionStore(10000);
-    const session = sessions.createSession('s1');
     const result = await executeScreenshot(
-      { session, websocketUrl: `ws://127.0.0.1:${server.port}/ws` },
+      { sessionId: 's1', sessions, websocketUrl: `ws://127.0.0.1:${server.port}/ws` },
       {},
     );
 
@@ -1640,7 +1663,7 @@ export async function executeScreenshot(
   context: ToolContext,
   args: z.infer<typeof ScreenshotInputSchema>,
 ): Promise<{ content: Array<{ type: 'image'; data: string; mimeType: 'image/png' }> }> {
-  const timeoutMs = args.timeout_ms ?? context.session.defaultTimeoutMs;
+  const timeoutMs = args.timeout_ms ?? context.sessions.getSession(context.sessionId).defaultTimeoutMs;
   const resolution = await resolveTargetBrowser(context, timeoutMs);
   if (!resolution.success) throw new Error(resolution.message);
 
@@ -1666,8 +1689,11 @@ export function registerScreenshotTool(server: FastMCP, serverContext: ServerCon
     description: 'Take a screenshot of the selected browser.',
     parameters: ScreenshotInputSchema,
     execute: async (args, { sessionId }) => {
-      const session = serverContext.sessions.createSession(sessionId ?? 'anonymous');
-      return executeScreenshot({ websocketUrl: serverContext.websocketUrl, session }, args);
+      const resolvedSessionId = sessionId ?? 'anonymous';
+      return executeScreenshot(
+        { sessionId: resolvedSessionId, sessions: serverContext.sessions, websocketUrl: serverContext.websocketUrl },
+        args,
+      );
     },
   });
 }
@@ -1749,9 +1775,8 @@ describe('executePageinfo', () => {
     });
 
     const sessions = createBrowserSessionStore(10000);
-    const session = sessions.createSession('s1');
     const result = await executePageinfo(
-      { session, websocketUrl: `ws://127.0.0.1:${server.port}/ws` },
+      { sessionId: 's1', sessions, websocketUrl: `ws://127.0.0.1:${server.port}/ws` },
       {},
     );
     expect(result).toContain('Example');
@@ -1790,7 +1815,7 @@ export async function executePageinfo(
   context: ToolContext,
   args: z.infer<typeof PageinfoInputSchema>,
 ): Promise<string> {
-  const timeoutMs = args.timeout_ms ?? context.session.defaultTimeoutMs;
+  const timeoutMs = args.timeout_ms ?? context.sessions.getSession(context.sessionId).defaultTimeoutMs;
   const resolution = await resolveTargetBrowser(context, timeoutMs);
   if (!resolution.success) throw new Error(resolution.message);
 
@@ -1812,8 +1837,11 @@ export function registerPageinfoTool(server: FastMCP, serverContext: ServerConte
     description: 'Get title, URL, and tab list from the selected browser.',
     parameters: PageinfoInputSchema,
     execute: async (args, { sessionId }) => {
-      const session = serverContext.sessions.createSession(sessionId ?? 'anonymous');
-      return executePageinfo({ websocketUrl: serverContext.websocketUrl, session }, args);
+      const resolvedSessionId = sessionId ?? 'anonymous';
+      return executePageinfo(
+        { sessionId: resolvedSessionId, sessions: serverContext.sessions, websocketUrl: serverContext.websocketUrl },
+        args,
+      );
     },
   });
 }
