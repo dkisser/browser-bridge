@@ -50,12 +50,28 @@ Add to Cursor MCP settings:
 
 ## Available tools
 
-- `list_browsers` — list connected browsers
-- `set_browser` — choose a browser for this session
-- `navigate` — open a URL
-- `click` — click an element by selector
-- `type` — type text into an input
-- `screenshot` — capture the page
-- `pageinfo` — get title, URL, tabs
+| Tool | Description | Parameters |
+|---|---|---|
+| `list_browsers` | List connected browsers and their status | — |
+| `set_browser` | Pin a browser for this MCP session | `browserId: string` |
+| `navigate` | Navigate the active tab to a URL | `url: string`, `timeout_ms?: number` |
+| `go_back` | Go back one page in browser history | `timeout_ms?: number` |
+| `go_forward` | Go forward one page in browser history | `timeout_ms?: number` |
+| `refresh` | Refresh the current page | `timeout_ms?: number` |
+| `tab_list` | List all open tabs | `timeout_ms?: number` |
+| `tab_new` | Open a new tab | `url?: string`, `timeout_ms?: number` |
+| `tab_close` | Close a tab by ID | `tabId: number`, `timeout_ms?: number` |
+| `tab_switch` | Switch to a tab by ID | `tabId: number`, `timeout_ms?: number` |
+| `click` | Click an element by CSS selector | `selector: string`, `timeout_ms?: number` |
+| `type` | Type text into an input | `selector: string`, `text: string`, `submit?: boolean`, `timeout_ms?: number` |
+| `select` | Select a dropdown option by value | `selector: string`, `value: string`, `timeout_ms?: number` |
+| `scroll` | Scroll the page or an element | `x: number`, `y: number`, `selector?: string`, `timeout_ms?: number` |
+| `hover` | Hover over an element | `selector: string`, `timeout_ms?: number` |
+| `get_text` | Get the text content of an element | `selector: string`, `timeout_ms?: number` |
+| `get_html` | Get the inner HTML of an element | `selector: string`, `timeout_ms?: number` |
+| `screenshot` | Capture a base64 PNG screenshot | `fullPage?: boolean`, `timeout_ms?: number` |
+| `pageinfo` | Get title, URL, and tab list | `timeout_ms?: number` |
+| `wait_element` | Wait for an element to appear | `selector: string`, `timeout_ms?: number` |
+| `wait_navigation` | Wait for page navigation to complete | `timeout_ms?: number` |
 
 Each browser-control tool accepts an optional `timeout_ms` argument.
