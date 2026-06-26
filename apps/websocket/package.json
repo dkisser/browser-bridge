@@ -13,7 +13,9 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@browser-bridge/shared": "workspace:*"
+    "@browser-bridge/shared": "workspace:*",
+    "fastmcp": "^3.35.0",
+    "zod": "^3.25.0"
   },
   "devDependencies": {
     "@types/bun": "latest",
