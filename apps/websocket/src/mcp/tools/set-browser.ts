@@ -1,6 +1,6 @@
-import { z } from 'zod';
 import type { FastMCP } from 'fastmcp';
-import type { ToolContext, ServerContext } from '../tool-context';
+import { z } from 'zod';
+import type { ServerContext, ToolContext } from '../tool-context';
 
 export const SetBrowserInputSchema = z.object({
   browserId: z.string().min(1),

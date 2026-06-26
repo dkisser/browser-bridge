@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
-import { executeSetBrowser } from '../../tools/set-browser';
 import { createBrowserSessionStore } from '../../browser-session';
+import { executeSetBrowser } from '../../tools/set-browser';
 
 describe('executeSetBrowser', () => {
   it('sets the browser in session state', async () => {

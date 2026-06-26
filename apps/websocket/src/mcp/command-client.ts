@@ -1,9 +1,9 @@
-import { createClient } from '@browser-bridge/websocket/client';
 import type {
   CommandPayload,
   CommandType,
   ResponsePayload,
 } from '@browser-bridge/shared';
+import { createClient } from '@browser-bridge/websocket/client';
 
 export interface SendCommandOptions {
   serverUrl: string;

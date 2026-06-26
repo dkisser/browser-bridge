@@ -1,8 +1,8 @@
-import { describe, expect, it, afterEach } from 'bun:test';
+import { afterEach, describe, expect, it } from 'bun:test';
+import type { Envelope } from '@browser-bridge/shared';
+import { decode, encode } from '@browser-bridge/websocket/protocol';
 import type { Server } from 'bun';
 import { sendCommand, sendEvent } from '../command-client';
-import { encode, decode } from '@browser-bridge/websocket/protocol';
-import type { Envelope } from '@browser-bridge/shared';
 
 describe('sendCommand', () => {
   let server: Server<undefined> | undefined;

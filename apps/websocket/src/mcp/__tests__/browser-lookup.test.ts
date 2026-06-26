@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'bun:test';
+import type { Envelope, ResponsePayload } from '@browser-bridge/shared';
+import { decode, encode } from '@browser-bridge/websocket/protocol';
 import type { Server } from 'bun';
 import { fetchBrowserList, resolveTargetBrowser } from '../browser-lookup';
 import { createBrowserSessionStore } from '../browser-session';
-import { encode, decode } from '@browser-bridge/websocket/protocol';
-import type { Envelope, ResponsePayload } from '@browser-bridge/shared';
 
 function createListServer(responsePayload: ResponsePayload) {
   return Bun.serve({

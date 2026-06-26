@@ -1,9 +1,9 @@
 import type { BrowserConnection } from '@browser-bridge/shared';
-import { sendEvent } from './command-client';
 import {
-  resolveBrowser,
   type BrowserResolutionResult,
+  resolveBrowser,
 } from './browser-resolver';
+import { sendEvent } from './command-client';
 import type { ToolContext } from './tool-context';
 
 function isBrowserConnection(value: unknown): value is BrowserConnection {
