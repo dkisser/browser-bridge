@@ -1,12 +1,12 @@
 export interface BrowserSession {
   readonly defaultTimeoutMs: number;
-  getBrowser(): string | undefined;
-  setBrowser(browserId: string): void;
-  clearBrowser(): void;
+  readonly browserId: string | undefined;
 }
 
 export interface BrowserSessionStore {
-  createSession(sessionId: string): BrowserSession;
+  getSession(sessionId: string): BrowserSession;
+  setBrowser(sessionId: string, browserId: string): BrowserSession;
+  clearBrowser(sessionId: string): BrowserSession;
 }
 
 export function createBrowserSessionStore(
@@ -14,26 +14,28 @@ export function createBrowserSessionStore(
 ): BrowserSessionStore {
   const sessions = new Map<string, BrowserSession>();
 
-  return {
-    createSession(sessionId: string): BrowserSession {
-      const existing = sessions.get(sessionId);
-      if (existing) return existing;
-
-      let browserId: string | undefined;
-
-      const session: BrowserSession = {
-        defaultTimeoutMs,
-        getBrowser: () => browserId,
-        setBrowser: (id: string) => {
-          browserId = id;
-        },
-        clearBrowser: () => {
-          browserId = undefined;
-        },
-      };
-
+  function ensureSession(sessionId: string): BrowserSession {
+    let session = sessions.get(sessionId);
+    if (!session) {
+      session = { defaultTimeoutMs, browserId: undefined };
       sessions.set(sessionId, session);
-      return session;
+    }
+    return session;
+  }
+
+  return {
+    getSession: ensureSession,
+    setBrowser(sessionId: string, browserId: string): BrowserSession {
+      const session = ensureSession(sessionId);
+      const updated = { ...session, browserId };
+      sessions.set(sessionId, updated);
+      return updated;
+    },
+    clearBrowser(sessionId: string): BrowserSession {
+      const session = ensureSession(sessionId);
+      const updated = { ...session, browserId: undefined };
+      sessions.set(sessionId, updated);
+      return updated;
     },
   };
 }
