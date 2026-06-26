@@ -40,13 +40,12 @@ if (Number.isNaN(mcpTimeout)) {
 try {
   startServer(port, authProvider, hostname);
   await startMcpServer({
-    websocketUrl: `ws://${hostname ?? 'localhost'}:${port ?? WEBSOCKET_PORT}`,
+    websocketUrl: `ws://127.0.0.1:${port ?? WEBSOCKET_PORT}`,
     port: mcpPort,
     hostname: mcpHostname,
     defaultTimeoutMs: mcpTimeout,
     version: pkg.version,
   });
-  console.log(`MCP server listening on http://${mcpHostname}:${mcpPort}/mcp`);
 } catch (error) {
   console.error('Failed to start servers:', error);
   process.exit(1);
