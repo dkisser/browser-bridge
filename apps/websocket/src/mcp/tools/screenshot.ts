@@ -5,7 +5,7 @@ import { sendCommand } from '../command-client';
 import type { ServerContext, ToolContext } from '../tool-context';
 
 export const ScreenshotInputSchema = z.object({
-  full_page: z.boolean().optional(),
+  fullPage: z.boolean().optional(),
   timeout_ms: z.number().int().min(100).max(120000).optional(),
 });
 
@@ -25,7 +25,7 @@ export async function executeScreenshot(
     serverUrl: context.websocketUrl,
     browserId: resolution.browserId,
     command: 'screenshot',
-    params: { fullPage: args.full_page },
+    params: args.fullPage === undefined ? {} : { fullPage: args.fullPage },
     timeoutMs,
   });
 

@@ -6,6 +6,7 @@ import { executeScreenshot } from '../../tools/screenshot';
 
 describe('executeScreenshot', () => {
   it('returns image content', async () => {
+    let lastCommandPayload: unknown;
     const server = Bun.serve({
       port: 0,
       hostname: '127.0.0.1',
@@ -37,6 +38,9 @@ describe('executeScreenshot', () => {
                   status: 'ok',
                   data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
                 };
+          if (envelope.type === 'command') {
+            lastCommandPayload = envelope.payload;
+          }
           ws.send(
             encode('response', payload, {
               id: envelope.id,
@@ -56,11 +60,15 @@ describe('executeScreenshot', () => {
           sessions,
           websocketUrl: `ws://127.0.0.1:${server.port}/ws`,
         },
-        {},
+        { fullPage: true },
       );
 
       expect(result.content).toHaveLength(1);
       expect(result.content[0].type).toBe('image');
+      expect(lastCommandPayload).toEqual({
+        command: 'screenshot',
+        params: { fullPage: true },
+      });
     } finally {
       server.stop();
     }
