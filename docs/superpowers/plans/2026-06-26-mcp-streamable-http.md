@@ -481,7 +481,12 @@ describe('sendCommand', () => {
             payload: { status: 'ok', data: { title: 'Example' } },
             timestamp: Date.now(),
           };
-          ws.send(encode(response));
+          ws.send(
+            encode('response', response.payload, {
+              id: response.id,
+              browserId: response.browserId,
+            }),
+          );
         },
         close() {},
       },
@@ -557,7 +562,12 @@ describe('sendEvent', () => {
             payload: { status: 'ok', data: [{ browserId: 'a', status: 'online' }] },
             timestamp: Date.now(),
           };
-          ws.send(encode(response));
+          ws.send(
+            encode('response', response.payload, {
+              id: response.id,
+              browserId: response.browserId,
+            }),
+          );
         },
         close() {},
       },
@@ -735,7 +745,12 @@ function createListServer(browsers: unknown[]) {
           payload: { status: 'ok', data: browsers },
           timestamp: Date.now(),
         };
-        ws.send(encode(response));
+        ws.send(
+          encode('response', response.payload, {
+            id: response.id,
+            browserId: response.browserId,
+          }),
+        );
       },
       close() {},
     },
@@ -907,7 +922,12 @@ describe('executeListBrowsers', () => {
             },
             timestamp: Date.now(),
           };
-          ws.send(encode(response));
+          ws.send(
+            encode('response', response.payload, {
+              id: response.id,
+              browserId: response.browserId,
+            }),
+          );
         },
         close() {},
       },
@@ -1150,12 +1170,9 @@ describe('executeNavigate', () => {
                 }
               : { status: 'ok', message: 'Navigated' };
           ws.send(
-            encode({
+            encode('response', payload, {
               id: envelope.id,
-              type: 'response',
               browserId: envelope.browserId,
-              payload,
-              timestamp: Date.now(),
             }),
           );
         },
@@ -1306,12 +1323,9 @@ describe('executeClick', () => {
                 }
               : { status: 'ok', message: 'Clicked' };
           ws.send(
-            encode({
+            encode('response', payload, {
               id: envelope.id,
-              type: 'response',
               browserId: envelope.browserId,
-              payload,
-              timestamp: Date.now(),
             }),
           );
         },
@@ -1454,12 +1468,9 @@ describe('executeType', () => {
                 }
               : { status: 'ok', message: 'Typed' };
           ws.send(
-            encode({
+            encode('response', payload, {
               id: envelope.id,
-              type: 'response',
               browserId: envelope.browserId,
-              payload,
-              timestamp: Date.now(),
             }),
           );
         },
@@ -1607,12 +1618,9 @@ describe('executeScreenshot', () => {
                   data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
                 };
           ws.send(
-            encode({
+            encode('response', payload, {
               id: envelope.id,
-              type: 'response',
               browserId: envelope.browserId,
-              payload,
-              timestamp: Date.now(),
             }),
           );
         },
@@ -1761,12 +1769,9 @@ describe('executePageinfo', () => {
                 }
               : { status: 'ok', data: { title: 'Example', url: 'https://example.com' } };
           ws.send(
-            encode({
+            encode('response', payload, {
               id: envelope.id,
-              type: 'response',
               browserId: envelope.browserId,
-              payload,
-              timestamp: Date.now(),
             }),
           );
         },
@@ -1917,7 +1922,12 @@ describe('startMcpServer', () => {
             payload: { status: 'ok', data: [{ browserId: 'a', userId: 'u', status: 'online', lastSeen: Date.now() }] },
             timestamp: Date.now(),
           };
-          ws.send(encode(response));
+          ws.send(
+            encode('response', response.payload, {
+              id: response.id,
+              browserId: response.browserId,
+            }),
+          );
         },
         close() {},
       },
