@@ -4,6 +4,11 @@ All notable changes to Browser Bridge are documented here. The format follows [K
 
 ## [Unreleased]
 
+## [0.0.7] - 2026-06-29
+
+### Fixed
+- Added missing optional peer dependencies required by `xsschema` (`@valibot/to-json-schema`, `arktype`, `effect`, `sury`) to `apps/websocket/package.json`. This fixes the v0.0.6 release `ws-server` binary that only started the WebSocket server and left the MCP Streamable HTTP endpoint on port 3003 unbound.
+
 ## [0.0.6] - 2026-06-29
 
 ### Added
