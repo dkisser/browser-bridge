@@ -191,18 +191,21 @@ TPL
   [[ "$output" == *"v9.9.9"* ]]
 }
 
-@test "print_next_steps mentions PATH, Chrome load, and bridge up" {
+@test "print_next_steps mentions PATH, Chrome load, and the visible extension directory" {
   bash_path=$(find_modern_bash)
   run "$bash_path" -c "
     set -euo pipefail
     source <(sed -n '/^print_next_steps()/,/^}/p' '$INSTALL_SH')
     BB_HOME='$BB_HOME'
+    BB_EXTENSION_DIR='$BB_EXTENSION_DIR'
     print_next_steps v9.9.9
   "
   [ "$status" -eq 0 ]
   [[ "$output" == *"PATH"* ]]
   [[ "$output" == *"Chrome"* ]]
-  [[ "$output" == *"bridge up"* ]]
+  [[ "$output" == *"$BB_EXTENSION_DIR/extension/"* ]]
+  [[ "$output" != *"bridge up"* ]]
+  [[ "$output" == *"Bridge services are already running"* ]]
 }
 
 # ---------------------------------------------------------------------------
@@ -461,5 +464,246 @@ SCRIPT
   [[ -f "$BB_TEST_TMP/bb-home/bin/bridge" ]]
   [[ -L "$HOME/.local/bin/bridge" ]]
   [[ -f "$HOME/.claude/skills/browser-bridge-user/SKILL.md" ]]
+}
+
+# ---------------------------------------------------------------------------
+# Extension symlink, version skip, and auto-start behavior
+# ---------------------------------------------------------------------------
+
+@test "download_extension exposes extension as a symlink in BB_EXTENSION_DIR" {
+  bash_path=$(find_modern_bash)
+  mkdir -p "$BB_TEST_TMP/www" "$BB_TEST_TMP/stage"
+  echo "real-content" > "$BB_TEST_TMP/stage/bb.zip"
+  ( cd "$BB_TEST_TMP/stage" && zip -q "$BB_TEST_TMP/www/browser-bridge-extension-v9.9.9.zip" bb.zip )
+  ( cd "$BB_TEST_TMP/www" && shasum -a 256 browser-bridge-extension-v9.9.9.zip > browser-bridge-extension-v9.9.9.zip.sha256 )
+  start_mock_http 18766
+
+  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_symlink.sh"
+  cat >> "$BB_TEST_TMP/test_symlink.sh" <<'SCRIPT'
+ORG='127.0.0.1:18766'
+REPO='browser-bridge'
+resolve_version() { echo 'v9.9.9'; }
+mkdir -p "$BB_HOME/extension"
+download_extension
+SCRIPT
+  BB_HOME="$BB_TEST_TMP/bb-home" \
+  BB_EXTENSION_DIR="$BB_TEST_TMP/browser-bridge-visible" \
+  run "$bash_path" "$BB_TEST_TMP/test_symlink.sh"
+  stop_mock_http
+
+  [ "$status" -eq 0 ]
+  [[ -L "$BB_TEST_TMP/browser-bridge-visible/extension" ]]
+  [[ "$(readlink "$BB_TEST_TMP/browser-bridge-visible/extension")" == "$BB_TEST_TMP/bb-home/extension" ]]
+}
+
+@test "download_extension leaves existing correct symlink untouched" {
+  bash_path=$(find_modern_bash)
+  mkdir -p "$BB_TEST_TMP/www" "$BB_TEST_TMP/stage"
+  echo "real-content" > "$BB_TEST_TMP/stage/bb.zip"
+  ( cd "$BB_TEST_TMP/stage" && zip -q "$BB_TEST_TMP/www/browser-bridge-extension-v9.9.9.zip" bb.zip )
+  ( cd "$BB_TEST_TMP/www" && shasum -a 256 browser-bridge-extension-v9.9.9.zip > browser-bridge-extension-v9.9.9.zip.sha256 )
+  start_mock_http 18767
+
+  mkdir -p "$BB_TEST_TMP/bb-home/extension"
+  mkdir -p "$BB_TEST_TMP/browser-bridge-visible"
+  ln -s "$BB_TEST_TMP/bb-home/extension" "$BB_TEST_TMP/browser-bridge-visible/extension"
+  local original_inode
+  original_inode=$(stat -f '%i' "$BB_TEST_TMP/browser-bridge-visible/extension" 2>/dev/null || stat -c '%i' "$BB_TEST_TMP/browser-bridge-visible/extension")
+
+  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_symlink2.sh"
+  cat >> "$BB_TEST_TMP/test_symlink2.sh" <<'SCRIPT'
+ORG='127.0.0.1:18767'
+REPO='browser-bridge'
+resolve_version() { echo 'v9.9.9'; }
+download_extension
+SCRIPT
+  BB_HOME="$BB_TEST_TMP/bb-home" \
+  BB_EXTENSION_DIR="$BB_TEST_TMP/browser-bridge-visible" \
+  run "$bash_path" "$BB_TEST_TMP/test_symlink2.sh"
+  stop_mock_http
+
+  [ "$status" -eq 0 ]
+  local new_inode
+  new_inode=$(stat -f '%i' "$BB_TEST_TMP/browser-bridge-visible/extension" 2>/dev/null || stat -c '%i' "$BB_TEST_TMP/browser-bridge-visible/extension")
+  [ "$original_inode" -eq "$new_inode" ]
+}
+
+@test "install.sh skips install when installed version matches target version" {
+  bash_path=$(find_modern_bash)
+  mkdir -p "$BB_TEST_TMP/bb-home"
+  echo "v9.9.9" > "$BB_TEST_TMP/bb-home/version"
+
+  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_skip.sh"
+  cat >> "$BB_TEST_TMP/test_skip.sh" <<'SCRIPT'
+resolve_version() { echo 'v9.9.9'; }
+main --no-skills
+SCRIPT
+
+  BB_HOME="$BB_TEST_TMP/bb-home" \
+  BB_VERSION="v9.9.9" \
+  run "$bash_path" "$BB_TEST_TMP/test_skip.sh"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"already installed and up to date"* ]]
+}
+
+@test "install.sh --force bypasses version skip" {
+  bash_path=$(find_modern_bash)
+  mkdir -p "$BB_TEST_TMP/www" "$BB_TEST_TMP/stage"
+  echo "fake-extension-content" > "$BB_TEST_TMP/stage/bb.zip"
+  ( cd "$BB_TEST_TMP/stage" && zip -q "$BB_TEST_TMP/www/browser-bridge-extension-v9.9.9.zip" bb.zip )
+  ( cd "$BB_TEST_TMP/www" && shasum -a 256 browser-bridge-extension-v9.9.9.zip > browser-bridge-extension-v9.9.9.zip.sha256 )
+
+  local tarball_path tarball_name
+  tarball_path=$(make_fake_runtime_tarball v9.9.9 arm64)
+  tarball_name=$(basename "$tarball_path")
+  cp "$tarball_path" "$BB_TEST_TMP/www/$tarball_name"
+  cp "${tarball_path}.sha256" "$BB_TEST_TMP/www/${tarball_name}.sha256"
+
+  mkdir -p "$BB_TEST_TMP/bb-home"
+  echo "v9.9.9" > "$BB_TEST_TMP/bb-home/version"
+
+  start_mock_http 18768
+  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_force.sh"
+  cat >> "$BB_TEST_TMP/test_force.sh" <<'SCRIPT'
+BB_INSTALL_ARCH=arm64
+ORG='127.0.0.1:18768'
+main --no-skills --force
+SCRIPT
+
+  BB_HOME="$BB_TEST_TMP/bb-home" \
+  BB_VERSION="v9.9.9" \
+  BRIDGE_TEMPLATE_PATH="$BB_TEST_ROOT/install/bridge.sh.tmpl" \
+  run "$bash_path" "$BB_TEST_TMP/test_force.sh"
+  stop_mock_http
+
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"already installed and up to date"* ]]
+  [[ -x "$BB_TEST_TMP/bb-home/bin/ws-server" ]]
+}
+
+@test "install.sh auto-starts bridge services after install" {
+  mkdir -p "$BB_TEST_TMP/www" "$BB_TEST_TMP/stage"
+  echo "fake-extension-content" > "$BB_TEST_TMP/stage/bb.zip"
+  ( cd "$BB_TEST_TMP/stage" && zip -q "$BB_TEST_TMP/www/browser-bridge-extension-v9.9.9.zip" bb.zip )
+  ( cd "$BB_TEST_TMP/www" && shasum -a 256 browser-bridge-extension-v9.9.9.zip > browser-bridge-extension-v9.9.9.zip.sha256 )
+
+  local tarball_path tarball_name
+  tarball_path=$(make_fake_runtime_tarball v9.9.9 arm64)
+  tarball_name=$(basename "$tarball_path")
+  cp "$tarball_path" "$BB_TEST_TMP/www/$tarball_name"
+  cp "${tarball_path}.sha256" "$BB_TEST_TMP/www/${tarball_name}.sha256"
+
+  start_mock_http 18769
+  bash_path=$(find_modern_bash)
+
+  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_autostart.sh"
+  cat >> "$BB_TEST_TMP/test_autostart.sh" <<'SCRIPT'
+BB_INSTALL_ARCH=arm64
+ORG='127.0.0.1:18769'
+main --no-skills
+SCRIPT
+
+  BB_HOME="$BB_TEST_TMP/bb-home" \
+  BB_VERSION="v9.9.9" \
+  BRIDGE_TEMPLATE_PATH="$BB_TEST_ROOT/install/bridge.sh.tmpl" \
+  run "$bash_path" "$BB_TEST_TMP/test_autostart.sh"
+  stop_mock_http
+
+  [ "$status" -eq 0 ]
+  [[ -f "$BB_TEST_TMP/bb-home/run/ws-server.pid" ]]
+  [[ -f "$BB_TEST_TMP/bb-home/run/local-proxy.pid" ]]
+}
+
+@test "install.sh stops existing bridge before update and starts again after" {
+  mkdir -p "$BB_TEST_TMP/www" "$BB_TEST_TMP/stage"
+  echo "fake-extension-content" > "$BB_TEST_TMP/stage/bb.zip"
+  ( cd "$BB_TEST_TMP/stage" && zip -q "$BB_TEST_TMP/www/browser-bridge-extension-v9.9.9.zip" bb.zip )
+  ( cd "$BB_TEST_TMP/www" && shasum -a 256 browser-bridge-extension-v9.9.9.zip > browser-bridge-extension-v9.9.9.zip.sha256 )
+
+  local tarball_path tarball_name
+  tarball_path=$(make_fake_runtime_tarball v9.9.9 arm64)
+  tarball_name=$(basename "$tarball_path")
+  cp "$tarball_path" "$BB_TEST_TMP/www/$tarball_name"
+  cp "${tarball_path}.sha256" "$BB_TEST_TMP/www/${tarball_name}.sha256"
+
+  # Pre-populate an old install with a different version and running services.
+  mkdir -p "$BB_TEST_TMP/bb-home/bin" "$BB_TEST_TMP/bb-home/run"
+  cp -R "$BB_TEST_ROOT/install/bridge.sh.tmpl" "$BB_TEST_TMP/bb-home/bin/bridge"
+  sed -i.bak 's/{{BRIDGE_VERSION}}/v0.0.1/g' "$BB_TEST_TMP/bb-home/bin/bridge"
+  rm "$BB_TEST_TMP/bb-home/bin/bridge.bak"
+  chmod +x "$BB_TEST_TMP/bb-home/bin/bridge"
+  echo "v0.0.1" > "$BB_TEST_TMP/bb-home/version"
+  ( trap "" TERM; sleep 60 ) & echo $! > "$BB_TEST_TMP/bb-home/run/ws-server.pid"
+  ( trap "" TERM; sleep 60 ) & echo $! > "$BB_TEST_TMP/bb-home/run/local-proxy.pid"
+  local old_ws_pid old_lp_pid
+  old_ws_pid=$(cat "$BB_TEST_TMP/bb-home/run/ws-server.pid")
+  old_lp_pid=$(cat "$BB_TEST_TMP/bb-home/run/local-proxy.pid")
+
+  start_mock_http 18770
+  bash_path=$(find_modern_bash)
+
+  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_upgrade.sh"
+  cat >> "$BB_TEST_TMP/test_upgrade.sh" <<'SCRIPT'
+BB_INSTALL_ARCH=arm64
+ORG='127.0.0.1:18770'
+main --no-skills
+SCRIPT
+
+  BB_HOME="$BB_TEST_TMP/bb-home" \
+  BB_VERSION="v9.9.9" \
+  BRIDGE_TEMPLATE_PATH="$BB_TEST_ROOT/install/bridge.sh.tmpl" \
+  run "$bash_path" "$BB_TEST_TMP/test_upgrade.sh"
+  stop_mock_http
+
+  [ "$status" -eq 0 ]
+  # Old fake services should have been stopped.
+  ! kill -0 "$old_ws_pid" 2>/dev/null
+  ! kill -0 "$old_lp_pid" 2>/dev/null
+  # New services should be running.
+  [[ -f "$BB_TEST_TMP/bb-home/run/ws-server.pid" ]]
+  [[ -f "$BB_TEST_TMP/bb-home/run/local-proxy.pid" ]]
+  local new_ws_pid
+  new_ws_pid=$(cat "$BB_TEST_TMP/bb-home/run/ws-server.pid")
+  [ "$new_ws_pid" != "$old_ws_pid" ]
+}
+
+@test "install.sh succeeds when auto-start fails due to port conflict" {
+  mkdir -p "$BB_TEST_TMP/www" "$BB_TEST_TMP/stage"
+  echo "fake-extension-content" > "$BB_TEST_TMP/stage/bb.zip"
+  ( cd "$BB_TEST_TMP/stage" && zip -q "$BB_TEST_TMP/www/browser-bridge-extension-v9.9.9.zip" bb.zip )
+  ( cd "$BB_TEST_TMP/www" && shasum -a 256 browser-bridge-extension-v9.9.9.zip > browser-bridge-extension-v9.9.9.zip.sha256 )
+
+  local tarball_path tarball_name
+  tarball_path=$(make_fake_runtime_tarball v9.9.9 arm64)
+  tarball_name=$(basename "$tarball_path")
+  cp "$tarball_path" "$BB_TEST_TMP/www/$tarball_name"
+  cp "${tarball_path}.sha256" "$BB_TEST_TMP/www/${tarball_name}.sha256"
+
+  # Occupy the ws-server port so bridge up fails.
+  python3 -c "import socket; s=socket.socket(); s.bind(('127.0.0.1',3001)); s.listen(); import time; time.sleep(60)" &
+  PORT_HOLDER_PID=$!
+  sleep 0.3
+
+  start_mock_http 18771
+  bash_path=$(find_modern_bash)
+
+  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_autostart_fail.sh"
+  cat >> "$BB_TEST_TMP/test_autostart_fail.sh" <<'SCRIPT'
+BB_INSTALL_ARCH=arm64
+ORG='127.0.0.1:18771'
+main --no-skills
+SCRIPT
+
+  BB_HOME="$BB_TEST_TMP/bb-home" \
+  BB_VERSION="v9.9.9" \
+  BRIDGE_TEMPLATE_PATH="$BB_TEST_ROOT/install/bridge.sh.tmpl" \
+  run "$bash_path" "$BB_TEST_TMP/test_autostart_fail.sh"
+  kill "$PORT_HOLDER_PID" 2>/dev/null || true
+  stop_mock_http
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"could not auto-start"* ]]
+  [[ -f "$BB_TEST_TMP/bb-home/version" ]]
 }
 

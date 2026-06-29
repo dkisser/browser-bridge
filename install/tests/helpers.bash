@@ -15,6 +15,9 @@ mkdir -p "$HOME"
 # Set BB_HOME explicitly so bridge/install.sh never reads the real path.
 export BB_HOME="$HOME/.browser-bridge"
 
+# Set BB_EXTENSION_DIR explicitly so tests use the fake HOME tree.
+export BB_EXTENSION_DIR="$HOME/Browser-Bridge"
+
 # Path to the script under test.
 INSTALL_SH="$BB_TEST_ROOT/install/install.sh"
 BRIDGE_TMPL="$BB_TEST_ROOT/install/bridge.sh.tmpl"
@@ -123,6 +126,8 @@ helpers_teardown() {
       kill "$pid" 2>/dev/null || true
     done
   done
+  # Remove the visible extension directory created by tests.
+  rm -rf "$BB_EXTENSION_DIR" 2>/dev/null || true
 }
 
 teardown() { helpers_teardown; }

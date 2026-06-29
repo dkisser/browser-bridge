@@ -6,6 +6,7 @@ ORG="${ORG:-dkisser}"  # substituted at emit time; env override enables testing/
 REPO="${REPO:-browser-bridge}"
 BB_VERSION="${BB_VERSION:-}"
 BB_HOME="${BB_HOME:-$HOME/.browser-bridge}"
+BB_EXTENSION_DIR="${BB_EXTENSION_DIR:-$HOME/Browser-Bridge}"
 
 # Skills installation options (also configurable via environment variables).
 BB_SKILLS_TARGET_DIR="${BB_SKILLS_TARGET_DIR:-}"  # destination agent skills directory
@@ -93,14 +94,13 @@ Next steps:
   1. Ensure ~/.local/bin is on your PATH:
        export PATH="\$HOME/.local/bin:\$PATH"
   2. Open Chrome and load the unpacked extension from:
-       $BB_HOME/extension/
+       $BB_EXTENSION_DIR/extension/
      (chrome://extensions - enable Developer mode - "Load unpacked")
-  3. Start the bridge:
-       bridge up
-  4. List connected browsers and control the browser:
+  3. List connected browsers and control the browser:
        bridge browser:list
        bridge --browser <browserId> navigate https://example.com
 
+Bridge services are already running. To stop them: bridge down
 To uninstall later: bridge uninstall --yes
 EOF
 }
@@ -114,11 +114,14 @@ Options:
   --with-skills      Download skills from the release and install them (requires the
                      release to include a skills tarball).
   --no-skills        Skip installing local skills even if ./skills exists.
+  --force            Reinstall even if the target version is already installed.
   --help, -h         Show this help message.
 
 Environment variables:
   BB_VERSION              Install a specific release version (default: latest).
-  BB_HOME                 Installation prefix (default: ~/.browser-bridge).
+  BB_HOME                 Installation prefix for runtime internals (default: ~/.browser-bridge).
+  BB_EXTENSION_DIR        Visible directory for the Chrome extension symlink (default: ~/Browser-Bridge).
+  BB_FORCE                Set to "true" to enable --force.
   BB_SKILLS_TARGET_DIR    Same as --skills-dir.
   BB_WITH_SKILLS          Set to "true" to enable --with-skills.
   BB_NO_SKILLS            Set to "true" to skip local skills.
@@ -177,9 +180,16 @@ download_extension() {
   fi
   mkdir -p "$BB_HOME/extension"
   unzip -q "${tmpdir}/${zipname}" -d "$BB_HOME/extension"
+
+  mkdir -p "$BB_EXTENSION_DIR"
+  if [[ ! -L "$BB_EXTENSION_DIR/extension" ]] || [[ "$(readlink "$BB_EXTENSION_DIR/extension")" != "$BB_HOME/extension" ]]; then
+    rm -rf "$BB_EXTENSION_DIR/extension"
+    ln -s "$BB_HOME/extension" "$BB_EXTENSION_DIR/extension"
+  fi
+  info "Extension exposed at $BB_EXTENSION_DIR/extension"
+
   rm -rf "$tmpdir"
   trap - RETURN
-  info "Extension installed to $BB_HOME/extension"
 }
 
 download_runtime() {
@@ -290,6 +300,7 @@ parse_install_args() {
   SKILLS_TARGET_DIR="${BB_SKILLS_TARGET_DIR:-}"
   WITH_SKILLS="${BB_WITH_SKILLS:-false}"
   NO_SKILLS="${BB_NO_SKILLS:-false}"
+  FORCE="${BB_FORCE:-false}"
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -304,6 +315,10 @@ parse_install_args() {
         ;;
       --no-skills)
         NO_SKILLS=true
+        shift
+        ;;
+      --force)
+        FORCE=true
         shift
         ;;
       --help|-h)
@@ -328,11 +343,25 @@ main() {
   version=$(resolve_version)
   info "Installing Browser Bridge ${version}"
 
+  local current_version=""
+  if [[ -f "$BB_HOME/version" ]]; then
+    current_version=$(cat "$BB_HOME/version" 2>/dev/null || true)
+  fi
+  if [[ "$FORCE" != "true" ]] && [[ -n "$current_version" ]] && [[ "$current_version" == "$version" ]]; then
+    info "Browser Bridge ${version} is already installed and up to date."
+    exit 0
+  fi
+
   local base
   if [[ "$ORG" =~ ^[0-9a-zA-Z.-]+:[0-9]+$ ]]; then
     base="http://${ORG}"
   else
     base="https://github.com/${ORG}/${REPO}/releases/download/${version}"
+  fi
+
+  if [[ -x "$BB_HOME/bin/bridge" ]] && "$BB_HOME/bin/bridge" status >/dev/null 2>&1; then
+    info "Stopping existing bridge services before update..."
+    "$BB_HOME/bin/bridge" down >/dev/null 2>&1 || true
   fi
 
   if [[ "$NO_SKILLS" != "true" ]] && { [[ "$WITH_SKILLS" == "true" ]] || local_skills_available; }; then
@@ -355,6 +384,16 @@ main() {
   download_runtime "$version" "$arch" "$base"
 
   write_artifacts "$version"
+
+  if [[ -x "$BB_HOME/bin/bridge" ]]; then
+    info "Starting bridge services..."
+    if "$BB_HOME/bin/bridge" up >/dev/null 2>&1; then
+      info "Bridge services started."
+    else
+      info "Bridge services could not auto-start (ports may be in use). Run 'bridge up' manually."
+    fi
+  fi
+
   print_next_steps "$version"
 }
 

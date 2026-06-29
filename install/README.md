@@ -29,13 +29,14 @@ To pin a version: `BB_VERSION=v1.2.3 curl ... | bash`.
 1. Verifies prerequisites.
 2. Resolves the target version (latest release, or `BB_VERSION` override).
 3. Downloads `browser-bridge-extension-{version}.zip` and its `.sha256` from the GitHub Release; aborts on mismatch.
-4. Extracts the extension into `~/.browser-bridge/extension/`.
+4. Extracts the extension into `~/.browser-bridge/extension/` and exposes it through a symlink at `~/Browser-Bridge/extension/` for easy Chrome loading.
 5. Detects the macOS architecture (arm64 or x64).
 6. Downloads the matching runtime tarball (`browser-bridge-macos-{arch}-{version}.tar.gz`) and its `.sha256`; aborts on mismatch.
 7. Extracts the three binaries (`ws-server`, `local-proxy`, `bridge-cmd`) into `~/.browser-bridge/bin/`.
 8. Writes `~/.browser-bridge/bin/bridge` (templated from `install/bridge.sh.tmpl`) and symlinks it into `~/.local/bin/bridge`.
 9. Writes the resolved version to `~/.browser-bridge/version`.
-10. Prints next steps: PATH export, Chrome "load unpacked" pointer (on macOS the extension folder is under a hidden directory; press `Command + Shift + .` in the file picker to reveal it), `bridge up`.
+10. Stops any already-running bridge services, then starts them again after installation.
+11. Prints next steps: PATH export, Chrome "load unpacked" pointer at `~/Browser-Bridge/extension/`.
 
 ## `bridge` Commands
 
@@ -110,16 +111,14 @@ bun test install/tests/release-workflow.test.ts
 ## Manual Smoke Test
 
 ```bash
-# After install:
-bridge up
+# After install, bridge services are already running:
 bridge status         # both services running
 bridge doctor         # all OK
 # In Chrome:
 #   1. Open chrome://extensions/
 #   2. Enable "Developer mode"
 #   3. Click "Load unpacked"
-#   4. Select ~/.browser-bridge/extension/
-#      On macOS, ~/.browser-bridge is hidden. In the file picker press Command + Shift + . to show hidden folders.
+#   4. Select ~/Browser-Bridge/extension/
 # In another terminal:
 bridge browser:list
 bridge --browser <browserId> navigate https://example.com

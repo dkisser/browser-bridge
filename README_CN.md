@@ -58,11 +58,7 @@
 curl -fsSL https://github.com/dkisser/browser-bridge/releases/latest/download/install.sh | bash
 ```
 
-在 Chrome 中加载 `~/.browser-bridge/extension/` 作为解压扩展，然后运行：
-
-```bash
-bridge up
-```
+在 Chrome 中加载 `~/Browser-Bridge/extension/` 作为解压扩展。bridge 服务会自动启动。
 
 ### 2. 发送第一条命令
 
@@ -113,6 +109,10 @@ bridge navigate https://github.com --browser <browser-id>
 ```bash
 curl -fsSL https://github.com/dkisser/browser-bridge/releases/latest/download/install.sh | bash
 ```
+
+安装脚本会下载运行时，在 `~/Browser-Bridge/extension/` 创建扩展的软连接，并自动启动 bridge 服务。你只需在 Chrome 中加载该解压扩展即可。
+
+如需强制重装同一版本，可传入 `--force`；如需安装指定版本，可设置 `BB_VERSION=vX.Y.Z`。
 
 ### 方案 B：一行命令安装并附带 Claude Code skill
 

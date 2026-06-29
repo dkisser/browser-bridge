@@ -4,6 +4,7 @@
 set -euo pipefail
 
 BB_HOME="${BB_HOME:-$HOME/.browser-bridge}"
+BB_EXTENSION_DIR="${BB_EXTENSION_DIR:-$HOME/Browser-Bridge}"
 BRIDGE_VERSION="{{BRIDGE_VERSION}}"
 
 WS_PORT="${BRIDGE_WS_PORT:-3001}"
@@ -58,10 +59,14 @@ cmd_doctor() {
   [[ -x "$BB_HOME/bin/ws-server" ]]   && echo "[OK] ws-server binary present"   || { echo "[FAIL] ws-server binary missing"; rc=1; }
   [[ -x "$BB_HOME/bin/local-proxy" ]] && echo "[OK] local-proxy binary present" || { echo "[FAIL] local-proxy binary missing"; rc=1; }
   [[ -x "$BB_HOME/bin/bridge-cmd" ]]  && echo "[OK] bridge-cmd binary present"  || { echo "[FAIL] bridge-cmd binary missing"; rc=1; }
-  if [[ -f "$BB_HOME/extension/manifest.json" ]] && python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$BB_HOME/extension/manifest.json" 2>/dev/null; then
+  local ext_manifest="$BB_HOME/extension/manifest.json"
+  local alt_manifest="$BB_EXTENSION_DIR/extension/manifest.json"
+  if [[ -f "$ext_manifest" ]] && python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$ext_manifest" 2>/dev/null; then
     echo "[OK] extension/manifest.json valid"
+  elif [[ -f "$alt_manifest" ]] && python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$alt_manifest" 2>/dev/null; then
+    echo "[OK] extension/manifest.json valid (at $alt_manifest)"
   else
-    echo "[FAIL] extension/manifest.json valid"; rc=1
+    echo "[FAIL] extension/manifest.json missing or invalid"; rc=1
   fi
   if service_state ws-server >/dev/null && service_state local-proxy >/dev/null; then
     echo "[OK] both services running"
@@ -223,6 +228,14 @@ cmd_uninstall() {
   cmd_down || true
   rm -rf "$BB_HOME"
   echo "Removed $BB_HOME"
+  if [[ -d "$BB_EXTENSION_DIR" ]]; then
+    rm -rf "$BB_EXTENSION_DIR"
+    echo "Removed $BB_EXTENSION_DIR"
+  fi
+  if [[ -L "$HOME/.local/bin/bridge" ]] && [[ ! -e "$HOME/.local/bin/bridge" ]]; then
+    rm -f "$HOME/.local/bin/bridge"
+    echo "Removed stale symlink $HOME/.local/bin/bridge"
+  fi
 }
 
 main() {

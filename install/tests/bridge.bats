@@ -175,6 +175,25 @@ setup_up() {
   [[ ! -d "$BB_HOME" ]]
 }
 
+@test "bridge doctor reports OK when extension is only in BB_EXTENSION_DIR" {
+  make_fake_binaries
+  mkdir -p "$BB_EXTENSION_DIR/extension"
+  echo '{"manifest_version":3}' > "$BB_EXTENSION_DIR/extension/manifest.json"
+  run bash "$BRIDGE_TMPL" doctor
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[OK] extension/manifest.json valid"* ]]
+}
+
+@test "bridge uninstall --yes removes BB_HOME and BB_EXTENSION_DIR" {
+  mkdir -p "$BB_HOME/bin"
+  mkdir -p "$BB_EXTENSION_DIR/extension"
+  echo '{"manifest_version":3}' > "$BB_EXTENSION_DIR/extension/manifest.json"
+  run bash "$BRIDGE_TMPL" uninstall --yes
+  [ "$status" -eq 0 ]
+  [[ ! -d "$BB_HOME" ]]
+  [[ ! -d "$BB_EXTENSION_DIR" ]]
+}
+
 @test "bridge update fetches the self-contained release installer" {
   local tmpl="$BB_TEST_TMP/bridge-substituted.sh"
   sed -e "s|{{ORG}}|dkisser|g" -e "s|{{REPO}}|browser-bridge|g" "$BRIDGE_TMPL" > "$tmpl"

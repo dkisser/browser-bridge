@@ -58,11 +58,7 @@
 curl -fsSL https://github.com/dkisser/browser-bridge/releases/latest/download/install.sh | bash
 ```
 
-Load `~/.browser-bridge/extension/` as an unpacked extension in Chrome, then run:
-
-```bash
-bridge up
-```
+Load `~/Browser-Bridge/extension/` as an unpacked extension in Chrome. The bridge services start automatically.
 
 ### 2. Send your first command
 
@@ -113,6 +109,10 @@ See [`docs/architecture-diagram.html`](./docs/architecture-diagram.html) for the
 ```bash
 curl -fsSL https://github.com/dkisser/browser-bridge/releases/latest/download/install.sh | bash
 ```
+
+The installer downloads the runtime, exposes `~/Browser-Bridge/extension/` as a symlink for Chrome, and starts the bridge services. You only need to load the unpacked extension in Chrome.
+
+To reinstall the same version, pass `--force`. To install a specific version, set `BB_VERSION=vX.Y.Z`.
 
 ### Option B: One-line installer with Claude Code skill
 
