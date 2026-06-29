@@ -508,7 +508,7 @@ SCRIPT
   mkdir -p "$BB_TEST_TMP/browser-bridge-visible"
   ln -s "$BB_TEST_TMP/bb-home/extension" "$BB_TEST_TMP/browser-bridge-visible/extension"
   local original_inode
-  original_inode=$(stat -f '%i' "$BB_TEST_TMP/browser-bridge-visible/extension" 2>/dev/null || stat -c '%i' "$BB_TEST_TMP/browser-bridge-visible/extension")
+  original_inode=$(stat -c '%i' "$BB_TEST_TMP/browser-bridge-visible/extension" 2>/dev/null || stat -f '%i' "$BB_TEST_TMP/browser-bridge-visible/extension")
 
   sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_symlink2.sh"
   cat >> "$BB_TEST_TMP/test_symlink2.sh" <<'SCRIPT'
@@ -524,7 +524,7 @@ SCRIPT
 
   [ "$status" -eq 0 ]
   local new_inode
-  new_inode=$(stat -f '%i' "$BB_TEST_TMP/browser-bridge-visible/extension" 2>/dev/null || stat -c '%i' "$BB_TEST_TMP/browser-bridge-visible/extension")
+  new_inode=$(stat -c '%i' "$BB_TEST_TMP/browser-bridge-visible/extension" 2>/dev/null || stat -f '%i' "$BB_TEST_TMP/browser-bridge-visible/extension")
   [ "$original_inode" -eq "$new_inode" ]
 }
 
