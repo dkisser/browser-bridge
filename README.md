@@ -74,6 +74,10 @@ That’s it. The command travels from CLI → WebSocket server → local proxy �
 
 The `bridge` CLI is just one consumer of the bridge protocol. Browser Bridge ships with a ready-to-use Claude Code skill in [`./skills`](./skills/browser-bridge-user/SKILL.md), and anything that can open a WebSocket — for example, an MCP server you build, a custom SDK, or another agent framework — can send commands the same way.
 
+## Use with MCP
+
+Browser Bridge also exposes a [Streamable HTTP MCP server](docs/mcp-setup.md). Once the WebSocket server is running, add `http://localhost:3003/mcp` to your MCP client (Claude Desktop, Cursor, etc.) to control browsers directly.
+
 ---
 
 ## 🏗️ Architecture
