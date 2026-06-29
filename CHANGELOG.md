@@ -4,7 +4,18 @@ All notable changes to Browser Bridge are documented here. The format follows [K
 
 ## [Unreleased]
 
-## [0.0.5] - 2026-06-23
+## [0.0.6] - 2026-06-29
+
+### Added
+- Installer now exposes the Chrome extension through a visible symlink at `~/Browser-Bridge/extension/` pointing to `~/.browser-bridge/extension/`, so Chrome "Load unpacked" no longer requires showing hidden folders.
+- Installer automatically starts `bridge up` after installation; users only need to load the Chrome extension manually.
+- Installer skips re-installation when the installed version already matches the target version; use `--force` to reinstall anyway.
+
+### Changed
+- Installer stops any running bridge services before downloading an update, then restarts them after installation.
+- `bridge doctor` now recognizes the extension manifest at `~/Browser-Bridge/extension/manifest.json`.
+- `bridge uninstall --yes` now removes both `~/.browser-bridge/` and `~/Browser-Bridge/` and cleans up the stale `~/.local/bin/bridge` symlink.
+- README and install README updated to document the new one-step install flow.
 
 ### Fixed
 - CLI commands no longer hang for ~5 seconds after printing output; the WebSocket connection timeout timer is now cleared as soon as the socket opens.
