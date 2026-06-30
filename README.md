@@ -6,7 +6,7 @@
 
 <h3 align="center">Browser as a Tool for Any Agent</h3>
 
-<p align="center">
+<p>
   Let any AI agent, LLM, or script control your local browser.<br />
   Use the included CLI, the Claude Code skill, or any integration that speaks the bridge protocol.<br />
   Your sessions, cookies, and credentials stay local.
@@ -47,6 +47,7 @@
 - 🧩 **Chrome Extension (MV3)** — built with Vite, loads as an unpacked extension.
 - ⚡ **Bun + TypeScript** — fast startup, strict types, one package manager for the whole monorepo.
 - 🧪 **Dev-friendly** — hot reload for server, proxy, and extension.
+- 🤖 **MCP server** — Streamable HTTP MCP server exposes browser tools to Claude Desktop, Cursor, and other MCP clients.
 
 ---
 
@@ -74,9 +75,13 @@ That’s it. The command travels from CLI → WebSocket server → local proxy �
 
 The `bridge` CLI is just one consumer of the bridge protocol. Browser Bridge ships with a ready-to-use Claude Code skill in [`./skills`](./skills/browser-bridge-user/SKILL.md), and anything that can open a WebSocket — for example, an MCP server you build, a custom SDK, or another agent framework — can send commands the same way.
 
-## Use with MCP
+## 🤖 Use with MCP
 
-Browser Bridge also exposes a [Streamable HTTP MCP server](docs/mcp-setup.md). Once the WebSocket server is running, add `http://localhost:3003/mcp` to your MCP client (Claude Desktop, Cursor, etc.) to control browsers directly.
+Browser Bridge also exposes a [Streamable HTTP MCP server](docs/mcp-setup.md) alongside the WebSocket server. Once `bridge up` (or `bun run dev:websocket`) is running, add `http://localhost:3003/mcp` to your MCP client — Claude Desktop, Cursor, or any client that supports Streamable HTTP.
+
+The MCP server exposes browser-control tools such as `navigate`, `click`, `type`, `screenshot`, `get_text`, and more. Each tool can target any connected browser, so you can drive Chrome directly from an MCP-enabled agent without using the CLI.
+
+See [docs/mcp-setup.md](docs/mcp-setup.md) for client configuration, environment variables, and the full tools list.
 
 ---
 

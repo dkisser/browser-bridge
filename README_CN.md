@@ -6,7 +6,7 @@
 
 <h3 align="center">让浏览器成为任何 Agent 的工具</h3>
 
-<p align="center">
+<p>
   让任何 AI Agent、LLM 或脚本控制你的本地浏览器。<br />
   可以使用内置 CLI、Claude Code skill，或任何能使用 bridge 协议的集成。<br />
   会话、Cookie 和凭证始终保留在本地。
@@ -47,6 +47,7 @@
 - 🧩 **Chrome 扩展（MV3）** —— 基于 Vite 构建，以解压扩展形式加载。
 - ⚡ **Bun + TypeScript** —— 启动快、类型严格、整个 monorepo 一个包管理器。
 - 🧪 **开发友好** —— 服务端、代理、扩展均支持热重载。
+- 🤖 **MCP server** —— Streamable HTTP MCP server，向 Claude Desktop、Cursor 等 MCP 客户端暴露浏览器控制工具。
 
 ---
 
@@ -73,6 +74,16 @@ bridge navigate https://github.com --browser <browser-id>
 ### 3. 从任意 Agent 使用
 
 `bridge` CLI 只是 bridge 协议的一种消费者。Browser Bridge 在 [`./skills`](./skills/browser-bridge-user/SKILL.md) 中内置了开箱即用的 Claude Code skill；任何能打开 WebSocket 的客户端——例如你自己构建的 MCP server、自定义 SDK 或其他 Agent 框架——都可以用同样的方式发送命令。
+
+---
+
+## 🤖 使用 MCP
+
+Browser Bridge 在 WebSocket 服务端之外，还同时暴露了一个 [Streamable HTTP MCP server](docs/mcp-setup.md)。启动 `bridge up`（或 `bun run dev:websocket`）后，在你的 MCP 客户端（支持 Streamable HTTP 的 Claude Desktop、Cursor 等）中添加 `http://localhost:3003/mcp` 即可。
+
+MCP server 提供了一组浏览器控制工具，例如 `navigate`、`click`、`type`、`screenshot`、`get_text` 等，可直接操作已连接的 Chrome 浏览器，无需经过 CLI。
+
+完整客户端配置、环境变量和工具列表请参考 [docs/mcp-setup.md](docs/mcp-setup.md)。
 
 ---
 
