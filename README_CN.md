@@ -2,7 +2,7 @@
   <img src="./docs/assets/logo.png" alt="Browser Bridge Logo" width="160" />
 </p>
 
-<h1 align="center">Browser Bridge</h1>
+<h1 align="center">Browser Bridge - 让浏览器成为任意 Agent 的工具</h1>
 
 <p align="center">
   <a href="#-快速开始">快速开始</a> •
@@ -11,8 +11,6 @@
   <a href="#-安装">安装</a> •
   <a href="./README.md">English</a>
 </p>
-
-<h3>让浏览器成为任何 Agent 的工具</h3>
 
 <p>
   让任何 AI Agent、LLM 或脚本控制你的本地浏览器。
