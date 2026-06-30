@@ -44,7 +44,7 @@ export function registerScreenshotTool(
 ): void {
   server.addTool({
     name: 'screenshot',
-    description: 'Take a screenshot of the selected browser.',
+    description: 'Take a screenshot of the selected browser.For getting html or text content, use the get_html or get_text tools first.',
     parameters: ScreenshotInputSchema,
     execute: async (args, { sessionId }) => {
       const resolvedSessionId = sessionId ?? 'anonymous';
