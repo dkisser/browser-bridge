@@ -4,20 +4,20 @@
 
 <h1 align="center">Browser Bridge</h1>
 
-<h3 align="center">让浏览器成为任何 Agent 的工具</h3>
-
-<p>
-  让任何 AI Agent、LLM 或脚本控制你的本地浏览器。<br />
-  可以使用内置 CLI、Claude Code skill，或任何能使用 bridge 协议的集成。<br />
-  会话、Cookie 和凭证始终保留在本地。
-</p>
-
 <p align="center">
   <a href="#-快速开始">快速开始</a> •
   <a href="#-功能特性">功能特性</a> •
   <a href="#-架构">架构</a> •
   <a href="#-安装">安装</a> •
   <a href="./README.md">English</a>
+</p>
+
+<h3>让浏览器成为任何 Agent 的工具</h3>
+
+<p>
+  让任何 AI Agent、LLM 或脚本控制你的本地浏览器。
+  可以使用内置 CLI、Claude Code skill，或任何能使用 bridge 协议的集成。
+  会话、Cookie 和凭证始终保留在本地。
 </p>
 
 <p align="center">

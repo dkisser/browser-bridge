@@ -4,14 +4,6 @@
 
 <h1 align="center">Browser Bridge</h1>
 
-<h3 align="center">Browser as a Tool for Any Agent</h3>
-
-<p>
-  Let any AI agent, LLM, or script control your local browser.<br />
-  Use the included CLI, the Claude Code skill, or any integration that speaks the bridge protocol.<br />
-  Your sessions, cookies, and credentials stay local.
-</p>
-
 <p align="center">
   <a href="#-quick-start">Quick Start</a> •
   <a href="#-features">Features</a> •
@@ -19,6 +11,16 @@
   <a href="#-install">Install</a> •
   <a href="./README_CN.md">中文</a>
 </p>
+
+<h3>Browser as a Tool for Any Agent</h3>
+
+<p>
+  Let any AI agent, LLM, or script control your local browser.
+  Use the included CLI, the Claude Code skill, or any integration that speaks the bridge protocol.
+  Your sessions, cookies, and credentials stay local.
+</p>
+
+
 
 <p align="center">
   <img src="./docs/assets/news-demo.gif" alt="Browsing news with an agent" width="720" />
