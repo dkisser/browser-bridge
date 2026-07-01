@@ -31,7 +31,7 @@
 </p>
 
 <p align="center">
-  <strong>一句话介绍：</strong>Browser Bridge 让你的本地 Chrome 成为任何 Agent 的可复用工具。<br />
+  <strong>一句话介绍：</strong>Browser Bridge 让你的本地 Chrome 成为任何 Agent 的可复用工具。
   一个浏览器，任意 LLM、脚本或终端命令——同时把你的数据保留在本地。
 </p>
 

@@ -33,7 +33,7 @@
 </p>
 
 <p align="center">
-  <strong>One-line pitch:</strong> Browser Bridge turns your local Chrome into a reusable tool for any agent.<br />
+  <strong>One-line pitch:</strong> Browser Bridge turns your local Chrome into a reusable tool for any agent.
   One browser, any LLM, script, or terminal command — while keeping your data local.
 </p>
 
