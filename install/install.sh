@@ -11,7 +11,10 @@ BB_EXTENSION_DIR="${BB_EXTENSION_DIR:-$HOME/Browser-Bridge}"
 # Skills installation options (also configurable via environment variables).
 BB_SKILLS_TARGET_DIR="${BB_SKILLS_TARGET_DIR:-}"  # destination agent skills directory
 BB_WITH_SKILLS="${BB_WITH_SKILLS:-false}"          # download skills from the release
-BB_NO_SKILLS="${BB_NO_SKILLS:-false}"              # skip local ./skills even if present
+BB_NO_SKILLS="${BB_NO_SKILLS:-false}"              # explicitly skip skills installation
+
+# Auto-start options (macOS only).
+BB_AUTOSTART="${BB_AUTOSTART:-true}"               # enable login auto-start on macOS by default
 
 die() { printf 'Error: %s\n' "$*" >&2; exit 1; }
 info() { printf '%s\n' "$*"; }
@@ -66,9 +69,33 @@ fetch_bridge_template() {
   BRIDGE_TEMPLATE_PATH="${tmpdir}/bridge.sh.tmpl"
 }
 
+LAUNCHAGENT_TEMPLATE_PATH="${LAUNCHAGENT_TEMPLATE_PATH:-}"
+
+fetch_launchagent_template() {
+  [[ -n "${LAUNCHAGENT_TEMPLATE_PATH:-}" && -f "$LAUNCHAGENT_TEMPLATE_PATH" ]] && return 0
+  local tmpdir
+  tmpdir=$(mktemp -d)
+
+  # Self-contained release installers embed the template after these markers.
+  if grep -q '^__BB_LAUNCHAGENT_BEGIN__$' "$0" 2>/dev/null && grep -q '^__BB_LAUNCHAGENT_END__$' "$0" 2>/dev/null; then
+    awk '/^__BB_LAUNCHAGENT_BEGIN__$/{f=1;next}/^__BB_LAUNCHAGENT_END__$/{f=0}f' "$0" > "${tmpdir}/launchagent.plist.tmpl"
+    LAUNCHAGENT_TEMPLATE_PATH="${tmpdir}/launchagent.plist.tmpl"
+    return 0
+  fi
+
+  # Development fallback: fetch the template from the same release tag as the assets.
+  local version="${1:-}"
+  local tag="${version:-main}"
+  local url="https://raw.githubusercontent.com/${ORG}/${REPO}/${tag}/install/launchagent.plist.tmpl"
+  curl -fsSL "$url" -o "${tmpdir}/launchagent.plist.tmpl" \
+    || die "BB-E021: failed to fetch launchagent template"
+  LAUNCHAGENT_TEMPLATE_PATH="${tmpdir}/launchagent.plist.tmpl"
+}
+
 write_artifacts() {
   local version="$1"
   fetch_bridge_template "$version"
+  fetch_launchagent_template "$version"
   mkdir -p "$BB_HOME/bin"
   info "Writing bridge to $BB_HOME/bin/bridge"
   local tmp_bridge
@@ -76,19 +103,23 @@ write_artifacts() {
   sed -e "s|{{BRIDGE_VERSION}}|${version}|g" -e "s|{{ORG}}|${ORG}|g" -e "s|{{REPO}}|${REPO}|g" "$BRIDGE_TEMPLATE_PATH" > "$tmp_bridge"
   chmod +x "$tmp_bridge"
   mv "$tmp_bridge" "$BB_HOME/bin/bridge"
+  cp "$LAUNCHAGENT_TEMPLATE_PATH" "$BB_HOME/launchagent.plist.tmpl"
   echo "$version" > "$BB_HOME/version"
   mkdir -p "$HOME/.local/bin"
   ln -sf "$BB_HOME/bin/bridge" "$HOME/.local/bin/bridge"
 }
 
 print_next_steps() {
-  local version="$1" skills_note=""
-  if [[ "${NO_SKILLS:-}" != "true" ]] && { [[ "${WITH_SKILLS:-}" == "true" ]] || local_skills_available; }; then
+  local version="$1" skills_note="" autostart_note=""
+  if [[ "${NO_SKILLS:-}" != "true" ]] && [[ "${WITH_SKILLS:-}" == "true" ]]; then
     skills_note="\n  Installed skills are available the next time you start Claude Code.\n"
+  fi
+  if [[ "$(uname -s)" == "Darwin" ]] && [[ "${AUTOSTART:-true}" == "true" ]]; then
+    autostart_note="\n  Login auto-start is enabled; bridge services will start automatically when you log in.\n"
   fi
   cat <<EOF
 
-Browser Bridge ${version} installed.${skills_note}
+Browser Bridge ${version} installed.${skills_note}${autostart_note}
 
 Next steps:
   1. Ensure ~/.local/bin is on your PATH:
@@ -113,7 +144,8 @@ Options:
   --skills-dir <dir> Install skills into <dir> instead of the default ~/.claude/skills/.
   --with-skills      Download skills from the release and install them (requires the
                      release to include a skills tarball).
-  --no-skills        Skip installing local skills even if ./skills exists.
+  --no-skills        Skip installing skills.
+  --no-autostart     Do not enable macOS login auto-start (macOS only).
   --force            Reinstall even if the target version is already installed.
   --help, -h         Show this help message.
 
@@ -122,20 +154,21 @@ Environment variables:
   BB_HOME                 Installation prefix for runtime internals (default: ~/.browser-bridge).
   BB_EXTENSION_DIR        Visible directory for the Chrome extension symlink (default: ~/Browser-Bridge).
   BB_FORCE                Set to "true" to enable --force.
+  BB_AUTOSTART            Set to "false" to disable login auto-start on macOS.
   BB_SKILLS_TARGET_DIR    Same as --skills-dir.
   BB_WITH_SKILLS          Set to "true" to enable --with-skills.
-  BB_NO_SKILLS            Set to "true" to skip local skills.
+  BB_NO_SKILLS            Set to "true" to explicitly skip skills.
   ORG, REPO               GitHub org/repo used for downloads.
 
 Examples:
   Install bridge and extension only:
     install.sh
 
-  Install bridge, extension, and local skills (when ./skills exists):
-    install.sh
+  Install bridge, extension, and skills:
+    install.sh --with-skills
 
   Install skills into a custom directory:
-    install.sh --skills-dir ~/.my-agent/skills
+    install.sh --with-skills --skills-dir ~/.my-agent/skills
 EOF
 }
 
@@ -301,6 +334,7 @@ parse_install_args() {
   WITH_SKILLS="${BB_WITH_SKILLS:-false}"
   NO_SKILLS="${BB_NO_SKILLS:-false}"
   FORCE="${BB_FORCE:-false}"
+  AUTOSTART="${BB_AUTOSTART:-true}"
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -317,6 +351,10 @@ parse_install_args() {
         NO_SKILLS=true
         shift
         ;;
+      --no-autostart)
+        AUTOSTART=false
+        shift
+        ;;
       --force)
         FORCE=true
         shift
@@ -330,10 +368,6 @@ parse_install_args() {
         ;;
     esac
   done
-}
-
-local_skills_available() {
-  [[ -d "./skills" ]] && [[ -n "$(find ./skills -maxdepth 2 -name 'SKILL.md' -print -quit 2>/dev/null)" ]]
 }
 
 main() {
@@ -364,17 +398,12 @@ main() {
     "$BB_HOME/bin/bridge" down >/dev/null 2>&1 || true
   fi
 
-  if [[ "$NO_SKILLS" != "true" ]] && { [[ "$WITH_SKILLS" == "true" ]] || local_skills_available; }; then
+  if [[ "$NO_SKILLS" != "true" ]] && [[ "$WITH_SKILLS" == "true" ]]; then
     local dest_dir="$SKILLS_TARGET_DIR"
     if [[ -z "$dest_dir" ]]; then
       dest_dir=$(detect_default_skills_dir) || die "BB-E207: could not detect Claude skills directory. Specify --skills-dir or create ~/.claude/skills/"
     fi
-
-    if [[ "$WITH_SKILLS" == "true" ]]; then
-      download_skills "$version" "$dest_dir"
-    else
-      install_skills "./skills" "$dest_dir"
-    fi
+    download_skills "$version" "$dest_dir"
   fi
 
   download_extension "$version"
@@ -391,6 +420,15 @@ main() {
       info "Bridge services started."
     else
       info "Bridge services could not auto-start (ports may be in use). Run 'bridge up' manually."
+    fi
+  fi
+
+  if [[ "$(uname -s)" == "Darwin" ]] && [[ "$AUTOSTART" == "true" ]] && [[ -x "$BB_HOME/bin/bridge" ]]; then
+    info "Enabling login auto-start..."
+    if "$BB_HOME/bin/bridge" autostart on >/dev/null 2>&1; then
+      info "Login auto-start enabled."
+    else
+      info "Could not enable login auto-start. Run 'bridge autostart on' manually."
     fi
   fi
 

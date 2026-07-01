@@ -7,6 +7,7 @@ BB_TEST_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # Per-test scratch directory. Tests should put everything here.
 BB_TEST_TMP="${BATS_TEST_TMPDIR:-/tmp}/bb-test-${BATS_TEST_NUMBER:-0}-$$"
 mkdir -p "$BB_TEST_TMP"
+export BB_TEST_TMP
 
 # Fake HOME so we never touch the developer's real ~/.browser-bridge.
 export HOME="$BB_TEST_TMP/home"
@@ -21,6 +22,11 @@ export BB_EXTENSION_DIR="$HOME/Browser-Bridge"
 # Path to the script under test.
 INSTALL_SH="$BB_TEST_ROOT/install/install.sh"
 BRIDGE_TMPL="$BB_TEST_ROOT/install/bridge.sh.tmpl"
+LAUNCHAGENT_TMPL="$BB_TEST_ROOT/install/launchagent.plist.tmpl"
+
+# Allow direct install.sh tests to find templates without fetching from the network.
+export BRIDGE_TEMPLATE_PATH="$BRIDGE_TMPL"
+export LAUNCHAGENT_TEMPLATE_PATH="$LAUNCHAGENT_TMPL"
 
 # Stub PATH so "bun" can be a controlled fake when needed.
 make_fake_bun() {
@@ -49,6 +55,53 @@ case "${BB_FAKE_BUN_BEHAVIOR:-ok}" in
 esac
 EOF
   chmod +x "$BB_TEST_TMP/bin/bun"
+  export PATH="$BB_TEST_TMP/bin:$PATH"
+}
+
+# Create a fake launchctl for cross-platform auto-start tests.
+make_fake_launchctl() {
+  mkdir -p "$BB_TEST_TMP/bin"
+  cat > "$BB_TEST_TMP/bin/launchctl" <<EOF
+#!/usr/bin/env bash
+# Fake launchctl for tests. Records calls and exits 0.
+printf '%s\n' "\$*" >> "$BB_TEST_TMP/launchctl_calls.txt"
+exit 0
+EOF
+  chmod +x "$BB_TEST_TMP/bin/launchctl"
+  export PATH="$BB_TEST_TMP/bin:$PATH"
+}
+
+# Create a fake uname that returns a fixed value.
+make_fake_uname() {
+  local sysname="${1:-Darwin}"
+  mkdir -p "$BB_TEST_TMP/bin"
+  cat > "$BB_TEST_TMP/bin/uname" <<EOF
+#!/usr/bin/env bash
+if [[ "\$*" == *-s* ]]; then
+  echo '$sysname'
+else
+  command uname "\$@"
+fi
+exit 0
+EOF
+  chmod +x "$BB_TEST_TMP/bin/uname"
+  export PATH="$BB_TEST_TMP/bin:$PATH"
+}
+
+# Create a fake id that returns a fixed uid.
+make_fake_id() {
+  local uid="${1:-501}"
+  mkdir -p "$BB_TEST_TMP/bin"
+  cat > "$BB_TEST_TMP/bin/id" <<EOF
+#!/usr/bin/env bash
+if [[ "\$1" == "-u" ]]; then
+  echo '$uid'
+else
+  echo 'uid=$uid(test) gid=20(staff) groups=20(staff)'
+fi
+exit 0
+EOF
+  chmod +x "$BB_TEST_TMP/bin/id"
   export PATH="$BB_TEST_TMP/bin:$PATH"
 }
 

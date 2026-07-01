@@ -292,13 +292,168 @@ SCRIPT
   [[ "$(cat "$BB_TEST_TMP/bb-home/version")" == "v9.9.9" ]]
 }
 
-@test "build-installer.sh embeds bridge.sh.tmpl into install.sh" {
+@test "install.sh enables auto-start by default on macOS" {
+  mkdir -p "$BB_TEST_TMP/www" "$BB_TEST_TMP/stage"
+  echo "fake-extension-content" > "$BB_TEST_TMP/stage/bb.zip"
+  ( cd "$BB_TEST_TMP/stage" && zip -q "$BB_TEST_TMP/www/browser-bridge-extension-v9.9.9.zip" bb.zip )
+  ( cd "$BB_TEST_TMP/www" && shasum -a 256 browser-bridge-extension-v9.9.9.zip > browser-bridge-extension-v9.9.9.zip.sha256 )
+
+  local tarball_path tarball_name
+  tarball_path=$(make_fake_runtime_tarball v9.9.9 arm64)
+  tarball_name=$(basename "$tarball_path")
+  cp "$tarball_path" "$BB_TEST_TMP/www/$tarball_name"
+  cp "${tarball_path}.sha256" "$BB_TEST_TMP/www/${tarball_name}.sha256"
+
+  make_fake_uname Darwin
+  make_fake_launchctl
+  make_fake_id 501
+
+  start_mock_http 18774
+  bash_path=$(find_modern_bash)
+
+  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_autostart_default.sh"
+  cat >> "$BB_TEST_TMP/test_autostart_default.sh" <<'SCRIPT'
+BB_INSTALL_ARCH=arm64
+ORG='127.0.0.1:18774'
+main --no-skills
+SCRIPT
+
+  BB_HOME="$BB_TEST_TMP/bb-home-autostart" \
+  BB_VERSION="v9.9.9" \
+  run "$bash_path" "$BB_TEST_TMP/test_autostart_default.sh"
+  stop_mock_http
+
+  [ "$status" -eq 0 ]
+  [[ -f "$BB_TEST_TMP/bb-home-autostart/launchagent.plist.tmpl" ]]
+  [[ -f "$HOME/Library/LaunchAgents/com.browser-bridge.bridge.plist" ]]
+  [[ "$output" == *"Login auto-start enabled"* ]]
+  grep -q 'bootstrap' "$BB_TEST_TMP/launchctl_calls.txt"
+}
+
+@test "install.sh --no-autostart does not enable auto-start" {
+  mkdir -p "$BB_TEST_TMP/www" "$BB_TEST_TMP/stage"
+  echo "fake-extension-content" > "$BB_TEST_TMP/stage/bb.zip"
+  ( cd "$BB_TEST_TMP/stage" && zip -q "$BB_TEST_TMP/www/browser-bridge-extension-v9.9.9.zip" bb.zip )
+  ( cd "$BB_TEST_TMP/www" && shasum -a 256 browser-bridge-extension-v9.9.9.zip > browser-bridge-extension-v9.9.9.zip.sha256 )
+
+  local tarball_path tarball_name
+  tarball_path=$(make_fake_runtime_tarball v9.9.9 arm64)
+  tarball_name=$(basename "$tarball_path")
+  cp "$tarball_path" "$BB_TEST_TMP/www/$tarball_name"
+  cp "${tarball_path}.sha256" "$BB_TEST_TMP/www/${tarball_name}.sha256"
+
+  make_fake_uname Darwin
+  make_fake_launchctl
+  make_fake_id 501
+
+  start_mock_http 18775
+  bash_path=$(find_modern_bash)
+
+  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_autostart_off.sh"
+  cat >> "$BB_TEST_TMP/test_autostart_off.sh" <<'SCRIPT'
+BB_INSTALL_ARCH=arm64
+ORG='127.0.0.1:18775'
+main --no-skills --no-autostart
+SCRIPT
+
+  BB_HOME="$BB_TEST_TMP/bb-home-no-autostart" \
+  BB_VERSION="v9.9.9" \
+  run "$bash_path" "$BB_TEST_TMP/test_autostart_off.sh"
+  stop_mock_http
+
+  [ "$status" -eq 0 ]
+  [[ ! -f "$HOME/Library/LaunchAgents/com.browser-bridge.bridge.plist" ]]
+  [[ ! -f "$BB_TEST_TMP/launchctl_calls.txt" ]]
+}
+
+@test "install.sh falls back gracefully when auto-start cannot be enabled" {
+  mkdir -p "$BB_TEST_TMP/www" "$BB_TEST_TMP/stage"
+  echo "fake-extension-content" > "$BB_TEST_TMP/stage/bb.zip"
+  ( cd "$BB_TEST_TMP/stage" && zip -q "$BB_TEST_TMP/www/browser-bridge-extension-v9.9.9.zip" bb.zip )
+  ( cd "$BB_TEST_TMP/www" && shasum -a 256 browser-bridge-extension-v9.9.9.zip > browser-bridge-extension-v9.9.9.zip.sha256 )
+
+  local tarball_path tarball_name
+  tarball_path=$(make_fake_runtime_tarball v9.9.9 arm64)
+  tarball_name=$(basename "$tarball_path")
+  cp "$tarball_path" "$BB_TEST_TMP/www/$tarball_name"
+  cp "${tarball_path}.sha256" "$BB_TEST_TMP/www/${tarball_name}.sha256"
+
+  make_fake_uname Darwin
+  make_fake_id 501
+  mkdir -p "$BB_TEST_TMP/bin"
+  cat > "$BB_TEST_TMP/bin/launchctl" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+  chmod +x "$BB_TEST_TMP/bin/launchctl"
+  export PATH="$BB_TEST_TMP/bin:$PATH"
+
+  start_mock_http 18777
+  bash_path=$(find_modern_bash)
+
+  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_autostart_fail.sh"
+  cat >> "$BB_TEST_TMP/test_autostart_fail.sh" <<'SCRIPT'
+BB_INSTALL_ARCH=arm64
+ORG='127.0.0.1:18777'
+main --no-skills
+SCRIPT
+
+  BB_HOME="$BB_TEST_TMP/bb-home-autostart-fail" \
+  BB_VERSION="v9.9.9" \
+  run "$bash_path" "$BB_TEST_TMP/test_autostart_fail.sh"
+  stop_mock_http
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Could not enable login auto-start"* ]]
+  [[ -f "$BB_TEST_TMP/bb-home-autostart-fail/version" ]]
+}
+
+@test "install.sh does not attempt auto-start on Linux" {
+  mkdir -p "$BB_TEST_TMP/www" "$BB_TEST_TMP/stage"
+  echo "fake-extension-content" > "$BB_TEST_TMP/stage/bb.zip"
+  ( cd "$BB_TEST_TMP/stage" && zip -q "$BB_TEST_TMP/www/browser-bridge-extension-v9.9.9.zip" bb.zip )
+  ( cd "$BB_TEST_TMP/www" && shasum -a 256 browser-bridge-extension-v9.9.9.zip > browser-bridge-extension-v9.9.9.zip.sha256 )
+
+  local tarball_path tarball_name
+  tarball_path=$(make_fake_runtime_tarball v9.9.9 arm64)
+  tarball_name=$(basename "$tarball_path")
+  cp "$tarball_path" "$BB_TEST_TMP/www/$tarball_name"
+  cp "${tarball_path}.sha256" "$BB_TEST_TMP/www/${tarball_name}.sha256"
+
+  make_fake_uname Linux
+  make_fake_launchctl
+
+  start_mock_http 18776
+  bash_path=$(find_modern_bash)
+
+  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_autostart_linux.sh"
+  cat >> "$BB_TEST_TMP/test_autostart_linux.sh" <<'SCRIPT'
+BB_INSTALL_ARCH=arm64
+ORG='127.0.0.1:18776'
+main --no-skills
+SCRIPT
+
+  BB_HOME="$BB_TEST_TMP/bb-home-linux" \
+  BB_VERSION="v9.9.9" \
+  run "$bash_path" "$BB_TEST_TMP/test_autostart_linux.sh"
+  stop_mock_http
+
+  [ "$status" -eq 0 ]
+  [[ ! -f "$HOME/Library/LaunchAgents/com.browser-bridge.bridge.plist" ]]
+  [[ "$output" != *"Login auto-start enabled"* ]]
+}
+
+@test "build-installer.sh embeds bridge.sh.tmpl and launchagent.plist.tmpl into install.sh" {
   bash "$BB_TEST_ROOT/.github/scripts/build-installer.sh" "$BB_TEST_TMP/self-contained-install.sh"
   [ -x "$BB_TEST_TMP/self-contained-install.sh" ]
   grep -q '^__BB_TEMPLATE_BEGIN__$' "$BB_TEST_TMP/self-contained-install.sh"
   grep -q '^__BB_TEMPLATE_END__$' "$BB_TEST_TMP/self-contained-install.sh"
+  grep -q '^__BB_LAUNCHAGENT_BEGIN__$' "$BB_TEST_TMP/self-contained-install.sh"
+  grep -q '^__BB_LAUNCHAGENT_END__$' "$BB_TEST_TMP/self-contained-install.sh"
   awk '/^__BB_TEMPLATE_BEGIN__$/{f=1;next}/^__BB_TEMPLATE_END__$/{f=0}f' "$BB_TEST_TMP/self-contained-install.sh" > "$BB_TEST_TMP/extracted.tmpl"
   diff -u "$BB_TEST_ROOT/install/bridge.sh.tmpl" "$BB_TEST_TMP/extracted.tmpl"
+  awk '/^__BB_LAUNCHAGENT_BEGIN__$/{f=1;next}/^__BB_LAUNCHAGENT_END__$/{f=0}f' "$BB_TEST_TMP/self-contained-install.sh" > "$BB_TEST_TMP/extracted-launchagent.tmpl"
+  diff -u "$BB_TEST_ROOT/install/launchagent.plist.tmpl" "$BB_TEST_TMP/extracted-launchagent.tmpl"
 }
 
 @test "self-contained install.sh installs without fetching template from main" {
@@ -341,6 +496,7 @@ SCRIPT
   sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_fbt.sh"
   cat >> "$BB_TEST_TMP/test_fbt.sh" <<SCRIPT
 resolve_version() { echo "v9.9.9"; }
+unset BRIDGE_TEMPLATE_PATH LAUNCHAGENT_TEMPLATE_PATH
 curl() {
   printf '%s\n' "\$@" > "$BB_TEST_TMP/curl_args.txt"
   touch "\${4:-$BB_TEST_TMP/bridge.sh.tmpl}"
@@ -429,7 +585,7 @@ EOF
   [[ "$output" == *"OK"* ]]
 }
 
-@test "install.sh end-to-end installs bridge, extension, and local skills" {
+@test "install.sh --with-skills downloads and installs release skills" {
   mkdir -p "$BB_TEST_TMP/www" "$BB_TEST_TMP/stage"
   echo "fake-extension-content" > "$BB_TEST_TMP/stage/bb.zip"
   ( cd "$BB_TEST_TMP/stage" && zip -q "$BB_TEST_TMP/www/browser-bridge-extension-v9.9.9.zip" bb.zip )
@@ -441,6 +597,19 @@ EOF
   cp "$tarball_path" "$BB_TEST_TMP/www/$tarball_name"
   cp "${tarball_path}.sha256" "$BB_TEST_TMP/www/${tarball_name}.sha256"
 
+  # Prepare a fake skills tarball.
+  local skills_stage="$BB_TEST_TMP/browser-bridge-user"
+  mkdir -p "$skills_stage"
+  cat > "$skills_stage/SKILL.md" <<'EOF'
+---
+name: browser-bridge-user
+description: test
+---
+EOF
+  ( cd "$BB_TEST_TMP" && tar czf "browser-bridge-skills-v9.9.9.tar.gz" "browser-bridge-user" )
+  cp "$BB_TEST_TMP/browser-bridge-skills-v9.9.9.tar.gz" "$BB_TEST_TMP/www/"
+  ( cd "$BB_TEST_TMP/www" && shasum -a 256 browser-bridge-skills-v9.9.9.tar.gz > browser-bridge-skills-v9.9.9.tar.gz.sha256 )
+
   mkdir -p "$HOME/.claude/skills"
 
   start_mock_http 18765
@@ -450,12 +619,11 @@ EOF
   cat >> "$BB_TEST_TMP/test_e2e_skills.sh" <<'SCRIPT'
 BB_INSTALL_ARCH=arm64
 ORG='127.0.0.1:18765'
-main
+main --with-skills
 SCRIPT
 
   BB_HOME="$BB_TEST_TMP/bb-home" \
   BB_VERSION="v9.9.9" \
-  BRIDGE_TEMPLATE_PATH="$BB_TEST_ROOT/install/bridge.sh.tmpl" \
   run "$bash_path" "$BB_TEST_TMP/test_e2e_skills.sh"
   stop_mock_http
 
@@ -464,6 +632,79 @@ SCRIPT
   [[ -f "$BB_TEST_TMP/bb-home/bin/bridge" ]]
   [[ -L "$HOME/.local/bin/bridge" ]]
   [[ -f "$HOME/.claude/skills/browser-bridge-user/SKILL.md" ]]
+}
+
+@test "install.sh does not install skills by default even when local ./skills exists" {
+  mkdir -p "$BB_TEST_TMP/www" "$BB_TEST_TMP/stage"
+  echo "fake-extension-content" > "$BB_TEST_TMP/stage/bb.zip"
+  ( cd "$BB_TEST_TMP/stage" && zip -q "$BB_TEST_TMP/www/browser-bridge-extension-v9.9.9.zip" bb.zip )
+  ( cd "$BB_TEST_TMP/www" && shasum -a 256 browser-bridge-extension-v9.9.9.zip > browser-bridge-extension-v9.9.9.zip.sha256 )
+
+  local tarball_path tarball_name
+  tarball_path=$(make_fake_runtime_tarball v9.9.9 arm64)
+  tarball_name=$(basename "$tarball_path")
+  cp "$tarball_path" "$BB_TEST_TMP/www/$tarball_name"
+  cp "${tarball_path}.sha256" "$BB_TEST_TMP/www/${tarball_name}.sha256"
+
+  # Create a local ./skills directory as if the repo were present.
+  mkdir -p "$BB_TEST_TMP/cwd/skills/browser-bridge-user"
+  cat > "$BB_TEST_TMP/cwd/skills/browser-bridge-user/SKILL.md" <<'EOF'
+---
+name: browser-bridge-user
+description: test
+---
+EOF
+
+  start_mock_http 18772
+  bash_path=$(find_modern_bash)
+
+  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_no_skills.sh"
+  cat >> "$BB_TEST_TMP/test_no_skills.sh" <<SCRIPT
+BB_INSTALL_ARCH=arm64
+ORG='127.0.0.1:18772'
+cd '$BB_TEST_TMP/cwd'
+main
+SCRIPT
+
+  BB_HOME="$BB_TEST_TMP/bb-home-no-skills" \
+  BB_VERSION="v9.9.9" \
+  run "$bash_path" "$BB_TEST_TMP/test_no_skills.sh"
+  stop_mock_http
+
+  [ "$status" -eq 0 ]
+  [[ -f "$BB_TEST_TMP/bb-home-no-skills/version" ]]
+  [[ ! -d "$HOME/.claude/skills/browser-bridge-user" ]]
+}
+
+@test "install.sh --no-skills skips skills even with --with-skills" {
+  mkdir -p "$BB_TEST_TMP/www" "$BB_TEST_TMP/stage"
+  echo "fake-extension-content" > "$BB_TEST_TMP/stage/bb.zip"
+  ( cd "$BB_TEST_TMP/stage" && zip -q "$BB_TEST_TMP/www/browser-bridge-extension-v9.9.9.zip" bb.zip )
+  ( cd "$BB_TEST_TMP/www" && shasum -a 256 browser-bridge-extension-v9.9.9.zip > browser-bridge-extension-v9.9.9.zip.sha256 )
+
+  local tarball_path tarball_name
+  tarball_path=$(make_fake_runtime_tarball v9.9.9 arm64)
+  tarball_name=$(basename "$tarball_path")
+  cp "$tarball_path" "$BB_TEST_TMP/www/$tarball_name"
+  cp "${tarball_path}.sha256" "$BB_TEST_TMP/www/${tarball_name}.sha256"
+
+  start_mock_http 18773
+  bash_path=$(find_modern_bash)
+
+  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_no_skills_override.sh"
+  cat >> "$BB_TEST_TMP/test_no_skills_override.sh" <<'SCRIPT'
+BB_INSTALL_ARCH=arm64
+ORG='127.0.0.1:18773'
+main --with-skills --no-skills
+SCRIPT
+
+  BB_HOME="$BB_TEST_TMP/bb-home-no-skills-override" \
+  BB_VERSION="v9.9.9" \
+  run "$bash_path" "$BB_TEST_TMP/test_no_skills_override.sh"
+  stop_mock_http
+
+  [ "$status" -eq 0 ]
+  [[ ! -d "$HOME/.claude/skills/browser-bridge-user" ]]
 }
 
 # ---------------------------------------------------------------------------

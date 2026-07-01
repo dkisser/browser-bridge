@@ -121,19 +121,23 @@ curl -fsSL https://github.com/dkisser/browser-bridge/releases/latest/download/in
 
 安装脚本会下载运行时，在 `~/Browser-Bridge/extension/` 创建扩展的软连接，并自动启动 bridge 服务。你只需在 Chrome 中加载该解压扩展即可。
 
+在 macOS 上，安装脚本还会默认开启登录自启动，这样你每次登录后 bridge 服务会自动运行。如需关闭，可在安装时传入 `--no-autostart`，或之后运行 `bridge autostart off`。
+
 如需强制重装同一版本，可传入 `--force`；如需安装指定版本，可设置 `BB_VERSION=vX.Y.Z`。
 
 ### 方案 B：一行命令安装并附带 Claude Code skill
 
-如果你已经在使用 [Claude Code](https://claude.ai/code)，先克隆仓库，然后在项目根目录运行安装脚本。它会同时安装 Browser Bridge 和 `./skills` 目录下的 skill：
+如果你已经在使用 [Claude Code](https://claude.ai/code)，先克隆仓库，然后在项目根目录运行安装脚本并传入 `--with-skills`，即可同时安装 Browser Bridge 和 `./skills` 目录下的 skill：
 
 ```bash
 git clone https://github.com/dkisser/browser-bridge.git
 cd browser-bridge
-./install/install.sh
+./install/install.sh --with-skills
 ```
 
-如果你想把 skill 安装到 `~/.claude/skills/` 以外的目录，请使用 `--skills-dir <路径>` 指定。使用 `--no-skills` 可跳过 skill 安装。
+如果你想把 skill 安装到 `~/.claude/skills/` 以外的目录，请使用 `--skills-dir <路径>` 指定。使用 `--no-skills` 可显式跳过 skill 安装。
+
+curl 一键安装默认**不会**安装 skill；如需安装，请使用 `--with-skills`。
 
 ### 方案 C：从源码构建（仅贡献者）
 

@@ -27,6 +27,7 @@ Commands:
   restart             down then up
   status              Show service state
   logs [name]         Tail logs (ws-server | local-proxy)
+  autostart on|off|status  Manage macOS login auto-start
   update [version]    Upgrade to a release (default: latest)
   doctor              Diagnose the install
   uninstall           Remove ~/.browser-bridge/ (use --yes to skip prompt)
@@ -218,6 +219,79 @@ cmd_update() {
   [[ -d "$BB_HOME" ]] && cmd_restart || true
 }
 
+is_macos() {
+  [[ "$(uname -s)" == "Darwin" ]]
+}
+
+launchagent_path() {
+  echo "$HOME/Library/LaunchAgents/com.browser-bridge.bridge.plist"
+}
+
+write_launchagent_plist() {
+  local dest
+  dest=$(launchagent_path)
+  local tmpl="$BB_HOME/launchagent.plist.tmpl"
+  [[ -f "$tmpl" ]] || die "BB-E301: LaunchAgent template missing at $tmpl"
+  mkdir -p "$(dirname "$dest")"
+  awk \
+    -v bb_home="$BB_HOME" \
+    -v ws_port="$WS_PORT" \
+    -v ws_hostname="$WS_HOSTNAME" \
+    -v local_proxy_port="$LOCAL_PROXY_PORT" \
+    -v local_proxy_hostname="$LOCAL_PROXY_HOSTNAME" '
+    { gsub(/{{BB_HOME}}/, bb_home); gsub(/{{WS_PORT}}/, ws_port); gsub(/{{WS_HOSTNAME}}/, ws_hostname); gsub(/{{LOCAL_PROXY_PORT}}/, local_proxy_port); gsub(/{{LOCAL_PROXY_HOSTNAME}}/, local_proxy_hostname); print }
+  ' "$tmpl" > "$dest"
+}
+
+autostart_enable() {
+  is_macos || die "BB-E300: auto-start is only supported on macOS"
+  write_launchagent_plist
+  local plist
+  plist=$(launchagent_path)
+  # Modern launchctl (macOS 10.10+) uses bootstrap/bootout.
+  if launchctl bootout "user/$(id -u)" "$plist" 2>/dev/null; then
+    :
+  fi
+  launchctl bootstrap "user/$(id -u)" "$plist" \
+    || die "BB-E302: failed to load LaunchAgent with launchctl bootstrap"
+  info "Login auto-start enabled."
+}
+
+autostart_disable() {
+  is_macos || return 0
+  local plist
+  plist=$(launchagent_path)
+  if [[ -f "$plist" ]]; then
+    launchctl bootout "user/$(id -u)" "$plist" 2>/dev/null || true
+    rm -f "$plist"
+  fi
+}
+
+autostart_status() {
+  is_macos || die "BB-E300: auto-start is only supported on macOS"
+  local plist
+  plist=$(launchagent_path)
+  if [[ ! -f "$plist" ]]; then
+    info "Login auto-start: disabled"
+    return 1
+  fi
+  if launchctl list | awk '{print $3}' | grep -qx 'com.browser-bridge.bridge'; then
+    info "Login auto-start: enabled (loaded)"
+  else
+    info "Login auto-start: enabled (plist present, not loaded)"
+  fi
+}
+
+cmd_autostart() {
+  local action="${1:-status}"
+  case "$action" in
+    on)  autostart_enable ;;
+    off) autostart_disable ;;
+    status) autostart_status ;;
+    *) die "BB-E303: usage: bridge autostart on|off|status" ;;
+  esac
+}
+
 cmd_uninstall() {
   local yes=false
   [[ "${1:-}" == "--yes" ]] && yes=true
@@ -225,6 +299,7 @@ cmd_uninstall() {
     read -rp "About to rm -rf $BB_HOME. Continue? [y/N] " ans
     [[ "$ans" == "y" || "$ans" == "Y" ]] || { echo "aborted"; return 0; }
   fi
+  autostart_disable
   cmd_down || true
   rm -rf "$BB_HOME"
   echo "Removed $BB_HOME"
@@ -255,6 +330,7 @@ main() {
     down)    cmd_down ;;
     status)  cmd_status ;;
     logs)    shift; cmd_logs "$@" ;;
+    autostart) shift; cmd_autostart "$@" ;;
     restart) cmd_restart ;;
     doctor)  cmd_doctor ;;
     update)    shift; cmd_update "$@" ;;

@@ -230,3 +230,106 @@ EOF
   grep -q 'curl-url: https://github.com/dkisser/browser-bridge/releases/latest/download/install.sh' "$BB_TEST_TMP/update-latest.log"
 }
 
+@test "bridge autostart on writes plist and loads agent on macOS" {
+  make_fake_binaries
+  mkdir -p "$BB_HOME/extension"
+  echo '{"manifest_version":3}' > "$BB_HOME/extension/manifest.json"
+  cp "$BB_TEST_ROOT/install/launchagent.plist.tmpl" "$BB_HOME/launchagent.plist.tmpl"
+  make_fake_uname Darwin
+  make_fake_launchctl
+  make_fake_id 501
+
+  run bash "$BRIDGE_TMPL" autostart on
+  [ "$status" -eq 0 ]
+  [[ -f "$HOME/Library/LaunchAgents/com.browser-bridge.bridge.plist" ]]
+  grep -q 'com.browser-bridge.bridge' "$HOME/Library/LaunchAgents/com.browser-bridge.bridge.plist"
+  grep -q "${BB_HOME}" "$HOME/Library/LaunchAgents/com.browser-bridge.bridge.plist"
+  grep -q 'ws://127.0.0.1:3001' "$HOME/Library/LaunchAgents/com.browser-bridge.bridge.plist"
+  grep -q '<true/>' "$HOME/Library/LaunchAgents/com.browser-bridge.bridge.plist"
+  grep -q 'bootstrap' "$BB_TEST_TMP/launchctl_calls.txt"
+}
+
+@test "bridge autostart on reports error when launchctl fails" {
+  make_fake_binaries
+  cp "$BB_TEST_ROOT/install/launchagent.plist.tmpl" "$BB_HOME/launchagent.plist.tmpl"
+  make_fake_uname Darwin
+  make_fake_id 501
+  mkdir -p "$BB_TEST_TMP/bin"
+  cat > "$BB_TEST_TMP/bin/launchctl" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+  chmod +x "$BB_TEST_TMP/bin/launchctl"
+  export PATH="$BB_TEST_TMP/bin:$PATH"
+
+  run bash "$BRIDGE_TMPL" autostart on
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"BB-E302"* ]]
+}
+
+@test "bridge autostart off removes plist and unloads agent" {
+  make_fake_binaries
+  mkdir -p "$BB_HOME/extension"
+  echo '{"manifest_version":3}' > "$BB_HOME/extension/manifest.json"
+  cp "$BB_TEST_ROOT/install/launchagent.plist.tmpl" "$BB_HOME/launchagent.plist.tmpl"
+  mkdir -p "$HOME/Library/LaunchAgents"
+  echo '<plist></plist>' > "$HOME/Library/LaunchAgents/com.browser-bridge.bridge.plist"
+  make_fake_uname Darwin
+  make_fake_launchctl
+  make_fake_id 501
+
+  run bash "$BRIDGE_TMPL" autostart off
+  [ "$status" -eq 0 ]
+  [[ ! -f "$HOME/Library/LaunchAgents/com.browser-bridge.bridge.plist" ]]
+}
+
+@test "bridge autostart status reports enabled when plist is present" {
+  make_fake_binaries
+  cp "$BB_TEST_ROOT/install/launchagent.plist.tmpl" "$BB_HOME/launchagent.plist.tmpl"
+  mkdir -p "$HOME/Library/LaunchAgents"
+  cp "$BB_HOME/launchagent.plist.tmpl" "$HOME/Library/LaunchAgents/com.browser-bridge.bridge.plist"
+  make_fake_uname Darwin
+
+  run bash "$BRIDGE_TMPL" autostart status
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"enabled"* ]]
+}
+
+@test "bridge autostart status reports disabled when plist is absent" {
+  make_fake_binaries
+  cp "$BB_TEST_ROOT/install/launchagent.plist.tmpl" "$BB_HOME/launchagent.plist.tmpl"
+  make_fake_uname Darwin
+
+  run bash "$BRIDGE_TMPL" autostart status
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"disabled"* ]]
+}
+
+@test "bridge autostart fails on Linux" {
+  make_fake_binaries
+  cp "$BB_TEST_ROOT/install/launchagent.plist.tmpl" "$BB_HOME/launchagent.plist.tmpl"
+  make_fake_uname Linux
+
+  run bash "$BRIDGE_TMPL" autostart on
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"BB-E300"* ]]
+}
+
+@test "bridge uninstall --yes removes LaunchAgent plist on macOS" {
+  mkdir -p "$BB_HOME/bin"
+  mkdir -p "$BB_EXTENSION_DIR/extension"
+  echo '{"manifest_version":3}' > "$BB_EXTENSION_DIR/extension/manifest.json"
+  cp "$BB_TEST_ROOT/install/launchagent.plist.tmpl" "$BB_HOME/launchagent.plist.tmpl"
+  mkdir -p "$HOME/Library/LaunchAgents"
+  echo '<plist></plist>' > "$HOME/Library/LaunchAgents/com.browser-bridge.bridge.plist"
+  make_fake_uname Darwin
+  make_fake_launchctl
+  make_fake_id 501
+
+  run bash "$BRIDGE_TMPL" uninstall --yes
+  [ "$status" -eq 0 ]
+  [[ ! -d "$BB_HOME" ]]
+  [[ ! -d "$BB_EXTENSION_DIR" ]]
+  [[ ! -f "$HOME/Library/LaunchAgents/com.browser-bridge.bridge.plist" ]]
+}
+

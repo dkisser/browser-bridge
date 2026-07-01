@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.browser-bridge.bridge</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{BB_HOME}}/bin/bridge</string>
+    <string>up</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>BB_HOME</key>
+    <string>{{BB_HOME}}</string>
+    <key>PATH</key>
+    <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:{{BB_HOME}}/bin</string>
+    <key>BRIDGE_WS_PORT</key>
+    <string>{{WS_PORT}}</string>
+    <key>BRIDGE_WS_HOSTNAME</key>
+    <string>{{WS_HOSTNAME}}</string>
+    <key>BRIDGE_LOCAL_PORT</key>
+    <string>{{LOCAL_PROXY_PORT}}</string>
+    <key>BRIDGE_LOCAL_PROXY_PORT</key>
+    <string>{{LOCAL_PROXY_PORT}}</string>
+    <key>BRIDGE_LOCAL_HOSTNAME</key>
+    <string>{{LOCAL_PROXY_HOSTNAME}}</string>
+    <key>BRIDGE_WS_URL</key>
+    <string>ws://{{WS_HOSTNAME}}:{{WS_PORT}}</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>StandardOutPath</key>
+  <string>{{BB_HOME}}/logs/launchagent.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>{{BB_HOME}}/logs/launchagent.log</string>
+</dict>
+</plist>

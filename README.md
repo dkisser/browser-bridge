@@ -121,19 +121,23 @@ curl -fsSL https://github.com/dkisser/browser-bridge/releases/latest/download/in
 
 The installer downloads the runtime, exposes `~/Browser-Bridge/extension/` as a symlink for Chrome, and starts the bridge services. You only need to load the unpacked extension in Chrome.
 
+On macOS, the installer also enables login auto-start, so bridge services start automatically after you log in. To disable this, pass `--no-autostart` or run `bridge autostart off` later.
+
 To reinstall the same version, pass `--force`. To install a specific version, set `BB_VERSION=vX.Y.Z`.
 
 ### Option B: One-line installer with Claude Code skill
 
-If you already have [Claude Code](https://claude.ai/code), clone the repo and run the installer from the project root. It will install Browser Bridge plus the ready-to-use skill in `./skills`:
+If you already have [Claude Code](https://claude.ai/code), clone the repo and run the installer from the project root with `--with-skills` to install Browser Bridge plus the ready-to-use skill in `./skills`:
 
 ```bash
 git clone https://github.com/dkisser/browser-bridge.git
 cd browser-bridge
-./install/install.sh
+./install/install.sh --with-skills
 ```
 
-Use `--skills-dir <path>` if you want to install skills somewhere other than `~/.claude/skills/`. Use `--no-skills` to skip the skill installation.
+Use `--skills-dir <path>` if you want to install skills somewhere other than `~/.claude/skills/`. Use `--no-skills` to explicitly skip skill installation.
+
+By default, the curl installer does **not** install skills; use `--with-skills` when you want them.
 
 ### Option C: Build from source (contributors only)
 
