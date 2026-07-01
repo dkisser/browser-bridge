@@ -160,7 +160,15 @@ start_mock_http() {
   mkdir -p "$BB_TEST_TMP/www"
   python3 -m http.server -d "$BB_TEST_TMP/www" "$@" >"$BB_TEST_TMP/http.log" 2>&1 &
   MOCK_HTTP_PID=$!
-  sleep 0.2
+  local port="${1:-8000}"
+  local waited=0
+  while [[ $waited -lt 50 ]]; do
+    if python3 -c "import socket; s=socket.socket(); s.settimeout(0.1); s.connect(('127.0.0.1', $port)); s.close()" 2>/dev/null; then
+      return 0
+    fi
+    sleep 0.1
+    waited=$((waited + 1))
+  done
 }
 
 stop_mock_http() {
