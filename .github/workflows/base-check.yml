@@ -30,5 +30,15 @@ jobs:
       - name: Run unit/integration tests
         run: bun run test
 
+      - name: Verify binaries compile
+        run: |
+          mkdir -p dist
+          bun build --compile apps/websocket/src/index.ts --outfile dist/ws-server --target=bun-linux-x64
+          bun build --compile apps/local-proxy/src/index.ts --outfile dist/local-proxy --target=bun-linux-x64
+          bun build --compile apps/cli/src/index.ts --outfile dist/bridge-cmd --target=bun-linux-x64
+          test -x dist/ws-server
+          test -x dist/local-proxy
+          test -x dist/bridge-cmd
+
       - name: Run install/bridge bats tests
         run: bun run test:install
