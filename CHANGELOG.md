@@ -4,6 +4,12 @@ All notable changes to Browser Bridge are documented here. The format follows [K
 
 ## [Unreleased]
 
+### Changed
+- Moved `@valibot/to-json-schema`, `arktype`, `effect`, and `sury` from `devDependencies` to `dependencies` in `apps/websocket/package.json` because they are dynamically imported at runtime inside the compiled `ws-server` binary.
+
+### Added
+- CI compile check in `.github/workflows/base-check.yml` to verify `bun build --compile` succeeds for `ws-server`, `local-proxy`, and `bridge-cmd` on every PR.
+
 ## [0.0.7] - 2026-06-29
 
 ### Fixed

@@ -46,3 +46,11 @@ When adding new entry points or HTML assets, verify the output paths in `dist/` 
 
 - `tsconfig.base.json` enables `strict`, `moduleResolution: "bundler"`, and path alias `@browser-bridge/shared` → `./packages/shared/src/index.ts`.
 - Each app/package extends `tsconfig.base.json` in its own `tsconfig.json`.
+
+## Compiled binaries and dynamic imports
+
+`bun build --compile` only bundles packages it can statically resolve. Some transitive dependencies—notably `xsschema`, which is pulled in via `fastmcp`—load optional peer dependencies (`@valibot/to-json-schema`, `arktype`, `effect`, `sury`, `zod-to-json-schema`) with dynamic `import()` calls at runtime inside the compiled binary.
+
+- Any package that is dynamically imported inside a compiled binary must be declared in `dependencies` of the app that is compiled, **not** `devDependencies`.
+- If a compiled binary starts but a runtime feature (for example, the MCP Streamable HTTP server on port 3003) is missing with no clear error, suspect a missing transitive optional peer dependency.
+- When adding or upgrading a dependency that uses dynamic imports, verify the compiled binary still works by running `bun run build:binaries` locally or confirming the CI compile step passes.

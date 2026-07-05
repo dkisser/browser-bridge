@@ -19,3 +19,11 @@ For project structure, commands, architecture, and conventions, see [README.md](
 - BATS tests spawn real subprocesses and may hang if background services are not detached cleanly.
 - **If the BATS installer tests fail or hang twice in a row, stop using BATS and validate directly with bash.** Simulate `bridge up` with fake binaries, confirm services bind to `127.0.0.1`, and verify external IPs cannot connect.
 
+## Compiled binaries and dynamic imports
+
+`bun build --compile` only bundles packages it can statically resolve. Some transitive dependencies—notably `xsschema`, which is pulled in via `fastmcp`—load optional peer dependencies (`@valibot/to-json-schema`, `arktype`, `effect`, `sury`, `zod-to-json-schema`) with dynamic `import()` calls at runtime inside the compiled binary.
+
+- Any package that is dynamically imported inside a compiled binary must be declared in `dependencies` of the app that is compiled, **not** `devDependencies`.
+- If a compiled binary starts but a runtime feature (for example, the MCP Streamable HTTP server on port 3003) is missing with no clear error, suspect a missing transitive optional peer dependency.
+- When adding or upgrading a dependency that uses dynamic imports, verify the compiled binary still works by running `bun run build:binaries` locally or confirming the CI compile step passes.
+
