@@ -64,12 +64,14 @@ Load `~/Browser-Bridge/extension/` as an unpacked extension in Chrome. The bridg
 ### 2. Send your first command
 
 ```bash
+# List the connected Chrome instance
+bridge browser:list
+
+# Use the <browser-id> from above
 bridge navigate https://github.com --browser <browser-id>
 ```
 
 That’s it. The command travels from CLI → WebSocket server → local proxy → Chrome extension → browser.
-
-> Use `bridge browser:list` to see the `<browser-id>` of your connected Chrome instance.
 
 ### 3. Use it from any agent
 

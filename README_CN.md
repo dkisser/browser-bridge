@@ -62,12 +62,14 @@ curl -fsSL https://github.com/dkisser/browser-bridge/releases/latest/download/in
 ### 2. 发送第一条命令
 
 ```bash
+# 查看已连接的 Chrome 实例
+bridge browser:list
+
+# 使用上面返回的 <browser-id>
 bridge navigate https://github.com --browser <browser-id>
 ```
 
 命令会经过 CLI → WebSocket 服务端 → 本地代理 → Chrome 扩展 → 浏览器。
-
-> 使用 `bridge browser:list` 查看已连接 Chrome 实例的 `<browser-id>`。
 
 ### 3. 从任意 Agent 使用
 
