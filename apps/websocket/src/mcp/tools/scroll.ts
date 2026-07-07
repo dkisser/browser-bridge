@@ -8,6 +8,7 @@ export const ScrollInputSchema = z.object({
   x: z.number().int(),
   y: z.number().int(),
   selector: z.string().min(1).optional().default('page'),
+  tab_id: z.number().int().min(0),
   timeout_ms: z.number().int().min(100).max(120000).optional(),
 });
 
@@ -25,7 +26,12 @@ export async function executeScroll(
     serverUrl: context.websocketUrl,
     browserId: resolution.browserId,
     command: 'scroll',
-    params: { selector: args.selector, x: args.x, y: args.y },
+    params: {
+      selector: args.selector,
+      x: args.x,
+      y: args.y,
+      tabId: args.tab_id,
+    },
     timeoutMs,
   });
 

@@ -5,7 +5,7 @@ import { sendCommand } from '../command-client';
 import type { ServerContext, ToolContext } from '../tool-context';
 
 export const TabSwitchInputSchema = z.object({
-  tabId: z.number().int().min(0),
+  tab_id: z.number().int().min(0),
   timeout_ms: z.number().int().min(100).max(120000).optional(),
 });
 
@@ -23,13 +23,13 @@ export async function executeTabSwitch(
     serverUrl: context.websocketUrl,
     browserId: resolution.browserId,
     command: 'tab:switch',
-    params: { tabId: args.tabId },
+    params: { tabId: args.tab_id },
     timeoutMs,
   });
 
   if (result.status !== 'ok')
     throw new Error(result.error ?? 'tab:switch failed');
-  return result.message ?? `Switched to tab ${args.tabId}`;
+  return result.message ?? `Switched to tab ${args.tab_id}`;
 }
 
 export function registerTabSwitchTool(

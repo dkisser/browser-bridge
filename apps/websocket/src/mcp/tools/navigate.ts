@@ -6,6 +6,7 @@ import type { ServerContext, ToolContext } from '../tool-context';
 
 export const NavigateInputSchema = z.object({
   url: z.string().url(),
+  tab_id: z.number().int().min(0),
   timeout_ms: z.number().int().min(100).max(120000).optional(),
 });
 
@@ -26,7 +27,7 @@ export async function executeNavigate(
     serverUrl: context.websocketUrl,
     browserId: resolution.browserId,
     command: 'navigate',
-    params: { url: args.url },
+    params: { url: args.url, tabId: args.tab_id },
     timeoutMs,
   });
 
@@ -34,7 +35,7 @@ export async function executeNavigate(
     throw new Error(result.error ?? 'Navigation failed');
   }
 
-  return result.message ?? `Navigated to ${args.url}`;
+  return result.message ?? `Navigated to ${args.url} in tab ${args.tab_id}`;
 }
 
 export function registerNavigateTool(
@@ -43,7 +44,7 @@ export function registerNavigateTool(
 ): void {
   server.addTool({
     name: 'navigate',
-    description: 'Navigate the active tab of the selected browser to a URL.',
+    description: 'Navigate a specific tab of the selected browser to a URL.',
     parameters: NavigateInputSchema,
     execute: async (args, { sessionId }) => {
       const resolvedSessionId = sessionId ?? 'anonymous';

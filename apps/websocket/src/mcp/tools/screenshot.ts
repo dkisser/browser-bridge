@@ -6,6 +6,7 @@ import type { ServerContext, ToolContext } from '../tool-context';
 
 export const ScreenshotInputSchema = z.object({
   fullPage: z.boolean().optional(),
+  tab_id: z.number().int().min(0),
   timeout_ms: z.number().int().min(100).max(120000).optional(),
 });
 
@@ -25,7 +26,7 @@ export async function executeScreenshot(
     serverUrl: context.websocketUrl,
     browserId: resolution.browserId,
     command: 'screenshot',
-    params: args.fullPage === undefined ? {} : { fullPage: args.fullPage },
+    params: { fullPage: args.fullPage, tabId: args.tab_id },
     timeoutMs,
   });
 

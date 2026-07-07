@@ -28,8 +28,10 @@ export async function sendCommand(
   try {
     await waitForOpen(client, Math.min(options.timeoutMs, 5000));
 
+    const tabId = options.params.tabId;
     const payload: CommandPayload = {
       command: options.command,
+      tabId: typeof tabId === 'number' ? tabId : 0,
       params: options.params,
     };
 

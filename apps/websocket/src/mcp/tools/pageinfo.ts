@@ -5,6 +5,7 @@ import { sendCommand } from '../command-client';
 import type { ServerContext, ToolContext } from '../tool-context';
 
 export const PageinfoInputSchema = z.object({
+  tab_id: z.number().int().min(0),
   timeout_ms: z.number().int().min(100).max(120000).optional(),
 });
 
@@ -22,7 +23,7 @@ export async function executePageinfo(
     serverUrl: context.websocketUrl,
     browserId: resolution.browserId,
     command: 'pageinfo',
-    params: {},
+    params: { tabId: args.tab_id },
     timeoutMs,
   });
 

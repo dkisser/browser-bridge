@@ -5,7 +5,7 @@ import { sendCommand } from '../command-client';
 import type { ServerContext, ToolContext } from '../tool-context';
 
 export const TabCloseInputSchema = z.object({
-  tabId: z.number().int().min(0),
+  tab_id: z.number().int().min(0),
   timeout_ms: z.number().int().min(100).max(120000).optional(),
 });
 
@@ -23,13 +23,13 @@ export async function executeTabClose(
     serverUrl: context.websocketUrl,
     browserId: resolution.browserId,
     command: 'tab:close',
-    params: { tabId: args.tabId },
+    params: { tabId: args.tab_id },
     timeoutMs,
   });
 
   if (result.status !== 'ok')
     throw new Error(result.error ?? 'tab:close failed');
-  return result.message ?? `Tab ${args.tabId} closed`;
+  return result.message ?? `Tab ${args.tab_id} closed`;
 }
 
 export function registerTabCloseTool(

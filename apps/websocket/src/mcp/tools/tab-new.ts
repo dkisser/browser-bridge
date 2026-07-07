@@ -6,6 +6,8 @@ import type { ServerContext, ToolContext } from '../tool-context';
 
 export const TabNewInputSchema = z.object({
   url: z.string().url().optional(),
+  active: z.boolean().optional(),
+  auto_close: z.boolean().optional(),
   timeout_ms: z.number().int().min(100).max(120000).optional(),
 });
 
@@ -23,7 +25,11 @@ export async function executeTabNew(
     serverUrl: context.websocketUrl,
     browserId: resolution.browserId,
     command: 'tab:new',
-    params: { url: args.url },
+    params: {
+      url: args.url,
+      active: args.active,
+      auto_close: args.auto_close,
+    },
     timeoutMs,
   });
 
@@ -37,7 +43,8 @@ export function registerTabNewTool(
 ): void {
   server.addTool({
     name: 'tab_new',
-    description: 'Open a new tab in the selected browser.',
+    description:
+      'Open a new tab in the selected browser. Defaults to opening in the background (active=false).',
     parameters: TabNewInputSchema,
     execute: async (args, { sessionId }) => {
       const resolvedSessionId = sessionId ?? 'anonymous';

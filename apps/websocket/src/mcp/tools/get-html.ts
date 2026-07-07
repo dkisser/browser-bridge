@@ -6,6 +6,7 @@ import type { ServerContext, ToolContext } from '../tool-context';
 
 export const GethtmlInputSchema = z.object({
   selector: z.string().min(1),
+  tab_id: z.number().int().min(0),
   timeout_ms: z.number().int().min(100).max(120000).optional(),
 });
 
@@ -23,7 +24,7 @@ export async function executeGethtml(
     serverUrl: context.websocketUrl,
     browserId: resolution.browserId,
     command: 'gethtml',
-    params: { selector: args.selector },
+    params: { selector: args.selector, tabId: args.tab_id },
     timeoutMs,
   });
 

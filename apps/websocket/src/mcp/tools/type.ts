@@ -8,6 +8,7 @@ export const TypeInputSchema = z.object({
   selector: z.string().min(1),
   text: z.string(),
   submit: z.boolean().optional(),
+  tab_id: z.number().int().min(0),
   timeout_ms: z.number().int().min(100).max(120000).optional(),
 });
 
@@ -25,7 +26,12 @@ export async function executeType(
     serverUrl: context.websocketUrl,
     browserId: resolution.browserId,
     command: 'type',
-    params: { selector: args.selector, text: args.text, submit: args.submit },
+    params: {
+      selector: args.selector,
+      text: args.text,
+      submit: args.submit,
+      tabId: args.tab_id,
+    },
     timeoutMs,
   });
 

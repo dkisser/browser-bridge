@@ -47,6 +47,7 @@ describe('WS client', () => {
       'b-123',
       {
         command: 'navigate',
+        tabId: 1,
         params: { url: 'https://example.com' },
       },
       { timeout: 2000 },
@@ -74,7 +75,7 @@ describe('WS client', () => {
     await expect(
       client.sendCommand(
         'b-123',
-        { command: 'navigate', params: {} },
+        { command: 'navigate', tabId: 1, params: {} },
         { timeout: 100 },
       ),
     ).rejects.toThrow('timeout');
@@ -113,7 +114,7 @@ describe('WS client', () => {
     await expect(
       client.sendCommand(
         'b-123',
-        { command: 'navigate', params: {} },
+        { command: 'navigate', tabId: 1, params: {} },
         { timeout: 5000 },
       ),
     ).rejects.toThrow('connection closed');

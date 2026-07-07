@@ -5,6 +5,7 @@ import { sendCommand } from '../command-client';
 import type { ServerContext, ToolContext } from '../tool-context';
 
 export const GoForwardInputSchema = z.object({
+  tab_id: z.number().int().min(0),
   timeout_ms: z.number().int().min(100).max(120000).optional(),
 });
 
@@ -22,7 +23,7 @@ export async function executeGoForward(
     serverUrl: context.websocketUrl,
     browserId: resolution.browserId,
     command: 'goForward',
-    params: {},
+    params: { tabId: args.tab_id },
     timeoutMs,
   });
 
