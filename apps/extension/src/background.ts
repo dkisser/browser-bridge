@@ -44,7 +44,7 @@ interface CommandMessage {
   browserId: string;
   payload: {
     command: string;
-    tabId?: number;
+    tabId: number;
     params: Record<string, unknown>;
   };
   timestamp: number;
@@ -66,7 +66,10 @@ async function handleCommand(msg: CommandMessage): Promise<unknown> {
 
   switch (command) {
     case 'navigate': {
-      const tab = tabId ?? (await getActiveTabId());
+      if (typeof tabId !== 'number') {
+        throw new Error('Missing required tabId');
+      }
+      const tab = tabId;
       await chrome.tabs.update(tab, { url: params.url as string });
       await new Promise<void>((resolve) => {
         const listener = (
@@ -85,19 +88,28 @@ async function handleCommand(msg: CommandMessage): Promise<unknown> {
     }
 
     case 'goBack': {
-      const tab = tabId ?? (await getActiveTabId());
+      if (typeof tabId !== 'number') {
+        throw new Error('Missing required tabId');
+      }
+      const tab = tabId;
       await chrome.tabs.goBack(tab);
       return { ok: true };
     }
 
     case 'goForward': {
-      const tab = tabId ?? (await getActiveTabId());
+      if (typeof tabId !== 'number') {
+        throw new Error('Missing required tabId');
+      }
+      const tab = tabId;
       await chrome.tabs.goForward(tab);
       return { ok: true };
     }
 
     case 'refresh': {
-      const tab = tabId ?? (await getActiveTabId());
+      if (typeof tabId !== 'number') {
+        throw new Error('Missing required tabId');
+      }
+      const tab = tabId;
       await chrome.tabs.reload(tab);
       return { ok: true };
     }
@@ -114,8 +126,10 @@ async function handleCommand(msg: CommandMessage): Promise<unknown> {
     }
 
     case 'tab:new': {
+      const active = params.active === true;
       const newTab = await chrome.tabs.create({
         url: params.url as string | undefined,
+        active,
       });
       return { id: newTab.id, url: newTab.url };
     }
@@ -132,13 +146,19 @@ async function handleCommand(msg: CommandMessage): Promise<unknown> {
     }
 
     case 'pageinfo': {
-      const tab = tabId ?? (await getActiveTabId());
+      if (typeof tabId !== 'number') {
+        throw new Error('Missing required tabId');
+      }
+      const tab = tabId;
       const t = await chrome.tabs.get(tab);
       return { id: t.id, url: t.url, title: t.title, active: t.active };
     }
 
     case 'screenshot': {
-      const tab = tabId ?? (await getActiveTabId());
+      if (typeof tabId !== 'number') {
+        throw new Error('Missing required tabId');
+      }
+      const tab = tabId;
       const activeTab = await chrome.tabs.get(tab);
       const dataUrl = await chrome.tabs.captureVisibleTab(activeTab.windowId, {
         format: 'png',
@@ -148,7 +168,10 @@ async function handleCommand(msg: CommandMessage): Promise<unknown> {
 
     case 'wait:navigation': {
       const timeout = (params.timeout as number) || 10000;
-      const tab = tabId ?? (await getActiveTabId());
+      if (typeof tabId !== 'number') {
+        throw new Error('Missing required tabId');
+      }
+      const tab = tabId;
       await new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => {
           chrome.tabs.onUpdated.removeListener(listener);
@@ -190,7 +213,10 @@ async function sendToContentScript(
   tabId: number | undefined,
   payload: Record<string, unknown>,
 ): Promise<unknown> {
-  const tab = tabId ?? (await getActiveTabId());
+  if (typeof tabId !== 'number') {
+    throw new Error('Missing required tabId');
+  }
+  const tab = tabId;
 
   try {
     const response = await chrome.tabs.sendMessage(tab, { type: 'ping' });
@@ -208,12 +234,6 @@ async function sendToContentScript(
 
   await new Promise((resolve) => setTimeout(resolve, 100));
   return await chrome.tabs.sendMessage(tab, { type: 'command', payload });
-}
-
-async function getActiveTabId(): Promise<number> {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id) throw new Error('No active tab found');
-  return tab.id;
 }
 
 // Message handler: receives commands from offscreen doc, popup, and content scripts
