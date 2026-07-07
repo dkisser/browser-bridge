@@ -56,7 +56,7 @@ describe('executeGethtml', () => {
           sessions,
           websocketUrl: `ws://127.0.0.1:${server.port}/ws`,
         },
-        { selector: 'div' },
+        { tab_id: 42, selector: 'div' },
       );
       expect(result).toBe('<div>Hello World</div>');
     } finally {

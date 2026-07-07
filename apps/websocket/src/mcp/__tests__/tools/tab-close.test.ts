@@ -53,7 +53,7 @@ describe('executeTabClose', () => {
           sessions,
           websocketUrl: `ws://127.0.0.1:${server.port}/ws`,
         },
-        { tabId: 1 },
+        { tab_id: 1 },
       );
       expect(result).toContain('Tab closed');
     } finally {

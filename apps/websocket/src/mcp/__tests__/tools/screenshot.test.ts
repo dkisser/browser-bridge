@@ -60,14 +60,15 @@ describe('executeScreenshot', () => {
           sessions,
           websocketUrl: `ws://127.0.0.1:${server.port}/ws`,
         },
-        { fullPage: true },
+        { tab_id: 42, fullPage: true },
       );
 
       expect(result.content).toHaveLength(1);
       expect(result.content[0].type).toBe('image');
       expect(lastCommandPayload).toEqual({
         command: 'screenshot',
-        params: { fullPage: true },
+        tabId: 42,
+        params: { fullPage: true, tabId: 42 },
       });
     } finally {
       server.stop();

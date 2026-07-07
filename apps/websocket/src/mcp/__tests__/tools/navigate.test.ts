@@ -54,7 +54,7 @@ describe('executeNavigate', () => {
           sessions,
           websocketUrl: `ws://127.0.0.1:${server.port}/ws`,
         },
-        { url: 'https://example.com' },
+        { tab_id: 42, url: 'https://example.com' },
       );
 
       expect(result).toContain('Navigated');

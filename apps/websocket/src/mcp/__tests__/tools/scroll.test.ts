@@ -53,7 +53,7 @@ describe('executeScroll', () => {
           sessions,
           websocketUrl: `ws://127.0.0.1:${server.port}/ws`,
         },
-        { x: 0, y: 500, selector: '#container' },
+        { tab_id: 42, x: 0, y: 500, selector: '#container' },
       );
       expect(result).toContain('Scrolled');
     } finally {

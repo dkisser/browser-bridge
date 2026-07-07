@@ -53,7 +53,7 @@ describe('executeSelect', () => {
           sessions,
           websocketUrl: `ws://127.0.0.1:${server.port}/ws`,
         },
-        { selector: '#dropdown', value: 'option1' },
+        { tab_id: 42, selector: '#dropdown', value: 'option1' },
       );
       expect(result).toContain('Selected');
     } finally {

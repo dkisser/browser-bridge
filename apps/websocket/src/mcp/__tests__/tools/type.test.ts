@@ -53,7 +53,7 @@ describe('executeType', () => {
           sessions,
           websocketUrl: `ws://127.0.0.1:${server.port}/ws`,
         },
-        { selector: '#search', text: 'hello' },
+        { tab_id: 42, selector: '#search', text: 'hello' },
       );
       expect(result).toContain('Typed');
     } finally {
