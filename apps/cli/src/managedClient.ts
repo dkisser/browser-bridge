@@ -47,7 +47,11 @@ export class ManagedClient implements Disposable {
 
   sendCommand(
     browserId: string,
-    payload: { command: CommandType; params?: Record<string, unknown> },
+    payload: {
+      command: CommandType;
+      tabId: number;
+      params?: Record<string, unknown>;
+    },
     opts?: { timeout?: number },
   ): Promise<Envelope> {
     return this.client.sendCommand(browserId, payload as CommandPayload, opts);

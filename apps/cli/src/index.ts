@@ -11,6 +11,7 @@ program.name('bridge').description('Browser Bridge CLI').version('0.0.1');
 interface GlobalOptions {
   server: string;
   browser: string;
+  tabId: number;
   json: boolean;
   timeout: number;
 }
@@ -19,6 +20,7 @@ function getGlobalOptions(opts: Record<string, unknown>): GlobalOptions {
   return {
     server: (opts.server as string) || `ws://localhost:${WEBSOCKET_PORT}`,
     browser: opts.browser as string,
+    tabId: Number(opts.tab ?? 0),
     json: opts.json as boolean,
     timeout: (opts.timeout as number) || 10000,
   };
@@ -55,6 +57,7 @@ async function dispatchCommand(
       {
         server: global.server,
         browser: global.browser,
+        tabId: global.tabId,
         timeout: global.timeout,
       },
       command,
@@ -70,13 +73,14 @@ async function dispatchCommand(
 program
   .option('--server <url>', 'WS Server URL', `ws://localhost:${WEBSOCKET_PORT}`)
   .option('--browser <id>', 'Target browser instance')
+  .option('--tab <id>', 'Target tab id', '0')
   .option('--json', 'Structured JSON output')
   .option('--timeout <ms>', 'Command timeout', '10000');
 
 // Navigation commands
 program
   .command('navigate <url>')
-  .description('Navigate to URL')
+  .description('Navigate to URL in a specific tab')
   .action(async (url: string) => {
     const global = getGlobalOptions(program.opts());
     await dispatchCommand(global, 'navigate', { url });

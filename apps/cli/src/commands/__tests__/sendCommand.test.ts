@@ -61,9 +61,18 @@ describe('sendCommand', () => {
     ).rejects.toThrow('Required: --browser <id>');
   });
 
+  it('throws when tabId is missing', async () => {
+    await expect(
+      sendCommand(
+        { server: `ws://localhost:${PORT}`, browser: 'b-1' },
+        'pageinfo',
+      ),
+    ).rejects.toThrow('Required: --tab <id>');
+  });
+
   it('returns data on success', async () => {
     const result = await sendCommand(
-      { server: `ws://localhost:${PORT}`, browser: 'b-1' },
+      { server: `ws://localhost:${PORT}`, browser: 'b-1', tabId: 42 },
       'pageinfo',
     );
     expect(result).toEqual({ title: 'Test Page', url: 'https://example.com' });
@@ -72,7 +81,7 @@ describe('sendCommand', () => {
   it('throws when server reports command error', async () => {
     await expect(
       sendCommand(
-        { server: `ws://localhost:${PORT}`, browser: 'b-1' },
+        { server: `ws://localhost:${PORT}`, browser: 'b-1', tabId: 42 },
         'fail' as CommandType,
       ),
     ).rejects.toThrow('It failed');
