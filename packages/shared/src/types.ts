@@ -31,7 +31,7 @@ export type CommandType =
 
 export interface CommandPayload {
   command: CommandType;
-  tabId?: number;
+  tabId: number;
   params: Record<string, unknown>;
 }
 
