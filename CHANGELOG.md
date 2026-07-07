@@ -4,11 +4,19 @@ All notable changes to Browser Bridge are documented here. The format follows [K
 
 ## [Unreleased]
 
-### Changed
-- Moved `@valibot/to-json-schema`, `arktype`, `effect`, and `sury` from `devDependencies` to `dependencies` in `apps/websocket/package.json` because they are dynamically imported at runtime inside the compiled `ws-server` binary.
+## [0.0.8] - 2026-07-07
 
 ### Added
+- Explicit tab handles for all browser tool operations. Every page-level command now requires `--tab <id>` (CLI) or `tab_id` (MCP), enabling concurrent multi-tab workflows and protecting the user's active tab.
+- `tab:new` defaults to opening tabs in the background (`active: false`) and returns the new tab id for follow-up commands.
+- Schema-level validation that rejects page-level MCP tool calls missing `tab_id`.
+- CLI validation that rejects page-level commands missing `--tab`.
+- Extension service worker validation that rejects commands missing `tabId`.
 - CI compile check in `.github/workflows/base-check.yml` to verify `bun build --compile` succeeds for `ws-server`, `local-proxy`, and `bridge-cmd` on every PR.
+
+### Changed
+- Moved `@valibot/to-json-schema`, `arktype`, `effect`, and `sury` from `devDependencies` to `dependencies` in `apps/websocket/package.json` because they are dynamically imported at runtime inside the compiled `ws-server` binary.
+- Updated `skills/browser-bridge-user/SKILL.md`, `README.md`, and `README_CN.md` to document the new `--tab` workflow.
 
 ## [0.0.7] - 2026-06-29
 
