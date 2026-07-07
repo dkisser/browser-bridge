@@ -7,6 +7,8 @@
 <p align="center">
   <a href="#-快速开始">快速开始</a> •
   <a href="#-功能特性">功能特性</a> •
+  <a href="#-通过-cli-使用">CLI</a> •
+  <a href="#-通过-mcp-使用">MCP</a> •
   <a href="#-架构">架构</a> •
   <a href="#-安装">安装</a> •
   <a href="./README.md">English</a>
@@ -76,15 +78,139 @@ bridge --browser <browser-id> --tab <tab-id> wait:navigation
 
 `bridge` CLI 只是 bridge 协议的一种消费者。Browser Bridge 在 [`./skills`](./skills/browser-bridge-user/SKILL.md) 中内置了开箱即用的 Claude Code skill；任何能打开 WebSocket 的客户端——例如你自己构建的 MCP server、自定义 SDK 或其他 Agent 框架——都可以用同样的方式发送命令。
 
+详细用法见下方的 [通过 CLI 使用](#-通过-cli-使用) 和 [通过 MCP 使用](#-通过-mcp-使用)。
+
 ---
 
-## 🤖 使用 MCP
+## 🖥️ 通过 CLI 使用
 
-Browser Bridge 在 WebSocket 服务端之外，还同时暴露了一个 [Streamable HTTP MCP server](docs/mcp-setup.md)。启动 `bridge up`（或 `bun run dev:websocket`）后，在你的 MCP 客户端（支持 Streamable HTTP 的 Claude Desktop、Cursor 等）中添加 `http://localhost:3003/mcp` 即可。
+`bridge` CLI 通过 WebSocket 服务端控制已连接的 Chrome 实例。
 
-MCP server 提供了一组浏览器控制工具，例如 `navigate`、`click`、`type`、`screenshot`、`get_text` 等，可直接操作已连接的 Chrome 浏览器，无需经过 CLI。
+### 全局选项
 
-完整客户端配置、环境变量和工具列表请参考 [docs/mcp-setup.md](docs/mcp-setup.md)。
+```bash
+bridge --browser <browser-id> [options] <command>
+```
+
+| 选项 | 说明 | 默认值 |
+|---|---|---|
+| `--browser <id>` | 目标浏览器实例（大多数命令必需） | — |
+| `--tab <id>` | 目标标签页 id（所有页面级命令必需） | `0` |
+| `--server <url>` | WebSocket 服务端地址 | `ws://localhost:3001` |
+| `--timeout <ms>` | 命令超时时间 | `10000` |
+| `--json` | 输出结构化 JSON | — |
+
+### 常用命令
+
+```bash
+# 服务管理
+bridge up
+bridge down
+bridge status
+bridge browser:list
+
+# 标签页管理
+bridge --browser <browser-id> tab:new https://github.com
+bridge --browser <browser-id> tab:list
+bridge --browser <browser-id> tab:switch <tab-id>
+bridge --browser <browser-id> tab:close <tab-id>
+
+# 页面导航与交互
+bridge --browser <browser-id> --tab <tab-id> navigate https://github.com
+bridge --browser <browser-id> --tab <tab-id> click "button.login"
+bridge --browser <browser-id> --tab <tab-id> type "input#search" "browser bridge"
+bridge --browser <browser-id> --tab <tab-id> gettext "h1"
+bridge --browser <browser-id> --tab <tab-id> screenshot
+```
+
+### 示例工作流
+
+```bash
+# 1. 启动服务并查看已连接的浏览器
+bridge up
+bridge browser:list
+
+# 2. 打开一个标签页并记录它的 id
+bridge --browser <browser-id> tab:new https://news.ycombinator.com
+# => {"tabId": 12345, ...}
+
+# 3. 显式操作该标签页
+bridge --browser <browser-id> --tab 12345 gettext "a.title"
+bridge --browser <browser-id> --tab 12345 click "a.title"
+bridge --browser <browser-id> --tab 12345 wait:navigation
+```
+
+完整命令列表请运行 `bridge --help` 查看。
+
+---
+
+## 🤖 通过 MCP 使用
+
+Browser Bridge 在 WebSocket 服务端之外，还同时暴露了一个 [Streamable HTTP MCP server](docs/mcp-setup.md)。启动 `bridge up`（或 `bun run dev:websocket`）后，在任何支持 Streamable HTTP 的 MCP 客户端中添加 `http://localhost:3003/mcp` 即可。
+
+### 启动 MCP server
+
+```bash
+bridge up
+```
+
+MCP 端点地址为 `http://localhost:3003/mcp`。
+
+### 配置 MCP 客户端
+
+任何支持 Streamable HTTP 的 MCP 客户端都可以连接 Browser Bridge。在客户端的 `mcpServers` 配置中添加如下服务条目即可：
+
+```json
+{
+  "mcpServers": {
+    "browser-bridge": {
+      "transport": "streamableHttp",
+      "url": "http://localhost:3003/mcp"
+    }
+  }
+}
+```
+
+具体写入哪个文件取决于你使用的客户端：
+
+| 客户端 | 配置文件位置 |
+|---|---|
+| **Claude Desktop** | `claude_desktop_config.json` |
+| **Claude Code** | 项目级 `.claude/mcp.json` 或用户级 `~/.claude/mcp.json` |
+| **Cursor** | Cursor MCP 设置，通常为 `.cursor/mcp.json` |
+| **Codex (OpenAI)** | `~/.codex/config.json` 中的 `mcpServers` |
+| **Cline / Windsurf / 其他** | 各客户端自身的 MCP server 设置，JSON 结构相同 |
+
+### 可用工具
+
+| 工具 | 说明 |
+|---|---|
+| `list_browsers` | 列出已连接的浏览器 |
+| `set_browser` | 为当前 MCP 会话固定浏览器 |
+| `navigate`、`go_back`、`go_forward`、`refresh` | 页面导航 |
+| `tab_list`、`tab_new`、`tab_close`、`tab_switch` | 标签页管理 |
+| `click`、`type`、`select`、`scroll`、`hover` | DOM 交互 |
+| `get_text`、`get_html`、`screenshot`、`pageinfo` | 数据提取 |
+| `wait_element`、`wait_navigation` | 等待 |
+
+所有浏览器控制工具都支持可选的 `timeout_ms` 参数。
+
+### 示例工作流
+
+```json
+{
+  "role": "user",
+  "content": "打开新标签页访问 https://news.ycombinator.com，然后获取第一条新闻标题的文本。"
+}
+```
+
+MCP Agent 会依次：
+
+1. 调用 `list_browsers` 和 `set_browser` 选择浏览器。
+2. 调用 `tab_new` 并传入 `url` 打开页面。
+3. 调用 `get_text` 并传入 `selector: ".titleline > a"` 读取标题。
+
+环境变量和完整工具列表请参考 [docs/mcp-setup.md](docs/mcp-setup.md)。
 
 ---
 

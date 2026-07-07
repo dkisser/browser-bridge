@@ -7,6 +7,8 @@
 <p align="center">
   <a href="#-quick-start">Quick Start</a> •
   <a href="#-features">Features</a> •
+  <a href="#-use-via-cli">CLI</a> •
+  <a href="#-use-via-mcp">MCP</a> •
   <a href="#-architecture">Architecture</a> •
   <a href="#-install">Install</a> •
   <a href="./README_CN.md">中文</a>
@@ -78,13 +80,139 @@ That’s it. The command travels from CLI → WebSocket server → local proxy �
 
 The `bridge` CLI is just one consumer of the bridge protocol. Browser Bridge ships with a ready-to-use Claude Code skill in [`./skills`](./skills/browser-bridge-user/SKILL.md), and anything that can open a WebSocket — for example, an MCP server you build, a custom SDK, or another agent framework — can send commands the same way.
 
-## 🤖 Use with MCP
+For step-by-step usage, see [Use via CLI](#-use-via-cli) and [Use via MCP](#-use-via-mcp) below.
 
-Browser Bridge also exposes a [Streamable HTTP MCP server](docs/mcp-setup.md) alongside the WebSocket server. Once `bridge up` (or `bun run dev:websocket`) is running, add `http://localhost:3003/mcp` to your MCP client — Claude Desktop, Cursor, or any client that supports Streamable HTTP.
+---
 
-The MCP server exposes browser-control tools such as `navigate`, `click`, `type`, `screenshot`, `get_text`, and more. Each tool can target any connected browser, so you can drive Chrome directly from an MCP-enabled agent without using the CLI.
+## 🖥️ Use via CLI
 
-See [docs/mcp-setup.md](docs/mcp-setup.md) for client configuration, environment variables, and the full tools list.
+The `bridge` CLI controls a connected Chrome instance through the WebSocket server.
+
+### Global options
+
+```bash
+bridge --browser <browser-id> [options] <command>
+```
+
+| Option | Description | Default |
+|---|---|---|
+| `--browser <id>` | Target browser instance (required for most commands) | — |
+| `--tab <id>` | Target tab id (all page-level commands require this) | `0` |
+| `--server <url>` | WebSocket server URL | `ws://localhost:3001` |
+| `--timeout <ms>` | Command timeout | `10000` |
+| `--json` | Output structured JSON instead of human-readable text | — |
+
+### Common commands
+
+```bash
+# Service management
+bridge up
+bridge down
+bridge status
+bridge browser:list
+
+# Tab management
+bridge --browser <browser-id> tab:new https://github.com
+bridge --browser <browser-id> tab:list
+bridge --browser <browser-id> tab:switch <tab-id>
+bridge --browser <browser-id> tab:close <tab-id>
+
+# Navigation and interaction
+bridge --browser <browser-id> --tab <tab-id> navigate https://github.com
+bridge --browser <browser-id> --tab <tab-id> click "button.login"
+bridge --browser <browser-id> --tab <tab-id> type "input#search" "browser bridge"
+bridge --browser <browser-id> --tab <tab-id> gettext "h1"
+bridge --browser <browser-id> --tab <tab-id> screenshot
+```
+
+### Example workflow
+
+```bash
+# 1. Start services and find a connected browser
+bridge up
+bridge browser:list
+
+# 2. Open a tab and capture its id
+bridge --browser <browser-id> tab:new https://news.ycombinator.com
+# => {"tabId": 12345, ...}
+
+# 3. Drive that tab explicitly
+bridge --browser <browser-id> --tab 12345 gettext "a.title"
+bridge --browser <browser-id> --tab 12345 click "a.title"
+bridge --browser <browser-id> --tab 12345 wait:navigation
+```
+
+See `bridge --help` for the full command list.
+
+---
+
+## 🤖 Use via MCP
+
+Browser Bridge exposes a [Streamable HTTP MCP server](docs/mcp-setup.md) alongside the WebSocket server. Once `bridge up` (or `bun run dev:websocket`) is running, add `http://localhost:3003/mcp` to any MCP client that supports Streamable HTTP.
+
+### Start the MCP server
+
+```bash
+bridge up
+```
+
+The MCP endpoint is available at `http://localhost:3003/mcp`.
+
+### Configure your MCP client
+
+Any MCP client that supports Streamable HTTP can connect to Browser Bridge. Add the following server entry to your client's `mcpServers` configuration:
+
+```json
+{
+  "mcpServers": {
+    "browser-bridge": {
+      "transport": "streamableHttp",
+      "url": "http://localhost:3003/mcp"
+    }
+  }
+}
+```
+
+Where to put this block depends on your client:
+
+| Client | Configuration location |
+|---|---|
+| **Claude Desktop** | `claude_desktop_config.json` |
+| **Claude Code** | project-level `.claude/mcp.json` or user-level `~/.claude/mcp.json` |
+| **Cursor** | Cursor MCP settings, typically `.cursor/mcp.json` |
+| **Codex (OpenAI)** | `~/.codex/config.json` under `mcpServers` |
+| **Cline / Windsurf / others** | the client's own MCP server settings in the same JSON shape |
+
+### Available tools
+
+| Tool | Description |
+|---|---|
+| `list_browsers` | List connected browsers |
+| `set_browser` | Pin a browser for this MCP session |
+| `navigate`, `go_back`, `go_forward`, `refresh` | Navigation |
+| `tab_list`, `tab_new`, `tab_close`, `tab_switch` | Tab management |
+| `click`, `type`, `select`, `scroll`, `hover` | DOM interaction |
+| `get_text`, `get_html`, `screenshot`, `pageinfo` | Data extraction |
+| `wait_element`, `wait_navigation` | Waiting |
+
+All browser-control tools accept an optional `timeout_ms` argument.
+
+### Example workflow
+
+```json
+{
+  "role": "user",
+  "content": "Open a new tab to https://news.ycombinator.com, then get the text of the first story title."
+}
+```
+
+The MCP agent will:
+
+1. Call `list_browsers` and `set_browser` to pick a browser.
+2. Call `tab_new` with `url` to open the page.
+3. Call `get_text` with `selector: ".titleline > a"` to read the title.
+
+See [docs/mcp-setup.md](docs/mcp-setup.md) for environment variables and the full tools list.
 
 ---
 
