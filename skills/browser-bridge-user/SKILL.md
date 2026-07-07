@@ -54,10 +54,10 @@ Parse the output. Possible cases:
 
 ### 3. Build the `--browser` argument
 
-Once a browser is selected, pass it to every subsequent command:
+Once a browser is selected, pass it to every subsequent command. Page-level commands also require `--tab <tabId>`:
 
 ```bash
-bridge --browser <browserId> <command>
+bridge --browser <browserId> --tab <tabId> <command>
 ```
 
 ## CLI command reference
@@ -72,6 +72,7 @@ Global options:
 
 - `--server <url>` — WebSocket server URL (default: `ws://localhost:3001`)
 - `--browser <id>` — target browser instance (required for all commands except `browser:list`)
+- `--tab <id>` — target tab for all page-level commands (required for `navigate`, `click`, `gettext`, etc.)
 - `--json` — output structured JSON
 - `--timeout <ms>` — command timeout (default: 10000)
 
@@ -87,32 +88,42 @@ Global options:
 
 ### Navigation
 
-- `navigate <url>` — open a URL in the current tab
-- `goBack` — browser history back
-- `goForward` — browser history forward
-- `refresh` — reload current page
+- `navigate <url>` — open a URL in the tab specified by `--tab`
+- `goBack` — browser history back in the tab specified by `--tab`
+- `goForward` — browser history forward in the tab specified by `--tab`
+- `refresh` — reload the tab specified by `--tab`
 
 ### Tabs
 
 - `tab:list` — list all open tabs
-- `tab:new [url]` — open a new tab
+- `tab:new [url]` — open a new tab and return its id
 - `tab:close <tabId>` — close a tab by id
 - `tab:switch <tabId>` — switch to a tab by id
 
 ### DOM interaction
 
-- `click <selector>` — click an element (CSS selector)
-- `type <selector> <text>` — type text into an input
-- `select <selector> <value>` — select a dropdown option
-- `scroll <x> <y>` — scroll by pixel offset
-- `hover <selector>` — hover over an element
+- `click <selector>` — click an element (CSS selector) in the tab specified by `--tab`
+- `type <selector> <text>` — type text into an input in the tab specified by `--tab`
+- `select <selector> <value>` — select a dropdown option in the tab specified by `--tab`
+- `scroll <x> <y>` — scroll by pixel offset in the tab specified by `--tab`
+- `hover <selector>` — hover over an element in the tab specified by `--tab`
 
 ### Data extraction
 
-- `gettext <selector>` — get text content of an element
-- `gethtml <selector>` — get inner HTML of an element
-- `screenshot` — take a screenshot of the visible page
-- `pageinfo` — get current URL, title, and tab id
+- `gettext <selector>` — get text content of an element in the tab specified by `--tab`
+- `gethtml <selector>` — get inner HTML of an element in the tab specified by `--tab`
+- `screenshot` — take a screenshot of the tab specified by `--tab`
+- `pageinfo` — get current URL, title, and tab id for the tab specified by `--tab`
+
+## Working with tabs
+
+Every page-level command (`navigate`, `click`, `gettext`, `screenshot`, etc.) requires a `--tab <id>` argument. The workflow is:
+
+1. `bridge --browser <id> tab:new [url]` to create a background tab.
+2. Use the returned `id` as `--tab <id>` for all subsequent commands.
+3. `bridge --browser <id> tab:close <tabId>` when done.
+
+This keeps your current active tab untouched and lets you run multiple tab workflows in parallel.
 
 ## Extraction strategy
 
@@ -128,8 +139,8 @@ When a command returns no data, try a broader selector or `pageinfo` to verify t
 
 ### Waiting
 
-- `wait:element <selector>` — wait until an element appears
-- `wait:navigation` — wait until page navigation completes
+- `wait:element <selector>` — wait until an element appears in the tab specified by `--tab`
+- `wait:navigation` — wait until page navigation completes in the tab specified by `--tab`
 
 ## Multi-step workflows
 
@@ -139,11 +150,12 @@ Most browser tasks need several commands. Plan the sequence, run them in order, 
 
 1. `bridge up` (if not already running)
 2. `bridge browser:list` to choose the browser
-3. `bridge --browser <id> navigate https://mail.google.com`
-4. `bridge --browser <id> wait:navigation --timeout 15000`
-5. Find the notification rows with `gettext` or `gethtml` on selectors that contain GitHub pipeline text.
-6. Click the row or its mark-as-read control with `bridge --browser <id> click <selector>`.
-7. Confirm with another `gettext` or `screenshot` if needed.
+3. `bridge --browser <id> tab:new https://mail.google.com` — note the returned `tab_id`, e.g. `101`
+4. `bridge --browser <id> --tab 101 wait:navigation --timeout 15000`
+5. Find the notification rows with `bridge --browser <id> --tab 101 gettext <selector>` or `bridge --browser <id> --tab 101 gethtml <selector>` on selectors that contain GitHub pipeline text.
+6. Click the row or its mark-as-read control with `bridge --browser <id> --tab 101 click <selector>`.
+7. Confirm with another `bridge --browser <id> --tab 101 gettext <selector>` or `bridge --browser <id> --tab 101 screenshot` if needed.
+8. `bridge --browser <id> tab:close 101` when done.
 
 ## Handling large outputs
 

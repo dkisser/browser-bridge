@@ -65,8 +65,9 @@ curl -fsSL https://github.com/dkisser/browser-bridge/releases/latest/download/in
 # 查看已连接的 Chrome 实例
 bridge browser:list
 
-# 使用上面返回的 <browser-id>
-bridge navigate https://github.com --browser <browser-id>
+# 新建标签页，并在后续命令中使用返回的标签页 id
+bridge --browser <browser-id> tab:new https://github.com
+bridge --browser <browser-id> --tab <tab-id> wait:navigation
 ```
 
 命令会经过 CLI → WebSocket 服务端 → 本地代理 → Chrome 扩展 → 浏览器。
