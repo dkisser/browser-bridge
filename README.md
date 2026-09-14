@@ -222,7 +222,7 @@ See [docs/mcp-setup.md](docs/mcp-setup.md) for environment variables and the ful
 
 ```
 ┌─────────────┐      ┌─────────────────┐      ┌─────────────────┐      ┌─────────────────┐
-│  CLI / Agent │ ───▶ │  WebSocket      │ ───▶ │  Local Proxy    │ ───▶ │  Chrome         │
+│  CLI / MCP   │ ───▶ │  WebSocket      │ ───▶ │  Local Proxy    │ ───▶ │  Chrome         │
 │             │      │  Server         │      │  (your machine) │      │  Extension      │
 └─────────────┘      └─────────────────┘      └─────────────────┘      └─────────────────┘
                                                                               │
@@ -235,7 +235,7 @@ See [docs/mcp-setup.md](docs/mcp-setup.md) for environment variables and the ful
 
 | Layer | Component | Role |
 |-------|-----------|------|
-| Cloud / shared | Interfaces | Agent-facing entry points: CLI, Claude Code skill, or any custom integration. |
+| Cloud / shared | Inbound adapters | Agent-facing entry points: the `bridge` CLI and the MCP server. Both are stateless translators onto the WebSocket protocol — see `CONTEXT.md`. |
 | Cloud / shared | WebSocket Server | Routes commands to the right local proxy. |
 | Local | Local Proxy | Maintains the outbound connection from your machine. |
 | Local | Chrome Extension | Receives messages and executes browser actions. |
