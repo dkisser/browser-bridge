@@ -24,6 +24,7 @@ export type CommandType =
   | 'hover'
   | 'gettext'
   | 'gethtml'
+  | 'snapshot'
   | 'screenshot'
   | 'pageinfo'
   | 'wait:element'

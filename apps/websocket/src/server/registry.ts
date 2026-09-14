@@ -17,6 +17,11 @@ export class ConnectionRegistry {
     ws: ServerWebSocket<WsData>,
     browserId: string,
   ): Promise<{ success: boolean; error?: string }> {
+    const existing = this.browsers.get(browserId);
+    if (existing && existing.ws !== ws && existing.ws.readyState === 1) {
+      return { success: false, error: 'browser_id_in_use' };
+    }
+
     const userId = ws.data.userId ?? 'unknown';
 
     this.browsers.set(browserId, {

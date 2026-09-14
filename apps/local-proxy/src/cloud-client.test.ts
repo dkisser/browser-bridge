@@ -75,4 +75,23 @@ describe('CloudClient', () => {
     await new Promise((resolve) => setTimeout(resolve, 1500));
     expect(client.reconnectAttemptsForTest).toBe(0);
   });
+
+  test('fires onConnect on initial connect and on reconnect', async () => {
+    let calls = 0;
+    const client = new CloudClient({
+      serverUrl: 'ws://localhost:9998',
+      apiToken: 'test-token',
+      browserId: 'test-browser',
+      onCommand: () => {},
+      onConnect: () => {
+        calls++;
+      },
+    });
+
+    await client.connect();
+    client.close();
+    await client.connect();
+    expect(calls).toBe(2);
+    client.close();
+  });
 });

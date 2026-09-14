@@ -143,4 +143,50 @@ describe('ConnectionRegistry', () => {
     const result = await registry.register(mockWs, 'b-2');
     expect(result.success).toBe(true);
   });
+
+  it('rejects duplicate registration from a different open connection', async () => {
+    const registry = new ConnectionRegistry();
+    const first = {
+      data: { userId: 'user-1' },
+      readyState: 1,
+    } as unknown as ServerWebSocket<WsData>;
+    const second = {
+      data: { userId: 'user-1' },
+      readyState: 1,
+    } as unknown as ServerWebSocket<WsData>;
+
+    expect((await registry.register(first, 'b-dup')).success).toBe(true);
+    const result = await registry.register(second, 'b-dup');
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('browser_id_in_use');
+    expect(registry.getWebSocket('b-dup')).toBe(first);
+  });
+
+  it('allows registration when the previous connection closed', async () => {
+    const registry = new ConnectionRegistry();
+    const first = {
+      data: { userId: 'user-1' },
+      readyState: 3,
+    } as unknown as ServerWebSocket<WsData>;
+    const second = {
+      data: { userId: 'user-1' },
+      readyState: 1,
+    } as unknown as ServerWebSocket<WsData>;
+
+    expect((await registry.register(first, 'b-stale')).success).toBe(true);
+    expect((await registry.register(second, 'b-stale')).success).toBe(true);
+    expect(registry.getWebSocket('b-stale')).toBe(second);
+  });
+
+  it('allows the same connection to re-register idempotently', async () => {
+    const registry = new ConnectionRegistry();
+    const ws = {
+      data: { userId: 'user-1' },
+      readyState: 1,
+    } as unknown as ServerWebSocket<WsData>;
+
+    expect((await registry.register(ws, 'b-re')).success).toBe(true);
+    expect((await registry.register(ws, 'b-re')).success).toBe(true);
+    expect(registry.getWebSocket('b-re')).toBe(ws);
+  });
 });

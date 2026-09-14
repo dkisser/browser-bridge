@@ -14,6 +14,7 @@ import { registerScreenshotTool } from './tools/screenshot';
 import { registerScrollTool } from './tools/scroll';
 import { registerSelectTool } from './tools/select';
 import { registerSetBrowserTool } from './tools/set-browser';
+import { registerSnapshotTool } from './tools/snapshot';
 import { registerTabCloseTool } from './tools/tab-close';
 import { registerTabListTool } from './tools/tab-list';
 import { registerTabNewTool } from './tools/tab-new';
@@ -64,6 +65,7 @@ export async function startMcpServer(
   registerHoverTool(server, serverContext);
   registerGettextTool(server, serverContext);
   registerGethtmlTool(server, serverContext);
+  registerSnapshotTool(server, serverContext);
   registerScreenshotTool(server, serverContext);
   registerPageinfoTool(server, serverContext);
   registerWaitElementTool(server, serverContext);

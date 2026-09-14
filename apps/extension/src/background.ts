@@ -201,6 +201,7 @@ async function handleCommand(msg: CommandMessage): Promise<unknown> {
     case 'hover':
     case 'gettext':
     case 'gethtml':
+    case 'snapshot':
     case 'wait:element':
       return await sendToContentScript(tabId, payload);
 
@@ -221,7 +222,7 @@ async function sendToContentScript(
   try {
     const response = await chrome.tabs.sendMessage(tab, { type: 'ping' });
     if (response?.type === 'pong') {
-      return await chrome.tabs.sendMessage(tab, { type: 'command', payload });
+      return await sendContentCommand(tab, payload);
     }
   } catch {
     // Content script not injected, inject it
@@ -233,7 +234,23 @@ async function sendToContentScript(
   });
 
   await new Promise((resolve) => setTimeout(resolve, 100));
-  return await chrome.tabs.sendMessage(tab, { type: 'command', payload });
+  return await sendContentCommand(tab, payload);
+}
+
+async function sendContentCommand(
+  tab: number,
+  payload: Record<string, unknown>,
+): Promise<unknown> {
+  const response: { status?: string; data?: unknown; error?: string } =
+    await chrome.tabs.sendMessage(tab, { type: 'command', payload });
+
+  if (response?.status === 'error') {
+    throw new Error(response.error ?? 'Content script command failed');
+  }
+  if (response?.status === 'ok') {
+    return response.data;
+  }
+  throw new Error('Content script did not respond');
 }
 
 // Message handler: receives commands from offscreen doc, popup, and content scripts

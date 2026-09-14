@@ -44,6 +44,14 @@ describe('sendCommand', () => {
                 { id: request.id },
               ),
             );
+          } else if (payload.command === 'fail_extension') {
+            ws.send(
+              encode(
+                'response',
+                { status: 'error', error: 'No tab with id: 0' },
+                { id: request.id },
+              ),
+            );
           }
         },
         close() {},
@@ -85,5 +93,14 @@ describe('sendCommand', () => {
         'fail' as CommandType,
       ),
     ).rejects.toThrow('It failed');
+  });
+
+  it('throws error-field message when response has no message field', async () => {
+    await expect(
+      sendCommand(
+        { server: `ws://localhost:${PORT}`, browser: 'b-1', tabId: 42 },
+        'fail_extension' as CommandType,
+      ),
+    ).rejects.toThrow('No tab with id: 0');
   });
 });

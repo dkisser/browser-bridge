@@ -122,6 +122,7 @@ bridge --browser <browser-id> --tab <tab-id> navigate https://github.com
 bridge --browser <browser-id> --tab <tab-id> click "button.login"
 bridge --browser <browser-id> --tab <tab-id> type "input#search" "browser bridge"
 bridge --browser <browser-id> --tab <tab-id> gettext "h1"
+bridge --browser <browser-id> --tab <tab-id> snapshot
 bridge --browser <browser-id> --tab <tab-id> screenshot
 ```
 
@@ -192,6 +193,7 @@ Where to put this block depends on your client:
 | `navigate`, `go_back`, `go_forward`, `refresh` | Navigation |
 | `tab_list`, `tab_new`, `tab_close`, `tab_switch` | Tab management |
 | `click`, `type`, `select`, `scroll`, `hover` | DOM interaction |
+| `snapshot` | Compact page representation — the default tool for reading pages |
 | `get_text`, `get_html`, `screenshot`, `pageinfo` | Data extraction |
 | `wait_element`, `wait_navigation` | Waiting |
 
