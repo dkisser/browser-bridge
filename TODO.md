@@ -1,8 +1,10 @@
 # TODO
 
-记录在 2026-09-15 用 `skills/browser-bridge-user/evals/evals.json` 对 MCP 工具做真实链路评测时发现的问题。当时的背景：分支 `fix/mcp-tool-contracts` 刚修复了 `get_text`/`get_html` 返回 `[object Object]`、`screenshot` 返回 0 字节图片两个契约 bug，评测目的是验证修复并跑通 eval 0/1/2（Gmail 提取邮件主题、GitHub 通知截图、gettext 条件回退截图）。以下问题均在这轮实测中观察到，尚未修复。
+记录在 2026-09-15 用 `skills/browser-bridge-user/evals/evals.json` 对 MCP 工具做真实链路评测时发现的问题。当时的背景：分支 `fix/mcp-tool-contracts` 刚修复了 `get_text`/`get_html` 返回 `[object Object]`、`screenshot` 返回 0 字节图片两个契约 bug，评测目的是验证修复并跑通 eval 0/1/2（Gmail 提取邮件主题、GitHub 通知截图、gettext 条件回退截图）。以下问题均在这轮实测中观察到。#1 已于 2026-09-15 修复（snapshot 的 filter/tier 改动），#2、#3 尚未修复。
 
 ## 1. snapshot 截断 tier 会误导：文本 run 被静默丢弃
+
+**状态：已修复（2026-09-15）**。三处改动：tier 2 丢弃文本时在原位置输出 `text [text suppressed]` 占位符；统计行标注生效 tier（`[nodes: 40/484 | tier: 2 | truncated: true]`）；snapshot 默认改为 interactive filter（操作面：可交互元素 + heading），典型应用页默认输出 ~1.5K tokens，不再轻易触发 tier 降级。
 
 **现象**
 
@@ -55,7 +57,22 @@ Gmail 新版收件箱是虚拟化渲染 + 分区挂载的：未读区/其他邮�
 
 这不算 Browser Bridge 的 bug（是目标站点的渲染策略），但值得：
 
-- 在 `get_text`/`snapshot` 的 description 或 skill 文档中提示：对虚拟化列表（Gmail、大表格）优先用全页 snapshot 或大预算 snapshot，class 选择器可能只命中部分行；
-- 考虑给文本提取类工具加"命中 0 个元素 vs 元素存在但文本为空"的区分报错，减少误判。
+- 在 `get_text`/`snapshot` 的 description 或 skill 文档中提示：对虚拟化列表（Gmail、大表格）优先用全页 snapshot 或大预算 snapshot，class 选择器可能只命中部分行；**（2026-09-15 已做：SKILL.md 新增 "Snapshot vs. reading" 与 "Virtualized lists" 小节，snapshot description 重写并注明 truncated 时文本可能被占位/丢弃）**
+- 考虑给文本提取类工具加"命中 0 个元素 vs 元素存在但文本为空"的区分报错，减少误判。（仍未做，另立任务）
 
 **相关文件**：`apps/extension/src/content.ts`（`resolveSelector`、`walkElement`/`isHidden`）、`apps/websocket/src/mcp/tools/get-text.ts`、`skills/browser-bridge-user/SKILL.md`
+
+## 4. full filter 的格式收紧（2026-09-15 评审确定为缓办项）
+
+**背景**
+
+interactive 成为 snapshot 默认（见 ADR-0002）后，full 模式变为显式 opt-in 的非热路径。实测 full 模式输出有四处膨胀：缩进开销（depth 10 的行光前导空格 20 字符）、`generic` 包装行、文本双写（带 name 的 link/button 下再挂一层相同的 text run）、img 的 src 长 URL（10 个头像图 ≈ 1K 字符）。这些在 interactive 模式下已天然消失，是否还值得收紧 full 模式，等 full 的真实使用数据再定。
+
+**可选方向（按难度排序，均已勘明）**
+
+- **img src**：`content.ts` 的 `collectAttrs` 删 img 分支（2 行）。风险极低：alt 保留在 name，只损失 full 模式看图片 URL 的能力。
+- **文本双写**：walker 已有 `suppressTextRuns`（content.ts）只挡直接文本节点，`<span>` 包装就漏。修复 = walk 时向下传递最近命名祖先的 name，text run 是其子串则跳过（约 15 行）。风险低-中：子串匹配有边界，但操作面下被丢的内容本已在 name 里。
+- **缩进**：renderer 改 `INDENT` 或 depth cap（2-5 行），但输出形状全变，`packages/shared/tests/snapshot.test.ts` 的 33 个断言大部分要跟着改——机械但繁琐。
+- **generic 包装合并**：renderer 合并单子链 generic 且保留带 ref 的行（30-50 行 + 边界规则）。唯一算"有点大"的项。
+
+**相关文件**：`packages/shared/src/snapshot.ts`、`apps/extension/src/content.ts`、`packages/shared/tests/snapshot.test.ts`

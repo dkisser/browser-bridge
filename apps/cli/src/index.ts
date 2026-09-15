@@ -213,47 +213,56 @@ program
 program
   .command('snapshot')
   .description(
-    'Take a compact snapshot of the page (default page-reading tool)',
+    'Take a compact snapshot of the page (default: interactive elements + headings; use --filter full for the complete tree)',
   )
   .option(
     '--selector <sel>',
     'Limit snapshot to this selector (default: whole page)',
   )
-  .option('--max-chars <n>', 'Maximum snapshot size in characters', '3000')
-  .action(async (opts: { selector?: string; maxChars: string }) => {
-    const global = getGlobalOptions(program.opts());
-    const params: Record<string, unknown> = {
-      max_chars: Number(opts.maxChars),
-    };
-    if (opts.selector) params.selector = opts.selector;
-    try {
-      const data = await sendCommand(
-        {
-          server: global.server,
-          browser: global.browser,
-          tabId: global.tabId,
-          timeout: global.timeout,
-        },
-        'snapshot',
-        params,
-      );
-      const result = data as SnapshotResult;
-      if (global.json) {
-        output(global, result);
-        return;
+  .option(
+    '--filter <mode>',
+    'interactive (default) or full — full includes text runs, images and structural containers',
+  )
+  .option(
+    '--max-chars <n>',
+    'Maximum snapshot size in characters (default: 8000 interactive, 3000 full)',
+  )
+  .action(
+    async (opts: { selector?: string; filter?: string; maxChars?: string }) => {
+      const global = getGlobalOptions(program.opts());
+      const params: Record<string, unknown> = {};
+      if (opts.selector) params.selector = opts.selector;
+      if (opts.filter === 'full') params.filter = 'full';
+      if (opts.maxChars) params.max_chars = Number(opts.maxChars);
+      try {
+        const data = await sendCommand(
+          {
+            server: global.server,
+            browser: global.browser,
+            tabId: global.tabId,
+            timeout: global.timeout,
+          },
+          'snapshot',
+          params,
+        );
+        const result = data as SnapshotResult;
+        if (global.json) {
+          output(global, result);
+          return;
+        }
+        console.log(result.snapshot);
+        console.log(
+          `[nodes: ${result.nodes_emitted}/${result.nodes_total} | tier: ${result.tier} | truncated: ${result.truncated}]`,
+        );
+      } catch (err) {
+        outputError(
+          global,
+          'command_failed',
+          err instanceof Error ? err.message : String(err),
+        );
       }
-      console.log(result.snapshot);
-      console.log(
-        `[nodes: ${result.nodes_emitted}/${result.nodes_total} | truncated: ${result.truncated}]`,
-      );
-    } catch (err) {
-      outputError(
-        global,
-        'command_failed',
-        err instanceof Error ? err.message : String(err),
-      );
-    }
-  });
+    },
+  );
 
 program
   .command('screenshot')

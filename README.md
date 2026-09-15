@@ -193,7 +193,7 @@ Where to put this block depends on your client:
 | `navigate`, `go_back`, `go_forward`, `refresh` | Navigation |
 | `tab_list`, `tab_new`, `tab_close`, `tab_switch` | Tab management |
 | `click`, `type`, `select`, `scroll`, `hover` | DOM interaction |
-| `snapshot` | Compact page representation — the default tool for reading pages |
+| `snapshot` | Compact pseudo-tree of interactive elements and headings with stable `@eN` refs — the default tool for seeing what to act on; `filter='full'` adds text runs and structure |
 | `get_text`, `get_html`, `screenshot`, `pageinfo` | Data extraction |
 | `wait_element`, `wait_navigation` | Waiting |
 

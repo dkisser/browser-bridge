@@ -4,6 +4,12 @@ All notable changes to Browser Bridge are documented here. The format follows [K
 
 ## [Unreleased]
 
+### Changed
+- `snapshot` defaults to the `interactive` filter — interactive elements (links, buttons, text boxes, checkboxes, combos) and headings with stable `@eN` refs — landing ~1.5K tokens on typical app pages; pass `filter='full'` for the complete pseudo-tree including text runs and structural containers. The default budget is 8000 chars for interactive snapshots (3000 remains the `full` default). Reading page content stays with `gettext`/`get_text`. Design recorded in `docs/adr/0002-interactive-default-filter.md`.
+
+### Fixed
+- Tier-2 snapshot truncation no longer drops text runs silently: `full`-filter output marks each suppressed run with `text [text suppressed]`, and the stats line reports the active tier (e.g. `[nodes: 40/484 | tier: 2 | truncated: true]`), so an empty-looking cell is distinguishable from suppressed text. (TODO.md #1)
+
 ## [0.1.0] - 2026-09-15
 
 ### Added

@@ -1,8 +1,9 @@
 import {
-  DEFAULT_SNAPSHOT_MAX_CHARS,
   type DomCommandResult,
   type DomCommandType,
+  defaultMaxCharsForFilter,
   renderSnapshotTree,
+  type SnapshotFilter,
   type SnapshotNode,
   type SnapshotRole,
   type WaitElementResult,
@@ -245,10 +246,14 @@ function walkElement(
   };
 }
 
-function normalizeMaxChars(value: unknown): number {
+function normalizeFilter(value: unknown): SnapshotFilter {
+  return value === 'full' ? 'full' : 'interactive';
+}
+
+function normalizeMaxChars(value: unknown, filter: SnapshotFilter): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0
     ? Math.floor(value)
-    : DEFAULT_SNAPSHOT_MAX_CHARS;
+    : defaultMaxCharsForFilter(filter);
 }
 
 function executeCommand(
@@ -311,6 +316,7 @@ function executeCommand(
     case 'snapshot': {
       const selector = params.selector as string | undefined;
       const rootEl = selector ? resolveSelector(selector) : document.body;
+      const filter = normalizeFilter(params.filter);
       const state: WalkState = {
         visited: 0,
         refCounter: 0,
@@ -322,8 +328,9 @@ function executeCommand(
       };
       const result = renderSnapshotTree(
         tree,
-        normalizeMaxChars(params.max_chars),
+        normalizeMaxChars(params.max_chars, filter),
         { title: document.title, url: location.href },
+        filter,
       );
       return { ...result, truncated: result.truncated || state.truncated };
     }

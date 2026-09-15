@@ -1,6 +1,7 @@
 // Pure snapshot serializer: renders an intermediate SnapshotNode tree into the
 // compact text representation consumed by agents. No DOM access here — the
-// content script builds the tree; this module only renders and enforces the
+// content script builds the tree; this module only renders, applies the
+// filter (interactive by default, full on request), and enforces the
 // character budget via deterministic tier fallback.
 
 export type SnapshotRole =
@@ -39,16 +40,35 @@ export interface SnapshotResult {
   truncated: boolean;
   nodes_total: number;
   nodes_emitted: number;
+  tier: SnapshotTier;
 }
 
+export type SnapshotFilter = 'interactive' | 'full';
+
+export type SnapshotTier = 0 | 1 | 2;
+
 export const DEFAULT_SNAPSHOT_MAX_CHARS = 3000;
+export const DEFAULT_INTERACTIVE_MAX_CHARS = 8000;
+
+export function defaultMaxCharsForFilter(filter: SnapshotFilter): number {
+  return filter === 'full'
+    ? DEFAULT_SNAPSHOT_MAX_CHARS
+    : DEFAULT_INTERACTIVE_MAX_CHARS;
+}
 
 const ATTR_VALUE_MAX_CHARS = 60;
 const TIER1_TEXT_MAX_CHARS = 40;
 const HARD_TRUNCATION_MARKER = '\n... [truncated]';
+const TIER2_TEXT_PLACEHOLDER = 'text [text suppressed]';
 const INDENT = '  ';
 
-type Tier = 0 | 1 | 2;
+const INTERACTIVE_ROLES: ReadonlySet<SnapshotRole> = new Set([
+  'link',
+  'button',
+  'textbox',
+  'checkbox',
+  'combobox',
+]);
 
 function displayName(node: SnapshotNode): string | undefined {
   return node.name ?? (node.role === 'text' ? node.text : undefined);
@@ -65,6 +85,19 @@ function isEmittable(node: SnapshotNode): boolean {
   return node.children.some(isEmittable);
 }
 
+// Interactive-filter pass: interactive elements and headings always emit;
+// named or attributed generics often act as clickable nav items (e.g. Gmail
+// labels), so they stay addressable. Text runs, images and bare structural
+// containers are dropped as lines, but their descendants are still walked.
+function isInteractiveKept(node: SnapshotNode): boolean {
+  if (INTERACTIVE_ROLES.has(node.role)) return true;
+  if (node.role === 'heading') return true;
+  if (node.role === 'generic') {
+    return displayName(node) !== undefined || hasAttrs(node);
+  }
+  return false;
+}
+
 function truncateChars(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value;
   return `${value.slice(0, maxChars)}…`;
@@ -79,7 +112,7 @@ function formatAttrs(node: SnapshotNode): string {
   return out;
 }
 
-function formatName(node: SnapshotNode, tier: Tier): string {
+function formatName(node: SnapshotNode, tier: SnapshotTier): string {
   const name = displayName(node);
   if (name === undefined) return '';
   const normalized = name.replace(/\s+/g, ' ').trim();
@@ -89,7 +122,11 @@ function formatName(node: SnapshotNode, tier: Tier): string {
   return normalized === '' ? '' : ` [${normalized}]`;
 }
 
-function formatLine(node: SnapshotNode, depth: number, tier: Tier): string {
+function formatLine(
+  node: SnapshotNode,
+  depth: number,
+  tier: SnapshotTier,
+): string {
   const role = node.role + (node.level !== undefined ? `(${node.level})` : '');
   const ref = node.ref !== undefined ? ` @${node.ref}` : '';
   return `${INDENT.repeat(depth)}${role}${formatName(node, tier)}${formatAttrs(node)}${ref}`;
@@ -103,14 +140,25 @@ interface Rendered {
 function renderNode(
   node: SnapshotNode,
   depth: number,
-  tier: Tier,
+  tier: SnapshotTier,
+  filter: SnapshotFilter,
   lines: string[],
 ): void {
-  if (!isEmittable(node)) return;
-  if (tier >= 2 && node.role === 'text') return;
-  lines.push(formatLine(node, depth, tier));
+  const suppressedByTier =
+    filter === 'full' && tier >= 2 && node.role === 'text';
+  const emit =
+    !suppressedByTier &&
+    (filter === 'full' ? isEmittable(node) : isInteractiveKept(node));
+  if (emit) {
+    lines.push(formatLine(node, depth, tier));
+  } else if (suppressedByTier) {
+    // Leave a placeholder so a suppressed cell is distinguishable from one
+    // that was genuinely empty.
+    lines.push(`${INDENT.repeat(depth)}${TIER2_TEXT_PLACEHOLDER}`);
+  }
+  const childDepth = emit ? depth + 1 : depth;
   for (const child of node.children) {
-    renderNode(child, depth + 1, tier, lines);
+    renderNode(child, childDepth, tier, filter, lines);
   }
 }
 
@@ -122,7 +170,11 @@ function countNodes(node: SnapshotNode): number {
   return total;
 }
 
-function renderAtTier(root: SnapshotNode, tier: Tier): Rendered {
+function renderAtTier(
+  root: SnapshotNode,
+  tier: SnapshotTier,
+  filter: SnapshotFilter,
+): Rendered {
   const lines: string[] = [];
   // A nameless, attr-less generic root (e.g. document.body) is a pure
   // container: skip its own line so children start at depth 0.
@@ -133,36 +185,41 @@ function renderAtTier(root: SnapshotNode, tier: Tier): Rendered {
     root.ref === undefined;
   if (suppressRoot) {
     for (const child of root.children) {
-      renderNode(child, 0, tier, lines);
+      renderNode(child, 0, tier, filter, lines);
     }
   } else {
-    renderNode(root, 0, tier, lines);
+    renderNode(root, 0, tier, filter, lines);
   }
   return { body: lines.join('\n'), nodesEmitted: lines.length };
 }
 
 export function renderSnapshotTree(
   root: SnapshotNode,
-  maxChars: number = DEFAULT_SNAPSHOT_MAX_CHARS,
+  maxChars?: number,
   meta?: SnapshotMeta,
+  filter: SnapshotFilter = 'interactive',
 ): SnapshotResult {
+  const budget = maxChars ?? defaultMaxCharsForFilter(filter);
   const nodesTotal = countNodes(root);
   const metaLine =
     meta !== undefined ? `Page: ${meta.title} | ${meta.url}` : '';
   const prefix = metaLine === '' ? '' : `${metaLine}\n`;
 
-  let { body, nodesEmitted } = renderAtTier(root, 0);
+  let tier: SnapshotTier = 0;
+  let { body, nodesEmitted } = renderAtTier(root, tier, filter);
   let truncated = false;
 
-  if (body.length > maxChars) {
+  if (body.length > budget) {
     truncated = true;
-    ({ body, nodesEmitted } = renderAtTier(root, 1));
+    tier = 1;
+    ({ body, nodesEmitted } = renderAtTier(root, tier, filter));
   }
-  if (body.length > maxChars) {
-    ({ body, nodesEmitted } = renderAtTier(root, 2));
+  if (body.length > budget) {
+    tier = 2;
+    ({ body, nodesEmitted } = renderAtTier(root, tier, filter));
   }
-  if (body.length > maxChars) {
-    const cut = body.slice(0, maxChars);
+  if (body.length > budget) {
+    const cut = body.slice(0, budget);
     nodesEmitted =
       cut === '' ? 0 : cut.split('\n').length - (cut.endsWith('\n') ? 1 : 0);
     body = `${cut}${HARD_TRUNCATION_MARKER}`;
@@ -173,5 +230,6 @@ export function renderSnapshotTree(
     truncated,
     nodes_total: nodesTotal,
     nodes_emitted: nodesEmitted,
+    tier,
   };
 }

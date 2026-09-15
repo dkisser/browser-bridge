@@ -110,10 +110,32 @@ Global options:
 
 ### Data extraction
 
+- `snapshot [--selector <sel>] [--filter <interactive|full>] [--max-chars <n>]` — compact pseudo-tree of the page's interactive elements (links, buttons, text boxes, checkboxes, combos) and headings, each with a stable `@eN` ref you can pass to `click`/`type`/other commands as a selector. Default filter is `interactive`; `full` additionally includes text runs, images and structural containers.
 - `gettext <selector>` — get text content of an element in the tab specified by `--tab`
 - `gethtml <selector>` — get inner HTML of an element in the tab specified by `--tab`
 - `screenshot` — take a screenshot of the tab specified by `--tab`
 - `pageinfo` — get current URL, title, and tab id for the tab specified by `--tab`
+
+## Snapshot vs. reading: pick the right tool
+
+- **To see what you can ACT ON** — find buttons, links, inputs, headings — use `snapshot`. It answers "what can I click/fill?"
+- **To READ page content** — article body, email subjects, feed or comment listings — use `gettext` on a container selector. It returns plain text and is the right tool for reading; a snapshot is the wrong shape for that job.
+
+### Virtualized lists (Gmail, large tables)
+
+Rows in virtualized lists mount and unmount as you scroll, and different rows may carry different classes (e.g. in Gmail only the expanded unread email keeps the legacy classes). Consequences:
+
+- A class selector in `gettext` may match only some rows or none — "not found" can mean the row is not mounted, not that your selector is wrong.
+- Prefer a whole-page `snapshot` (or `gettext` on a container) over per-row class selectors for these pages.
+
+### Reading truncated output
+
+The snapshot stats line (`[nodes: 40/484 | tier: 0 | truncated: false]`) tells you what happened:
+
+- `tier=1`: text runs are truncated to 40 characters each.
+- `tier=2` (full filter): text runs are replaced in place by `text [text suppressed]` — a cell that looks empty may be suppressed, not actually empty.
+- `tier=2` (interactive filter): text runs are dropped by design, so no placeholders appear.
+- If the output is truncated, narrow it with `--selector` or raise `--max-chars` rather than re-running unchanged.
 
 ## Working with tabs
 
