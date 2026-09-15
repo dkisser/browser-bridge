@@ -1,8 +1,10 @@
+import type { GettextResult } from '@browser-bridge/shared';
 import type { FastMCP } from 'fastmcp';
 import { z } from 'zod';
 import { resolveTargetBrowser } from '../browser-lookup';
 import { sendCommand } from '../command-client';
 import type { ServerContext, ToolContext } from '../tool-context';
+import { TAB_ID_GUIDANCE } from '../tool-descriptions';
 
 export const GettextInputSchema = z.object({
   selector: z.string().min(1),
@@ -29,7 +31,8 @@ export async function executeGettext(
   });
 
   if (result.status !== 'ok') throw new Error(result.error ?? 'gettext failed');
-  return String(result.data ?? '');
+  const data = result.data as GettextResult;
+  return data.text ?? '';
 }
 
 export function registerGettextTool(
@@ -38,7 +41,8 @@ export function registerGettextTool(
 ): void {
   server.addTool({
     name: 'get_text',
-    description: 'Get the text content of an element by CSS selector.',
+    description:
+      'Get the text content of an element by CSS selector. ' + TAB_ID_GUIDANCE,
     parameters: GettextInputSchema,
     execute: async (args, { sessionId }) => {
       const resolvedSessionId = sessionId ?? 'anonymous';

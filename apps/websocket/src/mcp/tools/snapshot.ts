@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { resolveTargetBrowser } from '../browser-lookup';
 import { sendCommand } from '../command-client';
 import type { ServerContext, ToolContext } from '../tool-context';
+import { TAB_ID_GUIDANCE } from '../tool-descriptions';
 
 export const SnapshotInputSchema = z.object({
   selector: z.string().min(1).optional(),
@@ -58,7 +59,8 @@ export function registerSnapshotTool(
       'tables and text runs, with stable @eN refs you can pass to other tools ' +
       'as selectors (e.g. "@e12"). This is the DEFAULT tool for reading and ' +
       'understanding page content. Use get_html only when you need the raw, ' +
-      'unmodified HTML of an element.',
+      'unmodified HTML of an element. ' +
+      TAB_ID_GUIDANCE,
     parameters: SnapshotInputSchema,
     execute: async (args, { sessionId }) => {
       const resolvedSessionId = sessionId ?? 'anonymous';

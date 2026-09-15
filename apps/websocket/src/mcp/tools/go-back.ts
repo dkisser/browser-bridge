@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { resolveTargetBrowser } from '../browser-lookup';
 import { sendCommand } from '../command-client';
 import type { ServerContext, ToolContext } from '../tool-context';
+import { TAB_ID_GUIDANCE } from '../tool-descriptions';
 
 export const GoBackInputSchema = z.object({
   tab_id: z.number().int().min(0),
@@ -37,7 +38,7 @@ export function registerGoBackTool(
 ): void {
   server.addTool({
     name: 'go_back',
-    description: 'Go back one page in the browser history.',
+    description: 'Go back one page in the browser history. ' + TAB_ID_GUIDANCE,
     parameters: GoBackInputSchema,
     execute: async (args, { sessionId }) => {
       const resolvedSessionId = sessionId ?? 'anonymous';

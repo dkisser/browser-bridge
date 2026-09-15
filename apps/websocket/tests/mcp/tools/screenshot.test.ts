@@ -1,57 +1,21 @@
 import { describe, expect, it } from 'bun:test';
-import type { Envelope } from '@browser-bridge/shared';
-import { decode, encode } from '@browser-bridge/websocket/protocol';
+import type { ScreenshotResult } from '@browser-bridge/shared';
 import { createBrowserSessionStore } from '../../../src/mcp/browser-session';
 import { executeScreenshot } from '../../../src/mcp/tools/screenshot';
+import { createMockWsServer } from './mock-ws-server';
+
+const PNG_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
 
 describe('executeScreenshot', () => {
-  it('returns image content', async () => {
-    let lastCommandPayload: unknown;
-    const server = Bun.serve({
-      port: 0,
-      hostname: '127.0.0.1',
-      fetch(req, wsServer) {
-        if (new URL(req.url).pathname === '/ws') {
-          const upgraded = wsServer.upgrade(req);
-          if (!upgraded) return new Response('Upgrade failed', { status: 400 });
-        }
-        return new Response('Not found', { status: 404 });
-      },
-      websocket: {
-        open() {},
-        message(ws, data) {
-          const envelope = decode(data as string) as Envelope;
-          const payload =
-            envelope.type === 'event'
-              ? {
-                  status: 'ok',
-                  data: [
-                    {
-                      browserId: 'a',
-                      userId: 'u',
-                      status: 'online',
-                      lastSeen: Date.now(),
-                    },
-                  ],
-                }
-              : {
-                  status: 'ok',
-                  data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
-                };
-          if (envelope.type === 'command') {
-            lastCommandPayload = envelope.payload;
-          }
-          ws.send(
-            encode('response', payload, {
-              id: envelope.id,
-              browserId: envelope.browserId,
-            }),
-          );
-        },
-        close() {},
-      },
+  it('returns image content with the data-url prefix stripped', async () => {
+    const mockResult: ScreenshotResult = {
+      dataUrl: `data:image/png;base64,${PNG_BASE64}`,
+    };
+    const { server, getLastCommandPayload } = createMockWsServer({
+      status: 'ok',
+      data: mockResult,
     });
-
     const sessions = createBrowserSessionStore(10000);
     try {
       const result = await executeScreenshot(
@@ -65,11 +29,32 @@ describe('executeScreenshot', () => {
 
       expect(result.content).toHaveLength(1);
       expect(result.content[0].type).toBe('image');
-      expect(lastCommandPayload).toEqual({
+      expect(result.content[0].data).toBe(PNG_BASE64);
+      expect(getLastCommandPayload()).toEqual({
         command: 'screenshot',
         tabId: 42,
         params: { fullPage: true, tabId: 42 },
       });
+    } finally {
+      server.stop();
+    }
+  });
+
+  it('throws when the browser returns no image data', async () => {
+    const mockResult: ScreenshotResult = { dataUrl: '' };
+    const { server } = createMockWsServer({ status: 'ok', data: mockResult });
+    const sessions = createBrowserSessionStore(10000);
+    try {
+      await expect(
+        executeScreenshot(
+          {
+            sessionId: 's1',
+            sessions,
+            websocketUrl: `ws://127.0.0.1:${server.port}/ws`,
+          },
+          { tab_id: 42 },
+        ),
+      ).rejects.toThrow('browser returned no image data');
     } finally {
       server.stop();
     }

@@ -1,12 +1,15 @@
 import {
   DEFAULT_SNAPSHOT_MAX_CHARS,
+  type DomCommandResult,
+  type DomCommandType,
   renderSnapshotTree,
   type SnapshotNode,
   type SnapshotRole,
+  type WaitElementResult,
 } from '@browser-bridge/shared';
 
 interface DomCommand {
-  command: string;
+  command: DomCommandType;
   tabId?: number;
   params: Record<string, unknown>;
 }
@@ -248,14 +251,16 @@ function normalizeMaxChars(value: unknown): number {
     : DEFAULT_SNAPSHOT_MAX_CHARS;
 }
 
-function executeCommand(payload: DomCommand): unknown {
+function executeCommand(
+  payload: DomCommand,
+): DomCommandResult | Promise<WaitElementResult> {
   const { command, params } = payload;
 
   switch (command) {
     case 'click': {
       const el = resolveSelector(params.selector as string);
       (el as HTMLElement).click();
-      return { clicked: params.selector };
+      return { clicked: params.selector as string };
     }
 
     case 'type': {
@@ -265,7 +270,7 @@ function executeCommand(payload: DomCommand): unknown {
       input.value = params.text as string;
       input.dispatchEvent(new Event('input', { bubbles: true }));
       input.dispatchEvent(new Event('change', { bubbles: true }));
-      return { typed: params.text };
+      return { typed: params.text as string };
     }
 
     case 'select': {
@@ -273,7 +278,7 @@ function executeCommand(payload: DomCommand): unknown {
       const select = el as HTMLSelectElement;
       select.value = params.value as string;
       select.dispatchEvent(new Event('change', { bubbles: true }));
-      return { selected: params.value };
+      return { selected: params.value as string };
     }
 
     case 'scroll': {
@@ -290,7 +295,7 @@ function executeCommand(payload: DomCommand): unknown {
       const el = resolveSelector(params.selector as string);
       el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
       el.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
-      return { hovered: params.selector };
+      return { hovered: params.selector as string };
     }
 
     case 'gettext': {
@@ -339,7 +344,7 @@ function executeCommand(payload: DomCommand): unknown {
         return { found: true, selector };
       }
 
-      return new Promise((resolve, reject) => {
+      return new Promise<WaitElementResult>((resolve, reject) => {
         const timer = setTimeout(() => {
           observer.disconnect();
           reject(

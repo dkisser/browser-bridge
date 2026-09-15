@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { resolveTargetBrowser } from '../browser-lookup';
 import { sendCommand } from '../command-client';
 import type { ServerContext, ToolContext } from '../tool-context';
+import { TAB_ID_GUIDANCE } from '../tool-descriptions';
 
 export const ClickInputSchema = z.object({
   selector: z.string().min(1),
@@ -38,7 +39,9 @@ export function registerClickTool(
 ): void {
   server.addTool({
     name: 'click',
-    description: 'Click an element in the selected browser by CSS selector.',
+    description:
+      'Click an element in the selected browser by CSS selector. ' +
+      TAB_ID_GUIDANCE,
     parameters: ClickInputSchema,
     execute: async (args, { sessionId }) => {
       const resolvedSessionId = sessionId ?? 'anonymous';

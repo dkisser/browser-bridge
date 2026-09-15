@@ -5,3 +5,7 @@ dist/
 .superpowers/
 .superpowers/
 .worktrees/
+
+# Local machine / agent configuration
+.mcp.json
+.agents/

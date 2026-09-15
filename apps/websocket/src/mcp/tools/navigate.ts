@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { resolveTargetBrowser } from '../browser-lookup';
 import { sendCommand } from '../command-client';
 import type { ServerContext, ToolContext } from '../tool-context';
+import { TAB_ID_GUIDANCE } from '../tool-descriptions';
 
 export const NavigateInputSchema = z.object({
   url: z.string().url(),
@@ -44,7 +45,9 @@ export function registerNavigateTool(
 ): void {
   server.addTool({
     name: 'navigate',
-    description: 'Navigate a specific tab of the selected browser to a URL.',
+    description:
+      'Navigate a specific tab of the selected browser to a URL. ' +
+      TAB_ID_GUIDANCE,
     parameters: NavigateInputSchema,
     execute: async (args, { sessionId }) => {
       const resolvedSessionId = sessionId ?? 'anonymous';

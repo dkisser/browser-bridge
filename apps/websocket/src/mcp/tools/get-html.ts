@@ -1,8 +1,10 @@
+import type { GethtmlResult } from '@browser-bridge/shared';
 import type { FastMCP } from 'fastmcp';
 import { z } from 'zod';
 import { resolveTargetBrowser } from '../browser-lookup';
 import { sendCommand } from '../command-client';
 import type { ServerContext, ToolContext } from '../tool-context';
+import { TAB_ID_GUIDANCE } from '../tool-descriptions';
 
 export const GethtmlInputSchema = z.object({
   selector: z.string().min(1),
@@ -29,7 +31,8 @@ export async function executeGethtml(
   });
 
   if (result.status !== 'ok') throw new Error(result.error ?? 'gethtml failed');
-  return String(result.data ?? '');
+  const data = result.data as GethtmlResult;
+  return data.html;
 }
 
 export function registerGethtmlTool(
@@ -41,7 +44,8 @@ export function registerGethtmlTool(
     description:
       'Get the raw innerHTML of an element by CSS selector. Escape hatch ' +
       'for untouched markup — prefer the snapshot tool for reading and ' +
-      'understanding page content.',
+      'understanding page content. ' +
+      TAB_ID_GUIDANCE,
     parameters: GethtmlInputSchema,
     execute: async (args, { sessionId }) => {
       const resolvedSessionId = sessionId ?? 'anonymous';

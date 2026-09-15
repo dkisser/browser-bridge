@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { resolveTargetBrowser } from '../browser-lookup';
 import { sendCommand } from '../command-client';
 import type { ServerContext, ToolContext } from '../tool-context';
+import { TAB_ID_GUIDANCE } from '../tool-descriptions';
 
 export const RefreshInputSchema = z.object({
   tab_id: z.number().int().min(0),
@@ -37,7 +38,7 @@ export function registerRefreshTool(
 ): void {
   server.addTool({
     name: 'refresh',
-    description: 'Refresh the current page.',
+    description: 'Refresh the current page. ' + TAB_ID_GUIDANCE,
     parameters: RefreshInputSchema,
     execute: async (args, { sessionId }) => {
       const resolvedSessionId = sessionId ?? 'anonymous';

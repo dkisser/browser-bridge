@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { resolveTargetBrowser } from '../browser-lookup';
 import { sendCommand } from '../command-client';
 import type { ServerContext, ToolContext } from '../tool-context';
+import { TAB_ID_GUIDANCE } from '../tool-descriptions';
 
 export const TabCloseInputSchema = z.object({
   tab_id: z.number().int().min(0),
@@ -38,7 +39,8 @@ export function registerTabCloseTool(
 ): void {
   server.addTool({
     name: 'tab_close',
-    description: 'Close a tab in the selected browser by tab ID.',
+    description:
+      'Close a tab in the selected browser by tab ID. ' + TAB_ID_GUIDANCE,
     parameters: TabCloseInputSchema,
     execute: async (args, { sessionId }) => {
       const resolvedSessionId = sessionId ?? 'anonymous';

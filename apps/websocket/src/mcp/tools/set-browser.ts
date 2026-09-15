@@ -21,7 +21,7 @@ export function registerSetBrowserTool(
   server.addTool({
     name: 'set_browser',
     description:
-      'Explicitly choose which connected browser to control for this MCP session.',
+      'Explicitly choose which connected browser to control for this MCP session. Requires a browserId obtained from list_browsers.',
     parameters: SetBrowserInputSchema,
     execute: async (args, { sessionId }) => {
       const resolvedSessionId = sessionId ?? 'anonymous';

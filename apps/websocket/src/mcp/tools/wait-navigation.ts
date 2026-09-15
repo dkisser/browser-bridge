@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { resolveTargetBrowser } from '../browser-lookup';
 import { sendCommand } from '../command-client';
 import type { ServerContext, ToolContext } from '../tool-context';
+import { TAB_ID_GUIDANCE } from '../tool-descriptions';
 
 export const WaitNavigationInputSchema = z.object({
   tab_id: z.number().int().min(0),
@@ -38,7 +39,9 @@ export function registerWaitNavigationTool(
 ): void {
   server.addTool({
     name: 'wait_navigation',
-    description: 'Wait for navigation to complete in the selected browser.',
+    description:
+      'Wait for navigation to complete in the selected browser. ' +
+      TAB_ID_GUIDANCE,
     parameters: WaitNavigationInputSchema,
     execute: async (args, { sessionId }) => {
       const resolvedSessionId = sessionId ?? 'anonymous';

@@ -3,6 +3,8 @@
 // Commands arrive from offscreen via chrome.runtime.sendMessage, are executed here
 // using Chrome APIs, and responses are returned via the sendResponse callback.
 
+import type { CommandResultMap, CommandType } from '@browser-bridge/shared';
+
 const OFFSCREEN_DOCUMENT_URL = 'offscreen.html';
 
 let _wsConnected = false;
@@ -43,7 +45,7 @@ interface CommandMessage {
   type: 'command';
   browserId: string;
   payload: {
-    command: string;
+    command: CommandType;
     tabId: number;
     params: Record<string, unknown>;
   };
@@ -60,7 +62,9 @@ async function queryOffscreenStatus(): Promise<boolean> {
   }
 }
 
-async function handleCommand(msg: CommandMessage): Promise<unknown> {
+async function handleCommand(
+  msg: CommandMessage,
+): Promise<CommandResultMap[CommandType]> {
   const { payload } = msg;
   const { command, tabId, params } = payload;
 
@@ -163,6 +167,11 @@ async function handleCommand(msg: CommandMessage): Promise<unknown> {
       const dataUrl = await chrome.tabs.captureVisibleTab(activeTab.windowId, {
         format: 'png',
       });
+      if (!dataUrl) {
+        throw new Error(
+          'Unable to capture screenshot: tab must be active in a visible window',
+        );
+      }
       return { dataUrl };
     }
 
@@ -203,7 +212,10 @@ async function handleCommand(msg: CommandMessage): Promise<unknown> {
     case 'gethtml':
     case 'snapshot':
     case 'wait:element':
-      return await sendToContentScript(tabId, payload);
+      return (await sendToContentScript(
+        tabId,
+        payload,
+      )) as CommandResultMap[typeof command];
 
     default:
       throw new Error(`Unknown command: ${command}`);

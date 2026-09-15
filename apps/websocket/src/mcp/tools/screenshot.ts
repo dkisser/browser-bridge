@@ -1,8 +1,10 @@
+import type { ScreenshotResult } from '@browser-bridge/shared';
 import type { FastMCP } from 'fastmcp';
 import { z } from 'zod';
 import { resolveTargetBrowser } from '../browser-lookup';
 import { sendCommand } from '../command-client';
 import type { ServerContext, ToolContext } from '../tool-context';
+import { TAB_ID_GUIDANCE } from '../tool-descriptions';
 
 export const ScreenshotInputSchema = z.object({
   fullPage: z.boolean().optional(),
@@ -32,10 +34,14 @@ export async function executeScreenshot(
 
   if (result.status !== 'ok')
     throw new Error(result.error ?? 'Screenshot failed');
-  const data = typeof result.data === 'string' ? result.data : '';
+  const data = result.data as ScreenshotResult;
+  const base64 = data.dataUrl.replace(/^data:image\/[a-zA-Z]+;base64,/, '');
+  if (!base64) {
+    throw new Error('Screenshot failed: browser returned no image data');
+  }
 
   return {
-    content: [{ type: 'image', data, mimeType: 'image/png' }],
+    content: [{ type: 'image', data: base64, mimeType: 'image/png' }],
   };
 }
 
@@ -46,7 +52,8 @@ export function registerScreenshotTool(
   server.addTool({
     name: 'screenshot',
     description:
-      'Take a screenshot of the selected browser.For getting html or text content, use the get_html or get_text tools first.',
+      'Take a screenshot of the selected browser. For getting html or text content, use the get_html or get_text tools first. ' +
+      TAB_ID_GUIDANCE,
     parameters: ScreenshotInputSchema,
     execute: async (args, { sessionId }) => {
       const resolvedSessionId = sessionId ?? 'anonymous';

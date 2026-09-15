@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { resolveTargetBrowser } from '../browser-lookup';
 import { sendCommand } from '../command-client';
 import type { ServerContext, ToolContext } from '../tool-context';
+import { TAB_ID_GUIDANCE } from '../tool-descriptions';
 
 export const ScrollInputSchema = z.object({
   x: z.number().int(),
@@ -45,7 +46,9 @@ export function registerScrollTool(
 ): void {
   server.addTool({
     name: 'scroll',
-    description: 'Scroll the page or an element in the selected browser.',
+    description:
+      'Scroll the page or an element in the selected browser. ' +
+      TAB_ID_GUIDANCE,
     parameters: ScrollInputSchema,
     execute: async (args, { sessionId }) => {
       const resolvedSessionId = sessionId ?? 'anonymous';
