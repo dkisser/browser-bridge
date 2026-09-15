@@ -4,6 +4,21 @@ All notable changes to Browser Bridge are documented here. The format follows [K
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-15
+
+### Added
+- `snapshot` command that captures the page as a DOM pseudo-tree with stable element refs, exposed via both the CLI and the MCP server. Agents can read page structure and target elements precisely without fetching full HTML. Design recorded in `docs/adr/0001-snapshot-pseudo-tree.md`.
+- Comprehensive tests for the CLI and local-proxy components.
+- Draft launch post under `docs/hn-launch-post.md`.
+
+### Changed
+- Test suites reorganized into per-app `tests/` directories (previously colocated `src/__tests__`).
+- README gained CLI and MCP usage sections; the glossary in CONTEXT.md now defines the Inbound adapter.
+
+### Fixed
+- Regenerated `bun.lockb` for bun 1.3+ resolution. The committed lockfile failed `bun install --frozen-lockfile` on current bun, which would have broken CI and release workflows that pin `bun-version: latest`.
+- `ManagedClient` tests now await socket close after `dispose()`; bun 1.4 completes the WebSocket closing handshake asynchronously, so `readyState` is no longer `CLOSED` synchronously.
+
 ## [0.0.8] - 2026-07-07
 
 ### Added
