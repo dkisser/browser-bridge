@@ -165,9 +165,6 @@ function collectAttrs(
   if (role === 'link') {
     const href = el.getAttribute('href');
     if (href) attrs.href = href;
-  } else if (role === 'img') {
-    const src = el.getAttribute('src');
-    if (src) attrs.src = src;
   }
   if (role === 'textbox' || role === 'checkbox' || role === 'combobox') {
     const name = el.getAttribute('name');
@@ -204,6 +201,7 @@ function walkElement(
   el: Element,
   depth: number,
   state: WalkState,
+  ancestorName?: string,
 ): SnapshotNode | null {
   if (state.visited >= MAX_VISITED_NODES) {
     state.truncated = true;
@@ -224,20 +222,23 @@ function walkElement(
   }
 
   const children: SnapshotNode[] = [];
-  // These roles take their name from their own text content; emitting the
-  // same runs again as text children would duplicate them.
-  const suppressTextRuns =
-    role === 'heading' || role === 'link' || role === 'button';
+  // Carry the nearest named ancestor down the walk: a text run that is a
+  // substring of that name is already represented by it (e.g. the runs
+  // inside a named link or button, including ones wrapped in spans), so
+  // emitting them again would duplicate content.
+  const inheritedName = name ?? ancestorName;
   for (const child of Array.from(el.childNodes)) {
     if (state.truncated) break;
     if (child.nodeType === Node.ELEMENT_NODE) {
       const childEl = child as Element;
       if (SKIP_SUBTREE_TAGS.has(childEl.tagName)) continue;
-      const childNode = walkElement(childEl, depth + 1, state);
+      const childNode = walkElement(childEl, depth + 1, state, inheritedName);
       if (childNode) children.push(childNode);
-    } else if (child.nodeType === Node.TEXT_NODE && !suppressTextRuns) {
+    } else if (child.nodeType === Node.TEXT_NODE) {
       const run = collapseWhitespace(child.textContent ?? '');
-      if (run !== '') children.push({ role: 'text', text: run, children: [] });
+      if (run === '') continue;
+      if (inheritedName !== undefined && inheritedName.includes(run)) continue;
+      children.push({ role: 'text', text: run, children: [] });
     }
   }
 

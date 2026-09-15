@@ -33,7 +33,7 @@ describe('renderSnapshotTree', () => {
     expect(result.snapshot).toContain('heading(1) [Welcome]');
   });
 
-  it('formats link href and img src as attrs', () => {
+  it('formats link href as attr and img line with alt name and ref', () => {
     const tree = node({
       role: 'generic',
       children: [
@@ -43,14 +43,14 @@ describe('renderSnapshotTree', () => {
           attrs: { href: '/docs' },
           ref: 'e1',
         }),
-        node({ role: 'img', attrs: { src: 'logo.png' }, ref: 'e2' }),
+        node({ role: 'img', name: 'Logo', ref: 'e2' }),
       ],
     });
     const result = renderSnapshotTree(tree, 3000, META, 'full');
     const [meta, link, img] = result.snapshot.split('\n');
     expect(meta).toBe('Page: Example | https://example.com');
     expect(link).toBe('link [Docs] href="/docs" @e1');
-    expect(img).toBe('img src="logo.png" @e2');
+    expect(img).toBe('img [Logo] @e2');
   });
 
   it('indents two spaces per level', () => {
@@ -260,6 +260,94 @@ describe('renderSnapshotTree', () => {
       expect(result.snapshot).toBe('Page: Example | https://example.com');
       expect(result.nodes_emitted).toBe(0);
       expect(result.snapshot).not.toContain('text suppressed');
+    });
+  });
+
+  describe('full filter: wrapper generic collapsing', () => {
+    it('collapses chains of single-child nameless generics', () => {
+      const tree = node({
+        role: 'generic',
+        children: [
+          node({
+            role: 'generic',
+            children: [
+              node({
+                role: 'generic',
+                children: [node({ role: 'button', name: 'OK' })],
+              }),
+            ],
+          }),
+        ],
+      });
+      const result = renderSnapshotTree(tree, 3000, META, 'full');
+      expect(result.snapshot).toBe(
+        ['Page: Example | https://example.com', 'button [OK]'].join('\n'),
+      );
+      expect(result.nodes_total).toBe(4);
+      expect(result.nodes_emitted).toBe(1);
+    });
+
+    it('keeps ref-bearing generics addressable', () => {
+      const tree = node({
+        role: 'generic',
+        children: [
+          node({
+            role: 'generic',
+            ref: 'e5',
+            children: [node({ role: 'button', name: 'OK' })],
+          }),
+        ],
+      });
+      const result = renderSnapshotTree(tree, 3000, META, 'full');
+      expect(result.snapshot).toBe(
+        ['Page: Example | https://example.com', 'generic @e5', '  button [OK]'].join(
+          '\n',
+        ),
+      );
+    });
+
+    it('keeps named generics and multi-child generics as structure', () => {
+      const tree = node({
+        role: 'generic',
+        children: [
+          node({
+            role: 'generic',
+            name: 'Inbox',
+            children: [node({ role: 'button', name: 'Open' })],
+          }),
+          node({
+            role: 'generic',
+            children: [text('one'), text('two')],
+          }),
+        ],
+      });
+      const result = renderSnapshotTree(tree, 3000, META, 'full');
+      expect(result.snapshot).toBe(
+        [
+          'Page: Example | https://example.com',
+          'generic [Inbox]',
+          '  button [Open]',
+          'generic',
+          '  text [one]',
+          '  text [two]',
+        ].join('\n'),
+      );
+    });
+
+    it('does not collapse wrappers in the interactive filter', () => {
+      const tree = node({
+        role: 'generic',
+        children: [
+          node({
+            role: 'generic',
+            children: [node({ role: 'button', name: 'OK' })],
+          }),
+        ],
+      });
+      const result = renderSnapshotTree(tree, 3000, META, 'interactive');
+      expect(result.snapshot).toBe(
+        ['Page: Example | https://example.com', 'button [OK]'].join('\n'),
+      );
     });
   });
 });

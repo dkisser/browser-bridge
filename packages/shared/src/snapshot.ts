@@ -170,6 +170,25 @@ function countNodes(node: SnapshotNode): number {
   return total;
 }
 
+// Full filter only: a nameless, attr-less, ref-less generic with exactly one
+// child is a pure wrapper — its line carries no information. Replace it with
+// its child so chains of layout divs collapse into the content they wrap.
+// Refs are never collapsed away: an addressable line always survives.
+function collapseWrapperGenerics(node: SnapshotNode): SnapshotNode {
+  const children = node.children.map(collapseWrapperGenerics);
+  let current: SnapshotNode = { ...node, children };
+  while (
+    current.role === 'generic' &&
+    displayName(current) === undefined &&
+    !hasAttrs(current) &&
+    current.ref === undefined &&
+    current.children.length === 1
+  ) {
+    current = current.children[0];
+  }
+  return current;
+}
+
 function renderAtTier(
   root: SnapshotNode,
   tier: SnapshotTier,
@@ -201,22 +220,23 @@ export function renderSnapshotTree(
 ): SnapshotResult {
   const budget = maxChars ?? defaultMaxCharsForFilter(filter);
   const nodesTotal = countNodes(root);
+  const tree = filter === 'full' ? collapseWrapperGenerics(root) : root;
   const metaLine =
     meta !== undefined ? `Page: ${meta.title} | ${meta.url}` : '';
   const prefix = metaLine === '' ? '' : `${metaLine}\n`;
 
   let tier: SnapshotTier = 0;
-  let { body, nodesEmitted } = renderAtTier(root, tier, filter);
+  let { body, nodesEmitted } = renderAtTier(tree, tier, filter);
   let truncated = false;
 
   if (body.length > budget) {
     truncated = true;
     tier = 1;
-    ({ body, nodesEmitted } = renderAtTier(root, tier, filter));
+    ({ body, nodesEmitted } = renderAtTier(tree, tier, filter));
   }
   if (body.length > budget) {
     tier = 2;
-    ({ body, nodesEmitted } = renderAtTier(root, tier, filter));
+    ({ body, nodesEmitted } = renderAtTier(tree, tier, filter));
   }
   if (body.length > budget) {
     const cut = body.slice(0, budget);
