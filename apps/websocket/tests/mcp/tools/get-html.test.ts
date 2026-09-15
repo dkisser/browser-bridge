@@ -23,4 +23,24 @@ describe('executeGethtml', () => {
       server.stop();
     }
   });
+
+  it('rejects whole-page-sized html instead of dumping it into context', async () => {
+    const mockResult: GethtmlResult = { html: 'x'.repeat(100_001) };
+    const { server } = createMockWsServer({ status: 'ok', data: mockResult });
+    const sessions = createBrowserSessionStore(10000);
+    try {
+      await expect(
+        executeGethtml(
+          {
+            sessionId: 's1',
+            sessions,
+            websocketUrl: `ws://127.0.0.1:${server.port}/ws`,
+          },
+          { tab_id: 42, selector: 'main' },
+        ),
+      ).rejects.toThrow(/100001 chars/);
+    } finally {
+      server.stop();
+    }
+  });
 });

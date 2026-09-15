@@ -33,6 +33,17 @@
         "The plan falls back to `screenshot` only after text extraction fails or is unclear.",
         "The plan does not take a screenshot unconditionally."
       ]
+    },
+    {
+      "id": 3,
+      "prompt": "You ran gettext with selector 'article' on a news article page and got back: No element found for \"article\". What do you do next?",
+      "expected_output": "A plan that stops guessing, takes a snapshot (or re-runs with a candidate container from the error) to find the real container, then reads with that.",
+      "files": [],
+      "expectations": [
+        "The plan takes a snapshot or uses the candidate containers from the error instead of guessing alternative selectors.",
+        "The plan does not try multiple guessed selectors one after another.",
+        "The plan does not use get_html on whole-page containers (main, body, #content)."
+      ]
     }
   ]
 }

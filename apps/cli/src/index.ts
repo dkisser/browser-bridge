@@ -151,7 +151,9 @@ program
 // DOM interaction
 program
   .command('click <selector>')
-  .description('Click an element')
+  .description(
+    'Click an element. The selector must exist on the page — run snapshot first if unsure.'
+  )
   .action(async (selector: string) => {
     const global = getGlobalOptions(program.opts());
     await dispatchCommand(global, 'click', { selector });
@@ -159,7 +161,9 @@ program
 
 program
   .command('type <selector> <text>')
-  .description('Type text into an element')
+  .description(
+    'Type text into an element. The selector must exist on the page — run snapshot first if unsure.'
+  )
   .action(async (selector: string, text: string) => {
     const global = getGlobalOptions(program.opts());
     await dispatchCommand(global, 'type', { selector, text });
@@ -167,7 +171,9 @@ program
 
 program
   .command('select <selector> <value>')
-  .description('Select an option in a dropdown')
+  .description(
+    'Select an option in a dropdown. The selector must exist on the page — run snapshot first if unsure.'
+  )
   .action(async (selector: string, value: string) => {
     const global = getGlobalOptions(program.opts());
     await dispatchCommand(global, 'select', { selector, value });
@@ -187,7 +193,9 @@ program
 
 program
   .command('hover <selector>')
-  .description('Hover over an element')
+  .description(
+    'Hover over an element. The selector must exist on the page — run snapshot first if unsure.'
+  )
   .action(async (selector: string) => {
     const global = getGlobalOptions(program.opts());
     await dispatchCommand(global, 'hover', { selector });
@@ -196,7 +204,9 @@ program
 // Data extraction
 program
   .command('gettext <selector>')
-  .description('Get text content of an element')
+  .description(
+    'Get text content of an element. The selector must exist on the page — run snapshot first if unsure.'
+  )
   .action(async (selector: string) => {
     const global = getGlobalOptions(program.opts());
     await dispatchCommand(global, 'gettext', { selector });
@@ -204,7 +214,9 @@ program
 
 program
   .command('gethtml <selector>')
-  .description('Get inner HTML of an element')
+  .description(
+    'Get inner HTML of an element. The selector must exist on the page — run snapshot first if unsure.'
+  )
   .action(async (selector: string) => {
     const global = getGlobalOptions(program.opts());
     await dispatchCommand(global, 'gethtml', { selector });
@@ -283,7 +295,9 @@ program
 // Wait / utility
 program
   .command('wait:element <selector>')
-  .description('Wait for an element to appear')
+  .description(
+    'Wait for an element to appear. Pick the selector from a snapshot of this page — a guessed selector may never match.'
+  )
   .option('--timeout <ms>', 'Timeout in ms', '10000')
   .action(async (selector: string, opts: Record<string, unknown>) => {
     const global = getGlobalOptions(program.opts());

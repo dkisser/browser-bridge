@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { resolveTargetBrowser } from '../browser-lookup';
 import { sendCommand } from '../command-client';
 import type { ServerContext, ToolContext } from '../tool-context';
-import { TAB_ID_GUIDANCE } from '../tool-descriptions';
+import { SELECTOR_GUIDANCE, TAB_ID_GUIDANCE } from '../tool-descriptions';
 
 export const SelectInputSchema = z.object({
   selector: z.string().min(1),
@@ -42,6 +42,8 @@ export function registerSelectTool(
     name: 'select',
     description:
       'Select an option from a dropdown in the selected browser by CSS selector. ' +
+      SELECTOR_GUIDANCE +
+      ' ' +
       TAB_ID_GUIDANCE,
     parameters: SelectInputSchema,
     execute: async (args, { sessionId }) => {

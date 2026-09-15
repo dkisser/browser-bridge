@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { resolveTargetBrowser } from '../browser-lookup';
 import { sendCommand } from '../command-client';
 import type { ServerContext, ToolContext } from '../tool-context';
-import { TAB_ID_GUIDANCE } from '../tool-descriptions';
+import { SELECTOR_GUIDANCE, TAB_ID_GUIDANCE } from '../tool-descriptions';
 
 export const TypeInputSchema = z.object({
   selector: z.string().min(1),
@@ -48,6 +48,8 @@ export function registerTypeTool(
     name: 'type',
     description:
       'Type text into an input element in the selected browser. ' +
+      SELECTOR_GUIDANCE +
+      ' ' +
       TAB_ID_GUIDANCE,
     parameters: TypeInputSchema,
     execute: async (args, { sessionId }) => {

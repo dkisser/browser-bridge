@@ -1,5 +1,6 @@
 import {
   type GettextResult,
+  MAX_READ_RESULT_CHARS,
   selectorMatchedButEmptyMessage,
 } from '@browser-bridge/shared';
 import type { FastMCP } from 'fastmcp';
@@ -7,7 +8,7 @@ import { z } from 'zod';
 import { resolveTargetBrowser } from '../browser-lookup';
 import { sendCommand } from '../command-client';
 import type { ServerContext, ToolContext } from '../tool-context';
-import { TAB_ID_GUIDANCE } from '../tool-descriptions';
+import { SELECTOR_GUIDANCE, TAB_ID_GUIDANCE } from '../tool-descriptions';
 
 export const GettextInputSchema = z.object({
   selector: z.string().min(1),
@@ -39,6 +40,14 @@ export async function executeGettext(
   if (text.trim() === '') {
     return selectorMatchedButEmptyMessage(args.selector);
   }
+  if (text.length > MAX_READ_RESULT_CHARS) {
+    throw new Error(
+      `get_text matched ${text.length} chars — almost certainly ` +
+        'whole-page text (nav, ads, sidebars included), not the ' +
+        'content you want. Take a snapshot to find the content ' +
+        'container, then narrow with a selector.',
+    );
+  }
   return text;
 }
 
@@ -49,7 +58,10 @@ export function registerGettextTool(
   server.addTool({
     name: 'get_text',
     description:
-      'Get the text content of an element by CSS selector. ' + TAB_ID_GUIDANCE,
+      'Get the text content of an element by CSS selector. ' +
+      SELECTOR_GUIDANCE +
+      ' ' +
+      TAB_ID_GUIDANCE,
     parameters: GettextInputSchema,
     execute: async (args, { sessionId }) => {
       const resolvedSessionId = sessionId ?? 'anonymous';

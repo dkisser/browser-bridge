@@ -11,7 +11,7 @@ The compact representation of a web page's action surface — an indented pseudo
 _Avoid_: fetch, page fetch, scrape, accessibility snapshot
 
 **Page text**:
-The plain-text content of a page or an element, extracted on demand. The reading counterpart to the Snapshot: when the task is "what does the page say" rather than "what can I click", this is the primary source.
+The rendered plain-text content of a page or an element, extracted on demand: line breaks follow what is on screen, hidden content is excluded. The reading counterpart to the Snapshot: when the task is "what does the page say" rather than "what can I click", this is the primary source. Deliberately plain text, not markdown — structure for acting lives in the Snapshot.
 _Avoid_: fetch, scrape, dump, text snapshot
 
 **Pseudo-tree**:

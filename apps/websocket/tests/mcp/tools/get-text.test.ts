@@ -68,4 +68,24 @@ describe('executeGettext', () => {
       }
     }
   });
+
+  it('rejects whole-page-sized text instead of dumping it into context', async () => {
+    const mockResult: GettextResult = { text: 'x'.repeat(100_001) };
+    const { server } = createMockWsServer({ status: 'ok', data: mockResult });
+    const sessions = createBrowserSessionStore(10000);
+    try {
+      await expect(
+        executeGettext(
+          {
+            sessionId: 's1',
+            sessions,
+            websocketUrl: `ws://127.0.0.1:${server.port}/ws`,
+          },
+          { tab_id: 42, selector: 'body' },
+        ),
+      ).rejects.toThrow(/100001 chars/);
+    } finally {
+      server.stop();
+    }
+  });
 });

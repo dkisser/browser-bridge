@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import {
   selectorMatchedButEmptyMessage,
   selectorNotFoundMessage,
+  textContainerCandidatesHint,
 } from '../src/messages';
 
 describe('selectorNotFoundMessage', () => {
@@ -18,6 +19,31 @@ describe('selectorNotFoundMessage', () => {
 
     expect(message).toContain('virtualized');
     expect(message).toContain('snapshot');
+  });
+
+  it('tells the caller how to recover: snapshot, ref, and tab check', () => {
+    const message = selectorNotFoundMessage('article');
+
+    expect(message).toContain('@eN');
+    expect(message).toContain('tab_id');
+  });
+});
+
+describe('textContainerCandidatesHint', () => {
+  it('lists candidates as a numbered block with a re-run prompt', () => {
+    const hint = textContainerCandidatesHint([
+      '#main-content (~8.4K chars)',
+      'div.post__body (~8.1K chars)',
+    ]);
+
+    expect(hint).toContain('Largest text containers on this page:');
+    expect(hint).toContain('1. #main-content (~8.4K chars)');
+    expect(hint).toContain('2. div.post__body (~8.1K chars)');
+    expect(hint).toContain('Re-run with one of these selectors.');
+  });
+
+  it('returns empty string when there is nothing to suggest', () => {
+    expect(textContainerCandidatesHint([])).toBe('');
   });
 });
 

@@ -137,6 +137,20 @@ The snapshot stats line (`[nodes: 40/484 | tier: 0 | truncated: false]`) tells y
 - `tier=2` (interactive filter): text runs are dropped by design, so no placeholders appear.
 - If the output is truncated, narrow it with `--selector` or raise `--max-chars` rather than re-running unchanged.
 
+### Confirm selectors before using them
+
+`gettext`/`gethtml` find nothing unless the selector exists in the DOM, and many sites (e.g. eastmoney, most portal CMSs) wrap article bodies in plain `<div>` containers instead of semantic tags like `<article>`. The same applies to acting on elements (`click`, `type`, `select`, `hover`, `wait:element`): a guessed selector either misses or waits forever. Do not pass a semantic guess (`article`, `.content`, `.post`) on a page you have not inspected. Before acting on an unfamiliar page:
+
+1. `snapshot --filter full` to see what is actually rendered — a `@eN` ref from the snapshot is the most reliable selector.
+2. `gettext` on the confirmed container (or that `@eN` ref).
+
+For scraping workflows (news articles, listings) the robust sequence is: navigate → `wait:navigation` → snapshot → `gettext`. If a link opened the target in a new tab, run `tab:list` and use the new tab's id first — the original tab still shows the old page.
+
+Two failure anti-patterns, both observed in the wild:
+
+- **Shotgun guessing** — after one failed selector, immediately trying `.entry-content`, `.article-body`, `.post-content`, ... One failure means you have no information about the DOM; stop and observe. The not-found error already lists the page's largest text containers — re-run with one of those, or take a snapshot. Never guess a second selector without new information.
+- **Greedy compensation** — after failed precise reads, grabbing whole-page data with `get_html main` / `get_html #content` / `get_text body`. That returns hundreds of KB of nav, ads, and sidebars that drowns the content, and the MCP server rejects text results over 100K chars anyway. Snapshot, find the container, narrow.
+
 ## Working with tabs
 
 Every page-level command (`navigate`, `click`, `gettext`, `screenshot`, etc.) requires a `--tab <id>` argument. The workflow is:

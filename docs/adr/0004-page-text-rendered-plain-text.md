@@ -1,0 +1,17 @@
+# Page text stays rendered plain text; HTML→Markdown conversion, if ever built, lives extension-side
+
+The Google News incident: `get_text` on a news-results page returned one mashed run — `纽约时报中文网展开中国国安部长：…6 小时前联合早报展开…` — because the extension returned `el.textContent`: no line breaks anywhere, and a `<style>` block's CSS leaked into the text. Fixing it forced the larger question: what is Page text for, and should the job go to a mature HTML→Markdown library (Turndown being the default choice) instead? Markdown conversion works on HTML source, not on the rendered page — CSS-driven visual line breaks don't exist in the source, and `display:none` noise is invisible to a converter without preprocessing — while `innerText` is precisely the "what a human sees" signal. We decided `get_text` returns rendered plain text (`innerText`, with a tag-based line-per-block fallback for SVG/detached roots): the MCP agent and the CLI human are both audiences, line breaks are near-free structure for both, and markdown syntax would be token overhead for an agent that acts via refs/selectors and already sees link hrefs in Snapshots. Markdown conversion itself is deferred; if a real need appears ("save this article as markdown"), it becomes a new `getmarkdown` DOM command in the extension — Turndown bundled in the content script, hidden subtrees stripped before conversion — not a server-side conversion stage.
+
+## Considered Options
+
+- **Turndown (or node-html-markdown) as get_text**: mature and cheap to add, rejected as get_text's contract — it converts HTML source, so rendered line breaks are lost and hidden noise stays unless the DOM is preprocessed, and the md syntax is tokens the agent cannot act on.
+- **Status quo (`textContent`)**: rejected by the incident above; unusable for humans and agents alike, since record boundaries (source / title / time) blur into one run for both.
+- **Server-side conversion** (`html_to_markdown` tool fed by `get_html`): zero extension change, but the wire would carry raw HTML whose hidden noise cannot be cleaned without rendering truth, in larger payloads. Rejected as the preferred path.
+- **Extension-side `getmarkdown` command**: chosen as the shape if conversion is ever built. The extension is the only place holding rendering truth; stripping hidden subtrees (checkVisibility) before conversion gives a fidelity server-side conversion cannot match, and only the markdown crosses the wire. Costs a fatter extension bundle and a new browser-side dependency, accepted.
+
+## Consequences
+
+- Page text's contract is rendered plain text: one line per visual block, hidden subtrees excluded, empty result reported as such. Resist bolting a `format` option onto `get_text` — a different job gets a different command and tool.
+- This does not reopen ADR-0001: the Snapshot remains the action representation. Markdown extraction was rejected there as *the* page representation; a future `getmarkdown` is an opt-in reading/export tool beside it.
+- Gate future text-conversion features on this constraint: rendering truth exists only in the extension; everything past the WebSocket is post-extraction. If a conversion needs DOM or rendering information, it belongs extension-side even when a server-side implementation looks cleaner.
+- If `getmarkdown` is built: strip hidden subtrees before handing the DOM to Turndown (its defaults keep `display:none` content), and keep `gethtml` as the raw escape hatch — the ADR-0003 size guard still applies.

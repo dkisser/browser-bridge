@@ -7,6 +7,7 @@ import {
   type SnapshotFilter,
   type SnapshotNode,
   type SnapshotRole,
+  textContainerCandidatesHint,
   type WaitElementResult,
 } from '@browser-bridge/shared';
 
@@ -35,6 +36,55 @@ function querySelectorByText(text: string): Element {
   throw new Error(`Element with text not found: ${text}`);
 }
 
+const CANDIDATE_MIN_TEXT_CHARS = 400;
+const CANDIDATE_MAX_COUNT = 5;
+const CANDIDATE_TAGS = new Set(['MAIN', 'ARTICLE', 'SECTION']);
+
+function describeCandidate(el: Element): string {
+  if (el.id) return `#${el.id}`;
+  const cls = (el.className?.toString().trim().split(/\s+/) ?? [])[0];
+  return cls ? `${el.tagName.toLowerCase()}.${cls}` : el.tagName.toLowerCase();
+}
+
+function formatCharCount(n: number): string {
+  return n >= 1000 ? `${Math.round(n / 100) / 10}K` : String(n);
+}
+
+// Leaf-most meaty text containers, for the not-found error: the agent just
+// failed a selector, so hand it the observation instead of making it
+// snapshot in a second round-trip. Smallest-first greedy accept skips
+// wrappers that contain an already-kept container.
+function textContainerCandidates(): string[] {
+  const matches = document.querySelectorAll(
+    'main, article, [role="main"], section, div',
+  );
+  const pool: { el: Element; length: number }[] = [];
+  for (const el of Array.from(matches)) {
+    const addressable =
+      el.id ||
+      el.className ||
+      CANDIDATE_TAGS.has(el.tagName) ||
+      el.getAttribute('role') === 'main';
+    if (!addressable) continue;
+    const length =
+      el instanceof HTMLElement ? el.innerText.trim().length : 0;
+    if (length < CANDIDATE_MIN_TEXT_CHARS) continue;
+    pool.push({ el, length });
+  }
+  pool.sort((a, b) => a.length - b.length);
+  const accepted: { el: Element; length: number }[] = [];
+  for (const candidate of pool) {
+    if (accepted.some((a) => candidate.el.contains(a.el))) continue;
+    accepted.push(candidate);
+  }
+  return accepted
+    .slice(-CANDIDATE_MAX_COUNT)
+    .reverse()
+    .map(
+      (a) => `${describeCandidate(a.el)} (~${formatCharCount(a.length)} chars)`,
+    );
+}
+
 function resolveSelector(selector: string): Element {
   if (selector.startsWith('@')) {
     const ref = selector.slice(1);
@@ -55,7 +105,10 @@ function resolveSelector(selector: string): Element {
     try {
       return querySelectorByText(selector);
     } catch {
-      throw new Error(selectorNotFoundMessage(selector));
+      throw new Error(
+        selectorNotFoundMessage(selector) +
+          textContainerCandidatesHint(textContainerCandidates()),
+      );
     }
   }
 }
@@ -97,6 +150,87 @@ interface WalkState {
 
 function collapseWhitespace(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
+}
+
+// Elements whose rendered boxes break the text flow onto a new line, for
+// roots without innerText (SVG, MathML, detached nodes).
+const BLOCK_LEVEL_TAGS = new Set([
+  'ADDRESS',
+  'ARTICLE',
+  'ASIDE',
+  'BLOCKQUOTE',
+  'DD',
+  'DETAILS',
+  'DIALOG',
+  'DIV',
+  'DL',
+  'DT',
+  'FIELDSET',
+  'FIGCAPTION',
+  'FIGURE',
+  'FOOTER',
+  'FORM',
+  'H1',
+  'H2',
+  'H3',
+  'H4',
+  'H5',
+  'H6',
+  'HEADER',
+  'HGROUP',
+  'HR',
+  'LI',
+  'MAIN',
+  'NAV',
+  'OL',
+  'P',
+  'PRE',
+  'SECTION',
+  'SUMMARY',
+  'TABLE',
+  'TBODY',
+  'TD',
+  'TFOOT',
+  'TH',
+  'THEAD',
+  'TR',
+  'UL',
+]);
+
+// Fallback for roots without innerText: one line per block-level box, with
+// script/style and other non-content subtrees skipped. Unlike textContent,
+// sibling blocks land on separate lines instead of being concatenated.
+function extractText(root: Element): string {
+  const lines: string[] = [];
+  let line = '';
+  const flush = () => {
+    const trimmed = line.trim();
+    if (trimmed !== '') lines.push(trimmed);
+    line = '';
+  };
+
+  const visit = (node: Node): void => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const run = collapseWhitespace(node.textContent ?? '');
+      if (run !== '') line = line === '' ? run : `${line} ${run}`;
+      return;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    const el = node as Element;
+    if (SKIP_SUBTREE_TAGS.has(el.tagName)) return;
+    if (el.tagName === 'BR') {
+      flush();
+      return;
+    }
+    const block = BLOCK_LEVEL_TAGS.has(el.tagName);
+    if (block) flush();
+    for (const child of Array.from(el.childNodes)) visit(child);
+    if (block) flush();
+  };
+
+  for (const child of Array.from(root.childNodes)) visit(child);
+  flush();
+  return lines.join('\n');
 }
 
 function mapRole(el: Element): { role: SnapshotRole; level?: number } {
@@ -311,7 +445,11 @@ function executeCommand(
 
     case 'gettext': {
       const el = resolveSelector(params.selector as string);
-      return { text: el.textContent };
+      // innerText reflects rendering: block boxes and <br> become newlines,
+      // and script/style/hidden subtrees are excluded. Fall back to a tag-
+      // based walk for SVG/MathML and detached nodes.
+      const text = el instanceof HTMLElement ? el.innerText : extractText(el);
+      return { text: text.trim() === '' ? null : text.trim() };
     }
 
     case 'gethtml': {
