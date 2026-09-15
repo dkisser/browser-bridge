@@ -3,6 +3,7 @@ import {
   type DomCommandType,
   defaultMaxCharsForFilter,
   renderSnapshotTree,
+  selectorNotFoundMessage,
   type SnapshotFilter,
   type SnapshotNode,
   type SnapshotRole,
@@ -51,7 +52,11 @@ function resolveSelector(selector: string): Element {
   try {
     return querySelector(selector);
   } catch {
-    return querySelectorByText(selector);
+    try {
+      return querySelectorByText(selector);
+    } catch {
+      throw new Error(selectorNotFoundMessage(selector));
+    }
   }
 }
 

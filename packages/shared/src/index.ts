@@ -42,3 +42,7 @@ export type {
   WaitElementResult,
 } from './types';
 export { isLocalhost } from './utils';
+export {
+  selectorMatchedButEmptyMessage,
+  selectorNotFoundMessage,
+} from './messages';

@@ -24,7 +24,7 @@ describe('executeGettext', () => {
     }
   });
 
-  it('returns empty string when textContent is null', async () => {
+  it('explains when the element matched but has no text', async () => {
     const mockResult: GettextResult = { text: null };
     const { server } = createMockWsServer({ status: 'ok', data: mockResult });
     const sessions = createBrowserSessionStore(10000);
@@ -37,9 +37,35 @@ describe('executeGettext', () => {
         },
         { tab_id: 42, selector: 'h1' },
       );
-      expect(result).toBe('');
+      expect(result).toContain('h1');
+      expect(result).toContain('no text content');
+      expect(result).not.toBe('');
     } finally {
       server.stop();
+    }
+  });
+
+  it('explains when the element text is empty or whitespace-only', async () => {
+    for (const text of ['', '   ']) {
+      const mockResult: GettextResult = { text };
+      const { server } = createMockWsServer({
+        status: 'ok',
+        data: mockResult,
+      });
+      const sessions = createBrowserSessionStore(10000);
+      try {
+        const result = await executeGettext(
+          {
+            sessionId: 's1',
+            sessions,
+            websocketUrl: `ws://127.0.0.1:${server.port}/ws`,
+          },
+          { tab_id: 42, selector: '.row' },
+        );
+        expect(result).toContain('no text content');
+      } finally {
+        server.stop();
+      }
     }
   });
 });

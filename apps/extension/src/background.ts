@@ -182,21 +182,45 @@ async function handleCommand(
       }
       const tab = tabId;
       await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => {
+        let settled = false;
+        const cleanup = (): void => {
+          clearTimeout(timer);
           chrome.tabs.onUpdated.removeListener(listener);
-          reject(new Error('Navigation timeout'));
+        };
+        const finish = (error?: Error): void => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          if (error) {
+            reject(error);
+          } else {
+            resolve();
+          }
+        };
+        const timer = setTimeout(() => {
+          finish(new Error('Navigation timeout'));
         }, timeout);
         const listener = (
           updatedTabId: number,
           changeInfo: chrome.tabs.TabChangeInfo,
         ) => {
           if (updatedTabId === tab && changeInfo.status === 'complete') {
-            clearTimeout(timer);
-            chrome.tabs.onUpdated.removeListener(listener);
-            resolve();
+            finish();
           }
         };
         chrome.tabs.onUpdated.addListener(listener);
+        // The navigation may already be complete when this command arrives
+        // (e.g. a remedial wait after `navigate` timed out on a redirect
+        // chain) — no future onUpdated event will fire, so check the current
+        // status instead of waiting for an event that never comes.
+        chrome.tabs
+          .get(tab)
+          .then((current) => {
+            if (current.status === 'complete') finish();
+          })
+          .catch(() => {
+            // Tab lookup failed; rely on the event listener and timeout.
+          });
       });
       const t = await chrome.tabs.get(tab);
       return { url: t.url, title: t.title };

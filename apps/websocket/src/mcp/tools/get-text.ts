@@ -1,4 +1,7 @@
-import type { GettextResult } from '@browser-bridge/shared';
+import {
+  type GettextResult,
+  selectorMatchedButEmptyMessage,
+} from '@browser-bridge/shared';
 import type { FastMCP } from 'fastmcp';
 import { z } from 'zod';
 import { resolveTargetBrowser } from '../browser-lookup';
@@ -32,7 +35,11 @@ export async function executeGettext(
 
   if (result.status !== 'ok') throw new Error(result.error ?? 'gettext failed');
   const data = result.data as GettextResult;
-  return data.text ?? '';
+  const text = data.text ?? '';
+  if (text.trim() === '') {
+    return selectorMatchedButEmptyMessage(args.selector);
+  }
+  return text;
 }
 
 export function registerGettextTool(
