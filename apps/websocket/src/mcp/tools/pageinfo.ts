@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { resolveTargetBrowser } from '../browser-lookup';
 import { sendCommand } from '../command-client';
 import type { ServerContext, ToolContext } from '../tool-context';
+import { TAB_ID_GUIDANCE } from '../tool-descriptions';
 
 export const PageinfoInputSchema = z.object({
   tab_id: z.number().int().min(0),
@@ -38,7 +39,8 @@ export function registerPageinfoTool(
 ): void {
   server.addTool({
     name: 'pageinfo',
-    description: 'Get title, URL, and tab list from the selected browser.',
+    description:
+      'Get title, URL, and active status of a specific tab. ' + TAB_ID_GUIDANCE,
     parameters: PageinfoInputSchema,
     execute: async (args, { sessionId }) => {
       const resolvedSessionId = sessionId ?? 'anonymous';

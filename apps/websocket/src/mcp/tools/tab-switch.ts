@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { resolveTargetBrowser } from '../browser-lookup';
 import { sendCommand } from '../command-client';
 import type { ServerContext, ToolContext } from '../tool-context';
+import { TAB_ID_GUIDANCE } from '../tool-descriptions';
 
 export const TabSwitchInputSchema = z.object({
   tab_id: z.number().int().min(0),
@@ -38,7 +39,8 @@ export function registerTabSwitchTool(
 ): void {
   server.addTool({
     name: 'tab_switch',
-    description: 'Switch to a tab by its ID in the selected browser.',
+    description:
+      'Switch to a tab by its ID in the selected browser. ' + TAB_ID_GUIDANCE,
     parameters: TabSwitchInputSchema,
     execute: async (args, { sessionId }) => {
       const resolvedSessionId = sessionId ?? 'anonymous';

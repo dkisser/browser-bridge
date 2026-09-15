@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { resolveTargetBrowser } from '../browser-lookup';
 import { sendCommand } from '../command-client';
 import type { ServerContext, ToolContext } from '../tool-context';
+import { TAB_ID_GUIDANCE } from '../tool-descriptions';
 
 export const TypeInputSchema = z.object({
   selector: z.string().min(1),
@@ -45,7 +46,9 @@ export function registerTypeTool(
 ): void {
   server.addTool({
     name: 'type',
-    description: 'Type text into an input element in the selected browser.',
+    description:
+      'Type text into an input element in the selected browser. ' +
+      TAB_ID_GUIDANCE,
     parameters: TypeInputSchema,
     execute: async (args, { sessionId }) => {
       const resolvedSessionId = sessionId ?? 'anonymous';

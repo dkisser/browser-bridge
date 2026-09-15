@@ -39,10 +39,12 @@ export async function sendCommand(
       timeout: options.timeoutMs,
     });
 
-    return (envelope.payload ?? {
-      status: 'error',
-      error: 'Empty response',
-    }) as ResponsePayload;
+    return withRecoveryHint(
+      (envelope.payload ?? {
+        status: 'error',
+        error: 'Empty response',
+      }) as ResponsePayload,
+    );
   } finally {
     client.close();
   }
@@ -95,4 +97,22 @@ function waitForOpen(
       }
     }, 10);
   });
+}
+
+// Chrome reports unknown tab ids as "No tab with id: N". Append the recovery
+// step so a wrong guess points the caller at tab_list instead of a dead end.
+const NO_TAB_ID_PATTERN = /No tab with id: \d+/i;
+const TAB_LIST_HINT =
+  ' Call tab_list to discover valid tab ids for the selected browser.';
+
+function withRecoveryHint(payload: ResponsePayload): ResponsePayload {
+  if (
+    payload.status === 'error' &&
+    typeof payload.error === 'string' &&
+    NO_TAB_ID_PATTERN.test(payload.error) &&
+    !payload.error.includes('tab_list')
+  ) {
+    return { ...payload, error: `${payload.error}${TAB_LIST_HINT}` };
+  }
+  return payload;
 }

@@ -33,7 +33,8 @@ export function registerListBrowsersTool(
 ): void {
   server.addTool({
     name: 'list_browsers',
-    description: 'List all browsers connected to Browser Bridge.',
+    description:
+      'List all browsers connected to Browser Bridge. Call this first before any other tool; use set_browser when multiple browsers are online.',
     parameters: ListBrowsersInputSchema,
     execute: async (args, { sessionId }) => {
       const resolvedSessionId = sessionId ?? 'anonymous';

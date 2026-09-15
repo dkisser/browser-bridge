@@ -3,6 +3,7 @@ import type { Envelope } from '@browser-bridge/shared';
 import { decode, encode } from '@browser-bridge/websocket/protocol';
 import { createBrowserSessionStore } from '../../../src/mcp/browser-session';
 import { executeClick } from '../../../src/mcp/tools/click';
+import { createMockWsServer } from './mock-ws-server';
 
 describe('executeClick', () => {
   it('sends click command and returns success', async () => {
@@ -56,6 +57,28 @@ describe('executeClick', () => {
         { tab_id: 42, selector: '#submit' },
       );
       expect(result).toContain('Clicked');
+    } finally {
+      server.stop();
+    }
+  });
+
+  it('points to tab_list when the tab id does not exist', async () => {
+    const { server } = createMockWsServer({
+      status: 'error',
+      error: 'No tab with id: 0',
+    });
+    const sessions = createBrowserSessionStore(10000);
+    try {
+      await expect(
+        executeClick(
+          {
+            sessionId: 's1',
+            sessions,
+            websocketUrl: `ws://127.0.0.1:${server.port}/ws`,
+          },
+          { tab_id: 0, selector: '#submit' },
+        ),
+      ).rejects.toThrow('tab_list');
     } finally {
       server.stop();
     }
