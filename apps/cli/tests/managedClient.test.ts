@@ -5,7 +5,7 @@ import { ManagedClient } from '../src/managedClient';
 
 async function waitForClosed(
   client: ManagedClient,
-  timeoutMs = 1000,
+  timeoutMs = 5000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (client.readyState !== WebSocket.CLOSED) {

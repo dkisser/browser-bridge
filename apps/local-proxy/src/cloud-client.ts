@@ -6,6 +6,9 @@ export class CloudClient {
   private onCommand: ((envelope: Envelope) => void) | null = null;
   private onConnect: (() => void) | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private connectTimeout: ReturnType<typeof setTimeout> | null = null;
+  private checkInterval: ReturnType<typeof setInterval> | null = null;
+  private connectReject: ((reason: Error) => void) | null = null;
   private serverUrl: string;
   private apiToken: string;
   private browserId: string;
@@ -40,13 +43,19 @@ export class CloudClient {
 
   connect(): Promise<void> {
     this.manualDisconnect = false;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     return new Promise((resolve, reject) => {
+      this.connectReject = reject;
       this.client = createClient({
         url: this.serverUrl,
         headers: { Authorization: `Bearer ${this.apiToken}` },
         onMessage: (envelope) => this.handleMessage(envelope),
         onError: (error) => {
           console.error('[cloud] connection error:', error);
+          this.clearConnectWatchers();
           reject(error);
         },
         onClose: () => {
@@ -58,9 +67,9 @@ export class CloudClient {
         },
       });
 
-      const check = setInterval(() => {
+      this.checkInterval = setInterval(() => {
         if (this.client && this.client.readyState === WebSocket.OPEN) {
-          clearInterval(check);
+          this.clearConnectWatchers();
           this.register();
           this.onConnect?.();
           this.reconnectAttempts = 0;
@@ -68,11 +77,23 @@ export class CloudClient {
         }
       }, 50);
 
-      setTimeout(() => {
-        clearInterval(check);
+      this.connectTimeout = setTimeout(() => {
+        this.clearConnectWatchers();
         reject(new Error('Connection timeout'));
       }, 10000);
     });
+  }
+
+  private clearConnectWatchers(): void {
+    if (this.checkInterval) {
+      clearInterval(this.checkInterval);
+      this.checkInterval = null;
+    }
+    if (this.connectTimeout) {
+      clearTimeout(this.connectTimeout);
+      this.connectTimeout = null;
+    }
+    this.connectReject = null;
   }
 
   private handleMessage(envelope: Envelope): void {
@@ -106,7 +127,7 @@ export class CloudClient {
   }
 
   private scheduleReconnect(): void {
-    if (this.reconnectTimer) return;
+    if (this.reconnectTimer || this.manualDisconnect) return;
     const delay = Math.min(1000 * 2 ** this.reconnectAttempts, 30000);
     this.reconnectAttempts++;
     console.log(
@@ -120,7 +141,13 @@ export class CloudClient {
 
   close(): void {
     this.manualDisconnect = true;
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    const rejectInFlight = this.connectReject;
+    this.clearConnectWatchers();
+    rejectInFlight?.(new Error('Closed during connect'));
     this.client?.close();
     this.client = null;
   }
