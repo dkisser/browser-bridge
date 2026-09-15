@@ -3,6 +3,19 @@ import { decode, encode } from '@browser-bridge/websocket/protocol';
 import type { Server } from 'bun';
 import { ManagedClient } from '../src/managedClient';
 
+async function waitForClosed(
+  client: ManagedClient,
+  timeoutMs = 1000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (client.readyState !== WebSocket.CLOSED) {
+    if (Date.now() > deadline) {
+      throw new Error('Timed out waiting for the socket to close');
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 describe('ManagedClient', () => {
   let server: Server<undefined>;
   let silentServer: Server<undefined>;
@@ -86,6 +99,7 @@ describe('ManagedClient', () => {
     const client = new ManagedClient(`ws://localhost:${PORT}`);
     await client.waitForOpen(5000);
     client[Symbol.dispose]();
+    await waitForClosed(client);
     expect(client.readyState).toBe(WebSocket.CLOSED);
   });
 
@@ -99,6 +113,8 @@ describe('ManagedClient', () => {
       expect(client.readyState).toBe(WebSocket.OPEN);
     }
 
-    expect(disposedClient?.readyState).toBe(WebSocket.CLOSED);
+    if (!disposedClient) throw new Error('expected client to be assigned');
+    await waitForClosed(disposedClient);
+    expect(disposedClient.readyState).toBe(WebSocket.CLOSED);
   });
 });
