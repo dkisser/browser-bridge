@@ -4,11 +4,16 @@ All notable changes to Browser Bridge are documented here. The format follows [K
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-15
+
 ### Changed
 - `snapshot` defaults to the `interactive` filter — interactive elements (links, buttons, text boxes, checkboxes, combos) and headings with stable `@eN` refs — landing ~1.5K tokens on typical app pages; pass `filter='full'` for the complete pseudo-tree including text runs and structural containers. The default budget is 8000 chars for interactive snapshots (3000 remains the `full` default). Reading page content stays with `gettext`/`get_text`. Design recorded in `docs/adr/0002-interactive-default-filter.md`.
+- `full`-filter snapshots are tightened: img lines no longer carry `src` URLs (alt remains the img name), text runs that duplicate their nearest named ancestor are omitted (including runs wrapped in elements like spans), and chains of nameless single-child `generic` wrappers collapse into one line. Ref-bearing lines stay addressable; interactive output is unchanged.
 
 ### Fixed
 - Tier-2 snapshot truncation no longer drops text runs silently: `full`-filter output marks each suppressed run with `text [text suppressed]`, and the stats line reports the active tier (e.g. `[nodes: 40/484 | tier: 2 | truncated: true]`), so an empty-looking cell is distinguishable from suppressed text. (TODO.md #1)
+- `wait:navigation` no longer times out when the navigation already completed before the command arrived (e.g. a remedial call after `navigate` timed out on a redirect chain): it checks the tab's current status before listening for `onUpdated`. (TODO.md #2)
+- Selector resolution failures now report that both CSS and exact-text matching were tried, with a hint for virtualized lists like Gmail; `gettext`/`get_text` on an element with empty or whitespace-only text now explains the match-but-empty case instead of returning an empty string. (TODO.md #3)
 
 ## [0.1.0] - 2026-09-15
 
