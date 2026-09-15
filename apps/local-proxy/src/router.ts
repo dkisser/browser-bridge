@@ -70,6 +70,12 @@ export class Router {
     }
   }
 
+  handleCloudConnect(): void {
+    if (this.state.status === 'online') {
+      this.cloud.reportStatus('online');
+    }
+  }
+
   handleExtensionDisconnect(): void {
     this.state.status = 'idle_wait';
     this.cloud.reportStatus('offline');

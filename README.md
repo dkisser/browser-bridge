@@ -122,6 +122,7 @@ bridge --browser <browser-id> --tab <tab-id> navigate https://github.com
 bridge --browser <browser-id> --tab <tab-id> click "button.login"
 bridge --browser <browser-id> --tab <tab-id> type "input#search" "browser bridge"
 bridge --browser <browser-id> --tab <tab-id> gettext "h1"
+bridge --browser <browser-id> --tab <tab-id> snapshot
 bridge --browser <browser-id> --tab <tab-id> screenshot
 ```
 
@@ -192,6 +193,7 @@ Where to put this block depends on your client:
 | `navigate`, `go_back`, `go_forward`, `refresh` | Navigation |
 | `tab_list`, `tab_new`, `tab_close`, `tab_switch` | Tab management |
 | `click`, `type`, `select`, `scroll`, `hover` | DOM interaction |
+| `snapshot` | Compact page representation — the default tool for reading pages |
 | `get_text`, `get_html`, `screenshot`, `pageinfo` | Data extraction |
 | `wait_element`, `wait_navigation` | Waiting |
 
@@ -220,7 +222,7 @@ See [docs/mcp-setup.md](docs/mcp-setup.md) for environment variables and the ful
 
 ```
 ┌─────────────┐      ┌─────────────────┐      ┌─────────────────┐      ┌─────────────────┐
-│  CLI / Agent │ ───▶ │  WebSocket      │ ───▶ │  Local Proxy    │ ───▶ │  Chrome         │
+│  CLI / MCP   │ ───▶ │  WebSocket      │ ───▶ │  Local Proxy    │ ───▶ │  Chrome         │
 │             │      │  Server         │      │  (your machine) │      │  Extension      │
 └─────────────┘      └─────────────────┘      └─────────────────┘      └─────────────────┘
                                                                               │
@@ -233,7 +235,7 @@ See [docs/mcp-setup.md](docs/mcp-setup.md) for environment variables and the ful
 
 | Layer | Component | Role |
 |-------|-----------|------|
-| Cloud / shared | Interfaces | Agent-facing entry points: CLI, Claude Code skill, or any custom integration. |
+| Cloud / shared | Inbound adapters | Agent-facing entry points: the `bridge` CLI and the MCP server. Both are stateless translators onto the WebSocket protocol — see `CONTEXT.md`. |
 | Cloud / shared | WebSocket Server | Routes commands to the right local proxy. |
 | Local | Local Proxy | Maintains the outbound connection from your machine. |
 | Local | Chrome Extension | Receives messages and executes browser actions. |

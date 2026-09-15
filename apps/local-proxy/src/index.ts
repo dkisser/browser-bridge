@@ -78,6 +78,7 @@ async function main() {
     apiToken: apiToken || '',
     browserId: state.browserId,
     onCommand: (envelope) => router.handleCloudCommand(envelope),
+    onConnect: () => router.handleCloudConnect(),
   });
 
   router = new Router(state, cloud, local);

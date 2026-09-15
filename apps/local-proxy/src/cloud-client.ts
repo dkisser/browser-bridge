@@ -4,6 +4,7 @@ import { createClient } from '@browser-bridge/websocket/client';
 export class CloudClient {
   private client: ReturnType<typeof createClient> | null = null;
   private onCommand: ((envelope: Envelope) => void) | null = null;
+  private onConnect: (() => void) | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private serverUrl: string;
   private apiToken: string;
@@ -28,11 +29,13 @@ export class CloudClient {
     apiToken: string;
     browserId: string;
     onCommand: (envelope: Envelope) => void;
+    onConnect?: () => void;
   }) {
     this.serverUrl = opts.serverUrl;
     this.apiToken = opts.apiToken;
     this.browserId = opts.browserId;
     this.onCommand = opts.onCommand;
+    this.onConnect = opts.onConnect ?? null;
   }
 
   connect(): Promise<void> {
@@ -59,6 +62,7 @@ export class CloudClient {
         if (this.client && this.client.readyState === WebSocket.OPEN) {
           clearInterval(check);
           this.register();
+          this.onConnect?.();
           this.reconnectAttempts = 0;
           resolve();
         }

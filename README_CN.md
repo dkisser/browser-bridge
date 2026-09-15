@@ -218,7 +218,7 @@ MCP Agent 会依次：
 
 ```
 ┌─────────────┐      ┌─────────────────┐      ┌─────────────────┐      ┌─────────────────┐
-│  CLI / Agent │ ───▶ │  WebSocket      │ ───▶ │  Local Proxy    │ ───▶ │  Chrome         │
+│  CLI / MCP   │ ───▶ │  WebSocket      │ ───▶ │  Local Proxy    │ ───▶ │  Chrome         │
 │             │      │  Server         │      │  (本机)         │      │  Extension      │
 └─────────────┘      └─────────────────┘      └─────────────────┘      └─────────────────┘
                                                                               │
@@ -231,7 +231,7 @@ MCP Agent 会依次：
 
 | 层级 | 组件 | 职责 |
 |------|------|------|
-| 云端 / 共享 | 接口层 | 面向 Agent 的入口：CLI、Claude Code skill 或任何自定义集成。 |
+| 云端 / 共享 | 接入适配器（Inbound adapters） | 面向 Agent 的入口：`bridge` CLI 和 MCP server。两者都是无状态的协议转换器，把请求翻译到 WebSocket 协议上——见 `CONTEXT.md`。 |
 | 云端 / 共享 | WebSocket Server | 将命令路由到对应的本地代理。 |
 | 本地 | Local Proxy | 从本机维持与服务端的长连接。 |
 | 本地 | Chrome Extension | 接收消息并执行浏览器操作。 |

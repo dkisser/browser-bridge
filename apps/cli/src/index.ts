@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import type { SnapshotResult } from '@browser-bridge/shared';
 import { WEBSOCKET_PORT } from '@browser-bridge/shared';
 import type { CommandType } from '@browser-bridge/shared/types';
 import { Command } from 'commander';
@@ -65,7 +66,11 @@ async function dispatchCommand(
     );
     output(global, data);
   } catch (err) {
-    outputError(global, 'command_failed', String(err));
+    outputError(
+      global,
+      'command_failed',
+      err instanceof Error ? err.message : String(err),
+    );
   }
 }
 
@@ -203,6 +208,51 @@ program
   .action(async (selector: string) => {
     const global = getGlobalOptions(program.opts());
     await dispatchCommand(global, 'gethtml', { selector });
+  });
+
+program
+  .command('snapshot')
+  .description(
+    'Take a compact snapshot of the page (default page-reading tool)',
+  )
+  .option(
+    '--selector <sel>',
+    'Limit snapshot to this selector (default: whole page)',
+  )
+  .option('--max-chars <n>', 'Maximum snapshot size in characters', '3000')
+  .action(async (opts: { selector?: string; maxChars: string }) => {
+    const global = getGlobalOptions(program.opts());
+    const params: Record<string, unknown> = {
+      max_chars: Number(opts.maxChars),
+    };
+    if (opts.selector) params.selector = opts.selector;
+    try {
+      const data = await sendCommand(
+        {
+          server: global.server,
+          browser: global.browser,
+          tabId: global.tabId,
+          timeout: global.timeout,
+        },
+        'snapshot',
+        params,
+      );
+      const result = data as SnapshotResult;
+      if (global.json) {
+        output(global, result);
+        return;
+      }
+      console.log(result.snapshot);
+      console.log(
+        `[nodes: ${result.nodes_emitted}/${result.nodes_total} | truncated: ${result.truncated}]`,
+      );
+    } catch (err) {
+      outputError(
+        global,
+        'command_failed',
+        err instanceof Error ? err.message : String(err),
+      );
+    }
   });
 
 program

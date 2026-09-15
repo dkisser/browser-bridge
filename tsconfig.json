@@ -9,6 +9,10 @@
     "apps/cli/src/**/*",
     "apps/extension/src/**/*",
     "apps/extension/vite.config.ts",
-    "apps/local-proxy/src/**/*"
+    "apps/local-proxy/src/**/*",
+    "apps/websocket/tests/**/*",
+    "apps/cli/tests/**/*",
+    "apps/local-proxy/tests/**/*",
+    "packages/shared/tests/**/*"
   ]
 }

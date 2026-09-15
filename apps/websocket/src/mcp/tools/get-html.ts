@@ -38,7 +38,10 @@ export function registerGethtmlTool(
 ): void {
   server.addTool({
     name: 'get_html',
-    description: 'Get the HTML content of an element by CSS selector.',
+    description:
+      'Get the raw innerHTML of an element by CSS selector. Escape hatch ' +
+      'for untouched markup — prefer the snapshot tool for reading and ' +
+      'understanding page content.',
     parameters: GethtmlInputSchema,
     execute: async (args, { sessionId }) => {
       const resolvedSessionId = sessionId ?? 'anonymous';

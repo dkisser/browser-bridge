@@ -36,7 +36,7 @@ export async function sendCommand(
     const payload = response.payload as ResponsePayload;
 
     if (payload.status === 'error') {
-      throw new Error(payload.message ?? 'Unknown error');
+      throw new Error(payload.message ?? payload.error ?? 'Unknown error');
     }
 
     return payload.data ?? { status: 'ok' };
