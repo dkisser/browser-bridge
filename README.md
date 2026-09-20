@@ -106,9 +106,9 @@ bridge --browser <browser-id> [options] <command>
 
 ```bash
 # Service management
-bridge up
-bridge down
-bridge status
+bridge service up
+bridge service down
+bridge service status
 bridge browser:list
 
 # Tab management
@@ -130,7 +130,7 @@ bridge --browser <browser-id> --tab <tab-id> screenshot
 
 ```bash
 # 1. Start services and find a connected browser
-bridge up
+bridge service up
 bridge browser:list
 
 # 2. Open a tab and capture its id
@@ -149,12 +149,12 @@ See `bridge --help` for the full command list.
 
 ## 🤖 Use via MCP
 
-Browser Bridge exposes a [Streamable HTTP MCP server](docs/mcp-setup.md) alongside the WebSocket server. Once `bridge up` (or `bun run dev:websocket`) is running, add `http://localhost:3003/mcp` to any MCP client that supports Streamable HTTP.
+Browser Bridge exposes a [Streamable HTTP MCP server](docs/mcp-setup.md) alongside the WebSocket server. Once `bridge service up` (or `bun run dev:websocket`) is running, add `http://localhost:3003/mcp` to any MCP client that supports Streamable HTTP.
 
 ### Start the MCP server
 
 ```bash
-bridge up
+bridge service up
 ```
 
 The MCP endpoint is available at `http://localhost:3003/mcp`.
@@ -254,7 +254,7 @@ curl -fsSL https://github.com/dkisser/browser-bridge/releases/latest/download/in
 
 The installer downloads the runtime, exposes `~/Browser-Bridge/extension/` as a symlink for Chrome, and starts the bridge services. You only need to load the unpacked extension in Chrome.
 
-On macOS, the installer also enables login auto-start, so bridge services start automatically after you log in. To disable this, pass `--no-autostart` or run `bridge autostart off` later.
+On macOS, the installer also enables login auto-start: a per-user LaunchAgent runs the services under a supervisor, so they start when you log in and are restarted automatically if they crash. To disable this, pass `--no-autostart` or run `bridge service disable` later (`bridge service enable` turns it back on).
 
 To reinstall the same version, pass `--force`. To install a specific version, set `BB_VERSION=vX.Y.Z`.
 

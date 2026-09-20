@@ -27,3 +27,11 @@ _Avoid_: locator, xpath, element id
 **Inbound adapter**:
 The stateless entry point through which external callers drive Browser Bridge. The CLI and the MCP server are the two inbound adapters; both translate caller requests onto the WebSocket protocol and hold no browser state.
 _Avoid_: access layer, frontend, gateway, entry point
+
+**Login auto-start**:
+Starting bridge services automatically at macOS login via a per-user LaunchAgent — login-scoped and per-user, never a boot-time system daemon.
+_Avoid_: daemon mode, daemon, autostart
+
+**Service command**:
+The `bridge service …` half of the CLI: everything that manages the service lifecycle (up/down/status/logs/update/enable). Kept strictly separate from browser commands, which never manage services and never fall through to them.
+_Avoid_: daemon command, autostart command

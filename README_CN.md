@@ -104,9 +104,9 @@ bridge --browser <browser-id> [options] <command>
 
 ```bash
 # 服务管理
-bridge up
-bridge down
-bridge status
+bridge service up
+bridge service down
+bridge service status
 bridge browser:list
 
 # 标签页管理
@@ -127,7 +127,7 @@ bridge --browser <browser-id> --tab <tab-id> screenshot
 
 ```bash
 # 1. 启动服务并查看已连接的浏览器
-bridge up
+bridge service up
 bridge browser:list
 
 # 2. 打开一个标签页并记录它的 id
@@ -146,12 +146,12 @@ bridge --browser <browser-id> --tab 12345 wait:navigation
 
 ## 🤖 通过 MCP 使用
 
-Browser Bridge 在 WebSocket 服务端之外，还同时暴露了一个 [Streamable HTTP MCP server](docs/mcp-setup.md)。启动 `bridge up`（或 `bun run dev:websocket`）后，在任何支持 Streamable HTTP 的 MCP 客户端中添加 `http://localhost:3003/mcp` 即可。
+Browser Bridge 在 WebSocket 服务端之外，还同时暴露了一个 [Streamable HTTP MCP server](docs/mcp-setup.md)。启动 `bridge service up`（或 `bun run dev:websocket`）后，在任何支持 Streamable HTTP 的 MCP 客户端中添加 `http://localhost:3003/mcp` 即可。
 
 ### 启动 MCP server
 
 ```bash
-bridge up
+bridge service up
 ```
 
 MCP 端点地址为 `http://localhost:3003/mcp`。
@@ -250,7 +250,7 @@ curl -fsSL https://github.com/dkisser/browser-bridge/releases/latest/download/in
 
 安装脚本会下载运行时，在 `~/Browser-Bridge/extension/` 创建扩展的软连接，并自动启动 bridge 服务。你只需在 Chrome 中加载该解压扩展即可。
 
-在 macOS 上，安装脚本还会默认开启登录自启动，这样你每次登录后 bridge 服务会自动运行。如需关闭，可在安装时传入 `--no-autostart`，或之后运行 `bridge autostart off`。
+在 macOS 上，安装脚本还会默认开启登录自启动：一个 per-user LaunchAgent 以监督进程方式运行服务，登录后自动启动，崩溃后自动重启。如需关闭，可在安装时传入 `--no-autostart`，或之后运行 `bridge service disable`（再用 `bridge service enable` 打开）。
 
 如需强制重装同一版本，可传入 `--force`；如需安装指定版本，可设置 `BB_VERSION=vX.Y.Z`。
 

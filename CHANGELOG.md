@@ -4,6 +4,16 @@ All notable changes to Browser Bridge are documented here. The format follows [K
 
 ## [Unreleased]
 
+### Added
+- macOS login auto-start is now real supervision: a single per-user LaunchAgent runs `bridge service up --foreground`, a supervisor process that holds ws-server and local-proxy and restarts whichever child dies (`KeepAlive=true`; crash loops are bounded by `ThrottleInterval`). Design recorded in `docs/adr/0005-service-namespace-launchd-supervision.md`.
+- `bridge service enable|disable` manage login auto-start explicitly (state is shown by `bridge service status`); on macOS `service up` bootstraps the supervisor from a staging plist when auto-start is disabled, so "start now" and "start at login" are independent.
+- Browser commands print an actionable hint (`Start it with: bridge service up`) when the bridge server is not reachable.
+
+### Changed
+- **Breaking**: all service lifecycle commands moved under the `bridge service` namespace (`up`, `down`, `restart`, `status`, `logs`, `update`, `doctor`, `version`, `uninstall`). Top-level `bridge` is browser control only; the old top-level spellings fail with `BB-E305` pointing at the new form, and unknown verbs no longer fall through to the browser-command binary when it is missing. `bridge autostart on|off|status` remains for one release as a deprecated alias.
+- macOS: `bridge service down` now unloads the LaunchAgent job (`launchctl bootout`) instead of leaving orphaned processes; `service disable` no longer stops running services — it only governs login behavior.
+- The installer calls the new `bridge service …` spellings (`--no-autostart` is unchanged and maps to `bridge service disable`).
+
 ## [0.1.1] - 2026-09-15
 
 ### Changed

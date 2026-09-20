@@ -9,7 +9,12 @@ export async function listBrowsers(
 ): Promise<BrowserConnection[]> {
   {
     using client = new ManagedClient(server);
-    await client.waitForOpen(5000);
+    await client.waitForOpen(5000).catch(() => {
+      throw new Error(
+        `Could not connect to the bridge server at ${server}. ` +
+          'Is the service running? Start it with: bridge service up',
+      );
+    });
 
     const response = await client.request(
       'event',

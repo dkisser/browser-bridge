@@ -33,10 +33,10 @@ Do **not** use this skill for pure coding tasks that do not need a browser (writ
 If the user has not started Browser Bridge yet, tell them to run:
 
 ```bash
-bridge up
+bridge service up
 ```
 
-If the services are already running, `bridge up` will report that and do nothing harmful.
+If the services are already running, `bridge service up` will report that and do nothing harmful.
 
 ### 2. Check available browsers
 
@@ -184,7 +184,7 @@ Most browser tasks need several commands. Plan the sequence, run them in order, 
 
 **Open Gmail and mark GitHub pipeline notifications as read:**
 
-1. `bridge up` (if not already running)
+1. `bridge service up` (if not already running)
 2. `bridge browser:list` to choose the browser
 3. `bridge --browser <id> tab:new https://mail.google.com` — note the returned `tab_id`, e.g. `101`
 4. `bridge --browser <id> --tab 101 wait:navigation --timeout 15000`
@@ -209,7 +209,7 @@ The CLI returns screenshots as base64 `dataUrl`, HTML as strings, and page text 
 ## Error handling
 
 - If `bridge browser:list` returns no browsers, stop and ask the user to load the extension in Chrome and authenticate.
-- If services are not running, tell the user to run `bridge up` first.
+- If services are not running, tell the user to run `bridge service up` first.
 - If a command times out, retry once with a longer `--timeout`, then report failure.
 - If a selector is not found, report the exact selector and ask the user for a better one.
 - If the command returns an error payload, surface the `error` and `message` fields clearly.

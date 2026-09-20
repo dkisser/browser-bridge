@@ -40,21 +40,25 @@ To pin a version: `BB_VERSION=v1.2.3 curl ... | bash`.
 
 ## `bridge` Commands
 
-### Service orchestration
+### Service management (`bridge service`)
 
 | Command | Purpose |
 |---|---|
-| `bridge up` | Start ws-server and local-proxy. |
-| `bridge down` | Stop both. |
-| `bridge restart` | down then up. |
-| `bridge status` | Show service state. |
-| `bridge logs [name]` | Tail logs. |
-| `bridge update [version]` | Upgrade in place. |
-| `bridge doctor` | Diagnose install health. |
-| `bridge uninstall [--yes]` | Remove `~/.browser-bridge/`. |
-| `bridge version` | Show installed + latest release. |
+| `bridge service up` | Start ws-server and local-proxy (launchd-supervised on macOS). |
+| `bridge service down` | Stop both. |
+| `bridge service restart` | down then up. |
+| `bridge service status` | Show service state + login auto-start state. |
+| `bridge service logs [name]` | Tail logs. |
+| `bridge service enable` | Start services at login (macOS LaunchAgent). |
+| `bridge service disable` | Do not start services at login. |
+| `bridge service update [version]` | Upgrade in place. |
+| `bridge service doctor` | Diagnose install health. |
+| `bridge service uninstall [--yes]` | Remove `~/.browser-bridge/`. |
+| `bridge service version` | Show installed + latest release. |
 
-### Browser control (requires `bridge up` and a connected browser)
+Deprecated: `bridge autostart on|off|status` still works for one release but prints a warning — use `bridge service enable|disable` and `bridge service status`.
+
+### Browser control (requires `bridge service up` and a connected browser)
 
 | Command | Purpose |
 |---|---|
@@ -89,6 +93,9 @@ Run `bridge --help` for the full command list.
 | `BB-E101` | Unknown subcommand | Run `bridge` for help. |
 | `BB-E102` | Unknown log target | Use `ws-server` or `local-proxy`. |
 | `BB-E103` | Cannot locate installer (update) | Re-run the install script manually. |
+| `BB-E304` | `launchctl bootout` failed while stopping services | Check `launchctl list` for `com.browser-bridge.bridge`; retry `bridge service down`. |
+| `BB-E305` | Lifecycle command moved under `bridge service` | Re-run as `bridge service <command>`. |
+| `BB-E306` | Unknown `bridge service` subcommand | Run `bridge service` for the list. |
 
 ### macOS Gatekeeper
 
@@ -112,8 +119,8 @@ bun test install/tests/release-workflow.test.ts
 
 ```bash
 # After install, bridge services are already running:
-bridge status         # both services running
-bridge doctor         # all OK
+bridge service status  # both services running
+bridge service doctor  # all OK
 # In Chrome:
 #   1. Open chrome://extensions/
 #   2. Enable "Developer mode"
@@ -122,6 +129,6 @@ bridge doctor         # all OK
 # In another terminal:
 bridge browser:list
 bridge --browser <browserId> navigate https://example.com
-bridge down
-bridge uninstall --yes
+bridge service down
+bridge service uninstall --yes
 ```
