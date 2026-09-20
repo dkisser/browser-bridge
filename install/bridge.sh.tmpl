@@ -334,6 +334,15 @@ pid_alive() {
   return 0
 }
 
+# Is pid really the thing we expect? Matches comm and the full command line,
+# so it works for compiled binaries (comm = exe name) and for scripts (argv[0]
+# carries the script path). Returns false when the pid is invisible.
+pid_is() {
+  local out
+  out=$(ps -p "$1" -o comm=,args= 2>/dev/null) || return 1
+  [[ -n "$out" && "$out" == *"$2"* ]]
+}
+
 supervisor_spawn() {
   local name="$1" binary="$2" port="$3" host="${4:-localhost}"
   local logfile="$LOG_DIR/${name}.log" pidfile="$RUN_DIR/${name}.pid"
@@ -373,6 +382,36 @@ supervisor_start_proxy() {
     supervisor_spawn local-proxy "$BB_HOME/bin/local-proxy" "$LOCAL_PROXY_PORT" "$LOCAL_PROXY_HOSTNAME"
 }
 
+# Classify one service for supervise(). Prints exactly one of:
+#   ours <pid> — pidfile points at a live process that really is this service
+#   free       — no live child of ours and the port is available
+#   foreign    — the port is held without a trustworthy bridge pidfile
+classify_service() {
+  local name="$1" port="$2" host="$3"
+  local pidfile="$RUN_DIR/${name}.pid" pid=""
+  if [[ -f "$pidfile" ]]; then pid=$(cat "$pidfile" 2>/dev/null || true); fi
+  if [[ -n "$pid" ]] && pid_alive "$pid"; then
+    if pid_is "$pid" "$name"; then
+      printf 'ours %s\n' "$pid"
+      return 0
+    fi
+    if port_in_use "$port" "$host"; then
+      printf 'foreign\n'
+      return 0
+    fi
+    # Live pid that is not this service and holds no port: stale pidfile
+    # (pid reuse). Drop it and fall through to the port check.
+    rm -f "$pidfile"
+  else
+    rm -f "$pidfile"
+  fi
+  if port_in_use "$port" "$host"; then
+    printf 'foreign\n'
+  else
+    printf 'free\n'
+  fi
+}
+
 supervisor_tick() {
   # Real 1s pause between polls. `read -t 1 < /dev/null` does NOT work here:
   # /dev/null gives immediate EOF, so read returns at once and the watch loop
@@ -384,6 +423,7 @@ supervisor_tick() {
 supervisor_shutdown() {
   trap - TERM INT
   info "supervisor: shutting down"
+  rm -f "$RUN_DIR/supervisor.pid"
   stop_service ws-server || true
   stop_service local-proxy || true
   exit 0
@@ -427,27 +467,43 @@ supervise() {
   [[ -x "$BB_HOME/bin/ws-server" ]] || die "BB-E002: install not run. Execute the install script first."
   [[ -x "$BB_HOME/bin/local-proxy" ]] || die "BB-E002: install not run. Execute the install script first."
   mkdir -p "$LOG_DIR" "$RUN_DIR"
-  # Idempotent up: only a pair WE started earlier (recorded in pidfiles, still
-  # alive, ports answering) counts as "already running" — launchd then sees a
-  # clean exit. Bare port listeners without matching pidfiles are foreign
-  # processes: fail loudly so launchd backs off instead of silently spinning
-  # on "nothing to do" every ThrottleInterval.
-  local ws_pid="" lp_pid=""
-  if [[ -f "$RUN_DIR/ws-server.pid" ]]; then ws_pid=$(cat "$RUN_DIR/ws-server.pid"); fi
-  if [[ -f "$RUN_DIR/local-proxy.pid" ]]; then lp_pid=$(cat "$RUN_DIR/local-proxy.pid"); fi
-  if [[ -n "$ws_pid" ]] && pid_alive "$ws_pid" \
-    && [[ -n "$lp_pid" ]] && pid_alive "$lp_pid" \
-    && port_in_use "$WS_PORT" "$WS_HOSTNAME" \
-    && port_in_use "$LOCAL_PROXY_PORT" "$LOCAL_PROXY_HOSTNAME"; then
-    info "supervisor: services already running (pids $ws_pid/$lp_pid); nothing to do"
-    exit 0
+
+  # Single-supervisor invariant: at most one supervisor may watch this RUN_DIR.
+  # The pidfile outlives a SIGKILLed supervisor, so a live holder means a
+  # second foreground supervisor would race the first to restart dead
+  # children; anything else here is stale and safe to drop.
+  if [[ -f "$RUN_DIR/supervisor.pid" ]]; then
+    local spid
+    spid=$(cat "$RUN_DIR/supervisor.pid" 2>/dev/null || true)
+    if [[ -n "$spid" ]] && pid_is "$spid" 'service up --foreground'; then
+      die "BB-E307: a supervisor is already running (pid $spid); not starting a second one"
+    fi
+    rm -f "$RUN_DIR/supervisor.pid"
   fi
-  if port_in_use "$WS_PORT" "$WS_HOSTNAME" || port_in_use "$LOCAL_PROXY_PORT" "$LOCAL_PROXY_HOSTNAME"; then
-    die "BB-E010: port $WS_PORT or $LOCAL_PROXY_PORT is held by a process with no recorded bridge pidfile; not taking over (launchd will retry)"
+
+  # Reconcile desired state with reality, per service: adopt bridge children
+  # orphaned by a killed supervisor, start what is missing, and refuse to
+  # touch foreign port listeners (fail non-zero so launchd backs off instead
+  # of silently relaunching every ThrottleInterval).
+  local ws_state lp_state
+  ws_state=$(classify_service ws-server "$WS_PORT" "$WS_HOSTNAME")
+  lp_state=$(classify_service local-proxy "$LOCAL_PROXY_PORT" "$LOCAL_PROXY_HOSTNAME")
+  if [[ "$ws_state" == foreign || "$lp_state" == foreign ]]; then
+    die "BB-E010: port $WS_PORT or $LOCAL_PROXY_PORT is held by a process with no trustworthy bridge pidfile; not taking over (launchd will retry)"
   fi
+
+  echo $$ > "$RUN_DIR/supervisor.pid"
   trap 'supervisor_shutdown' TERM INT
-  supervisor_start_ws
-  supervisor_start_proxy
+  if [[ "$ws_state" == ours* ]]; then
+    info "supervisor: adopting ws-server (pid ${ws_state#ours })"
+  else
+    supervisor_start_ws
+  fi
+  if [[ "$lp_state" == ours* ]]; then
+    info "supervisor: adopting local-proxy (pid ${lp_state#ours })"
+  else
+    supervisor_start_proxy
+  fi
   info "supervisor: ws-server=$(cat "$RUN_DIR/ws-server.pid"), local-proxy=$(cat "$RUN_DIR/local-proxy.pid")"
   supervisor_watch
 }
@@ -495,9 +551,11 @@ cmd_service_down() {
       info "supervisor not loaded"
     fi
     # Sweep unsupervised strays (legacy/manual pairs, or children orphaned by
-    # a SIGKILLed supervisor). Quiet when there is nothing to clean up.
+    # a SIGKILLed supervisor). Quiet when there is nothing to clean up. The
+    # stale supervisor.pid from a SIGKILLed supervisor dies with the sweep.
     if [[ -f "$RUN_DIR/ws-server.pid" ]]; then stop_service ws-server; fi
     if [[ -f "$RUN_DIR/local-proxy.pid" ]]; then stop_service local-proxy; fi
+    rm -f "$RUN_DIR/supervisor.pid"
   else
     stop_service ws-server
     stop_service local-proxy

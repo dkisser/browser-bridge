@@ -22,6 +22,7 @@ All notable changes to Browser Bridge are documented here. The format follows [K
   - LaunchAgent plist rendering escapes `& < >` (awk `gsub` replacement expansion and XML) so paths containing them no longer produce a malformed plist;
   - `port_in_use` probes the configured hostname instead of a hardcoded `localhost`;
   - `service disable` also removes the staging plist, not just the `~/Library/LaunchAgents` copy.
+  - a supervisor killed with SIGKILL no longer strands its children: on relaunch it verifies pidfile pids via `ps`, adopts the orphaned bridge children (including half-orphaned pairs), starts what's missing, and keeps watching them; a `supervisor.pid` lock (BB-E307) keeps a second foreground supervisor from racing the first.
 
 ## [0.1.1] - 2026-09-15
 

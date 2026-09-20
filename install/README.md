@@ -99,6 +99,7 @@ Run `bridge --help` for the full command list.
 | `BB-E300` | Login auto-start is macOS-only | Nothing to do on Linux; `service up/down` work unsupervised. |
 | `BB-E301` | LaunchAgent template missing | Reinstall; check `~/.browser-bridge/launchagent.plist.tmpl`. |
 | `BB-E303` | Bad `bridge autostart` usage (deprecated alias) | Use `bridge service enable|disable`. |
+| `BB-E307` | A second supervisor tried to start while one is already watching | Stop the duplicate; `bridge service status` shows the running pair. |
 
 ### macOS Gatekeeper
 

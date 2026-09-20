@@ -489,21 +489,116 @@ EOF
   [[ ! -f "$BB_HOME/run/local-proxy.pid" ]]
 }
 
-@test "supervisor exits 0 when a recorded pair is already running" {
+@test "supervisor adopts an orphaned recorded pair and keeps watching it" {
+  make_fake_binaries
+  mkdir -p "$BB_HOME/run"
+  # Orphan pair: services running with pidfiles, but the supervisor that
+  # started them is gone (SIGKILLed). A stale supervisor.pid with a dead pid
+  # simulates the relaunch-after-SIGKILL state.
+  "$BB_HOME/bin/ws-server" & echo $! > "$BB_HOME/run/ws-server.pid"
+  "$BB_HOME/bin/local-proxy" & echo $! > "$BB_HOME/run/local-proxy.pid"
+  local orphan_ws orphan_lp
+  orphan_ws=$(cat "$BB_HOME/run/ws-server.pid")
+  orphan_lp=$(cat "$BB_HOME/run/local-proxy.pid")
+  sleep 0.05 & local dead_pid=$!
+  wait "$dead_pid" 2>/dev/null || true
+  echo "$dead_pid" > "$BB_HOME/run/supervisor.pid"
+
+  bash "$BRIDGE_TMPL" service up --foreground >"$BB_TEST_TMP/supervisor.log" 2>&1 &
+  SUP_PID=$!
+  local waited=0
+  while [[ $waited -lt 50 ]]; do
+    if grep -q "adopting ws-server" "$BB_TEST_TMP/supervisor.log" \
+      && grep -q "adopting local-proxy" "$BB_TEST_TMP/supervisor.log"; then
+      break
+    fi
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  # Adoption, not takeover: same children keep running, supervisor watches.
+  grep -q "adopting ws-server" "$BB_TEST_TMP/supervisor.log"
+  grep -q "adopting local-proxy" "$BB_TEST_TMP/supervisor.log"
+  [[ "$(cat "$BB_HOME/run/ws-server.pid")" == "$orphan_ws" ]]
+  [[ "$(cat "$BB_HOME/run/local-proxy.pid")" == "$orphan_lp" ]]
+
+  # The adoption is real supervision: kill an adopted child, it gets restarted.
+  kill "$orphan_ws"
+  waited=0
+  while [[ $waited -lt 50 ]]; do
+    if [[ -f "$BB_HOME/run/ws-server.pid" && "$(cat "$BB_HOME/run/ws-server.pid")" != "$orphan_ws" ]]; then
+      break
+    fi
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [[ "$(cat "$BB_HOME/run/ws-server.pid")" != "$orphan_ws" ]]
+  grep -q "restarting ws-server" "$BB_TEST_TMP/supervisor.log"
+
+  kill -TERM "$SUP_PID"
+  wait "$SUP_PID" 2>/dev/null || true
+  ! kill -0 "$orphan_lp" 2>/dev/null
+  [[ ! -f "$BB_HOME/run/supervisor.pid" ]]
+}
+
+@test "supervisor adopts a half-orphaned pair and starts the missing child" {
+  make_fake_binaries
+  mkdir -p "$BB_HOME/run"
+  "$BB_HOME/bin/ws-server" & echo $! > "$BB_HOME/run/ws-server.pid"
+  local orphan_ws
+  orphan_ws=$(cat "$BB_HOME/run/ws-server.pid")
+
+  bash "$BRIDGE_TMPL" service up --foreground >"$BB_TEST_TMP/supervisor.log" 2>&1 &
+  SUP_PID=$!
+  local waited=0
+  while [[ $waited -lt 50 ]]; do
+    if [[ -f "$BB_HOME/run/local-proxy.pid" ]] && grep -q "adopting ws-server" "$BB_TEST_TMP/supervisor.log"; then
+      break
+    fi
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [[ -f "$BB_HOME/run/local-proxy.pid" ]]
+  [[ "$(cat "$BB_HOME/run/ws-server.pid")" == "$orphan_ws" ]]
+  kill -0 "$(cat "$BB_HOME/run/local-proxy.pid")" 2>/dev/null
+
+  kill -TERM "$SUP_PID"
+  wait "$SUP_PID" 2>/dev/null || true
+  ! kill -0 "$orphan_ws" 2>/dev/null
+}
+
+@test "supervisor refuses to start while another live supervisor holds the pidfile (BB-E307)" {
+  make_fake_binaries
+  mkdir -p "$BB_HOME/run"
+  bash "$BRIDGE_TMPL" service up --foreground >"$BB_TEST_TMP/sup1.log" 2>&1 &
+  SUP_PID=$!
+  local waited=0
+  while [[ $waited -lt 50 ]]; do
+    [[ -f "$BB_HOME/run/supervisor.pid" ]] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [[ -f "$BB_HOME/run/supervisor.pid" ]]
+
+  run bash "$BRIDGE_TMPL" service up --foreground
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"BB-E307"* ]]
+
+  kill -TERM "$SUP_PID"
+  wait "$SUP_PID" 2>/dev/null || true
+}
+
+@test "supervisor refuses misleading pidfiles pointing at foreign processes" {
   make_fake_binaries
   mkdir -p "$BB_HOME/run"
   python3 -c "import socket, time; s=socket.socket(); s.bind(('127.0.0.1',3001)); s.listen(); time.sleep(30)" &
   P1=$!
-  python3 -c "import socket, time; s=socket.socket(); s.bind(('127.0.0.1',3002)); s.listen(); time.sleep(30)" &
-  P2=$!
   sleep 0.3
   echo "$P1" > "$BB_HOME/run/ws-server.pid"
-  echo "$P2" > "$BB_HOME/run/local-proxy.pid"
 
   run bash "$BRIDGE_TMPL" service up --foreground
-  kill "$P1" "$P2" 2>/dev/null || true
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"nothing to do"* ]]
+  kill "$P1" 2>/dev/null || true
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"BB-E010"* ]]
 }
 
 @test "supervisor refuses to take over foreign listeners without bridge pidfiles" {
