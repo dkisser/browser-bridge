@@ -22,13 +22,13 @@
 </p>
 
 <p align="center">
-  <img src="./docs/assets/news-demo.gif" alt="查新闻" width="720" />
+  <video src="./docs/assets/outfit-demo.mp4" alt="穿搭推荐" width="720" autoplay muted loop playsinline></video>
   <br />
-  <em>查新闻</em>
+  <em>穿搭推荐</em>
 </p>
 
 <p align="center">
-  <img src="./docs/assets/gmail-demo.gif" alt="管理邮件" width="720" />
+  <video src="./docs/assets/email-demo.mp4" alt="管理邮件" width="720" autoplay muted loop playsinline></video>
   <br />
   <em>管理邮件</em>
 </p>
