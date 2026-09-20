@@ -10,7 +10,7 @@ The `bridge` CLI mixed two roles — service lifecycle (up/down/…) and browser
 
 ## Consequences
 
-- `service down` must be `launchctl bootout`, never a signal: with `KeepAlive=true`, killing the supervisor process makes launchd relaunch it. Stopping = unloading the job; login behavior is governed separately by plist presence in `~/Library/LaunchAgents`.
-- The supervisor restarts only the child that died. Both local-proxy (exponential backoff, 30s cap) and the extension reconnect to a restarted ws-server on their own, so a group restart would only widen the disconnect window.
-- At startup the supervisor exits 0 when both ports are already served by a healthy instance (idempotent up — e.g. a manually started pair); a conflict against an unhealthy process exits non-zero and relies on launchd's ThrottleInterval backoff.
+- `service down` must be `launchctl bootout`, never a signal: with `KeepAlive=true`, killing the supervisor process makes launchd relaunch it. Stopping = unloading the job; login behavior is governed separately by plist presence in `~/Library/LaunchAgents`. A pidfile-guarded sweep after bootout cleans up unsupervised strays (legacy/manual pairs, or orphans of a SIGKILLed supervisor) without noise when there is nothing to do.
+- The supervisor restarts only the child that died. Both local-proxy (exponential backoff, 30s cap) and the extension reconnect to a restarted ws-server on their own, so a group restart would only widen the disconnect window. The watch loop polls once per second via a real `sleep 1` — a `read -t` on `/dev/null` returns immediately (EOF) and would busy-loop the launchd-resident process.
+- At startup the supervisor exits 0 only when the running pair is provably ours (alive pidfiles plus answering ports — e.g. a manually started pair). Bare port listeners without recorded bridge pidfiles are treated as foreign, fail non-zero, and rely on launchd's ThrottleInterval backoff — otherwise a foreign occupant would cause a silent restart-every-10s spin on a clean exit.
 - Auto-start remains macOS-only; Linux keeps pidfile-based orchestration and can later wrap the same supervisor in a systemd user unit.

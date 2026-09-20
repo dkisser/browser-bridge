@@ -14,6 +14,15 @@ All notable changes to Browser Bridge are documented here. The format follows [K
 - macOS: `bridge service down` now unloads the LaunchAgent job (`launchctl bootout`) instead of leaving orphaned processes; `service disable` no longer stops running services — it only governs login behavior.
 - The installer calls the new `bridge service …` spellings (`--no-autostart` is unchanged and maps to `bridge service disable`).
 
+### Fixed
+- Review fixes on the supervision mechanics:
+  - the supervisor watch loop pauses a real second between polls (`sleep 1`); a `read -t` on `/dev/null` returns immediately on EOF and would have busy-looped the launchd-resident process at 100% CPU;
+  - login-time idempotency requires alive pidfiles plus answering ports, so foreign port listeners fail non-zero and launchd backs off instead of silently restarting every `ThrottleInterval` on a clean exit;
+  - `service down` on macOS only sweeps pidfile-backed strays after `bootout`, suppressing "already stopped" noise, while still catching orphans of a SIGKILLed supervisor;
+  - LaunchAgent plist rendering escapes `& < >` (awk `gsub` replacement expansion and XML) so paths containing them no longer produce a malformed plist;
+  - `port_in_use` probes the configured hostname instead of a hardcoded `localhost`;
+  - `service disable` also removes the staging plist, not just the `~/Library/LaunchAgents` copy.
+
 ## [0.1.1] - 2026-09-15
 
 ### Changed

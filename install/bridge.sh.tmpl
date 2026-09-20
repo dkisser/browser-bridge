@@ -109,10 +109,11 @@ cmd_doctor() {
 }
 
 port_in_use() {
+  local host="${2:-localhost}"
   python3 -c "
 import socket, sys
 try:
-    s = socket.create_connection(('localhost', int('$1')), timeout=1)
+    s = socket.create_connection(('$host', int('$1')), timeout=1)
     s.close()
     sys.exit(0)
 except (OSError, socket.timeout):
@@ -123,20 +124,20 @@ except (OSError, socket.timeout):
 # ---- Unsupervised (Linux / fallback) orchestration via pidfiles ----
 
 start_service() {
-  local name="$1" binary="$2" port="$3"
+  local name="$1" binary="$2" port="$3" host="${4:-localhost}"
   local logfile="$LOG_DIR/${name}.log" pidfile="$RUN_DIR/${name}.pid"
   if [[ -f "$pidfile" ]] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
     info "$name already running (pid $(cat "$pidfile"))"
     return 0
   fi
-  if port_in_use "$port"; then
+  if port_in_use "$port" "$host"; then
     die "BB-E010: $name port $port is already in use"
   fi
   ( exec "$binary" >"$logfile" 2>&1 ) & pid=$!
   disown
   echo "$pid" >"$pidfile"
   for _ in {1..50}; do
-    if ! port_in_use "$port"; then
+    if ! port_in_use "$port" "$host"; then
       sleep 0.1
       continue
     fi
@@ -151,8 +152,8 @@ legacy_up() {
   [[ -x "$BB_HOME/bin/ws-server" ]] || die "BB-E002: install not run. Execute the install script first."
   [[ -x "$BB_HOME/bin/local-proxy" ]] || die "BB-E002: install not run. Execute the install script first."
   mkdir -p "$LOG_DIR" "$RUN_DIR"
-  BRIDGE_WS_PORT="$WS_PORT" BRIDGE_WS_HOSTNAME="$WS_HOSTNAME" start_service ws-server "$BB_HOME/bin/ws-server" "$WS_PORT"
-  BRIDGE_LOCAL_PORT="$LOCAL_PROXY_PORT" BRIDGE_LOCAL_HOSTNAME="$LOCAL_PROXY_HOSTNAME" BRIDGE_LOCAL_PROXY_PORT="$LOCAL_PROXY_PORT" BRIDGE_WS_URL="ws://127.0.0.1:$WS_PORT" start_service local-proxy "$BB_HOME/bin/local-proxy" "$LOCAL_PROXY_PORT"
+  BRIDGE_WS_PORT="$WS_PORT" BRIDGE_WS_HOSTNAME="$WS_HOSTNAME" start_service ws-server "$BB_HOME/bin/ws-server" "$WS_PORT" "$WS_HOSTNAME"
+  BRIDGE_LOCAL_PORT="$LOCAL_PROXY_PORT" BRIDGE_LOCAL_HOSTNAME="$LOCAL_PROXY_HOSTNAME" BRIDGE_LOCAL_PROXY_PORT="$LOCAL_PROXY_PORT" BRIDGE_WS_URL="ws://127.0.0.1:$WS_PORT" start_service local-proxy "$BB_HOME/bin/local-proxy" "$LOCAL_PROXY_PORT" "$LOCAL_PROXY_HOSTNAME"
   info "bridge service up: ws-server=$(cat "$RUN_DIR/ws-server.pid"), local-proxy=$(cat "$RUN_DIR/local-proxy.pid")"
 }
 
@@ -265,13 +266,22 @@ launchagent_loaded() {
 render_launchagent_plist() {
   local tmpl="$BB_HOME/launchagent.plist.tmpl"
   [[ -f "$tmpl" ]] || die "BB-E301: LaunchAgent template missing at $tmpl"
+  # esc() XML-escapes plist-significant chars AND awk-escapes the replacement:
+  # a bare & in a gsub replacement re-expands to the matched text, so each
+  # entity is written \&amp; /\&lt; /\&gt; to stay literal on both levels.
   awk \
     -v bb_home="$BB_HOME" \
     -v ws_port="$WS_PORT" \
     -v ws_hostname="$WS_HOSTNAME" \
     -v local_proxy_port="$LOCAL_PROXY_PORT" \
     -v local_proxy_hostname="$LOCAL_PROXY_HOSTNAME" '
-    { gsub(/{{BB_HOME}}/, bb_home); gsub(/{{WS_PORT}}/, ws_port); gsub(/{{WS_HOSTNAME}}/, ws_hostname); gsub(/{{LOCAL_PROXY_PORT}}/, local_proxy_port); gsub(/{{LOCAL_PROXY_HOSTNAME}}/, local_proxy_hostname); print }
+    function esc(s) {
+      gsub(/&/, "\\&amp;", s)
+      gsub(/</, "\\&lt;", s)
+      gsub(/>/, "\\&gt;", s)
+      return s
+    }
+    { gsub(/{{BB_HOME}}/, esc(bb_home)); gsub(/{{WS_PORT}}/, esc(ws_port)); gsub(/{{WS_HOSTNAME}}/, esc(ws_hostname)); gsub(/{{LOCAL_PROXY_PORT}}/, esc(local_proxy_port)); gsub(/{{LOCAL_PROXY_HOSTNAME}}/, esc(local_proxy_hostname)); print }
   ' "$tmpl"
 }
 
@@ -299,7 +309,7 @@ service_disable() {
     info "Login auto-start: not supported on this platform (macOS only)."
     return 0
   fi
-  rm -f "$(launchagent_path)"
+  rm -f "$(launchagent_path)" "$(staging_plist_path)"
   info "Login auto-start disabled. Running services are not stopped ('bridge service down' stops them)."
 }
 
@@ -310,7 +320,13 @@ service_disable() {
 
 pid_alive() {
   local pid="$1" st
-  st=$(ps -p "$pid" -o state= 2>/dev/null) || return 1
+  st=$(ps -p "$pid" -o state= 2>/dev/null) || st=""
+  if [[ -z "$st" ]]; then
+    # ps can come up empty for processes owned by other users (visibility);
+    # kill -0 still tells us the pid exists, so don't report those as dead.
+    kill -0 "$pid" 2>/dev/null
+    return
+  fi
   if [[ "$st" == "Z" ]]; then
     wait "$pid" 2>/dev/null || true
     return 1
@@ -319,13 +335,13 @@ pid_alive() {
 }
 
 supervisor_spawn() {
-  local name="$1" binary="$2" port="$3"
+  local name="$1" binary="$2" port="$3" host="${4:-localhost}"
   local logfile="$LOG_DIR/${name}.log" pidfile="$RUN_DIR/${name}.pid"
   if [[ -f "$pidfile" ]] && pid_alive "$(cat "$pidfile")"; then
     info "supervisor: $name already running (pid $(cat "$pidfile"))"
     return 0
   fi
-  if port_in_use "$port"; then
+  if port_in_use "$port" "$host"; then
     die "BB-E010: $name port $port is already in use"
   fi
   ( exec "$binary" >"$logfile" 2>&1 ) &
@@ -336,7 +352,7 @@ supervisor_spawn() {
       rm -f "$pidfile"
       die "BB-E011: $name exited before binding port $port (see $logfile)"
     fi
-    if port_in_use "$port"; then
+    if port_in_use "$port" "$host"; then
       return 0
     fi
     sleep 0.1
@@ -348,17 +364,21 @@ supervisor_spawn() {
 
 supervisor_start_ws() {
   BRIDGE_WS_PORT="$WS_PORT" BRIDGE_WS_HOSTNAME="$WS_HOSTNAME" \
-    supervisor_spawn ws-server "$BB_HOME/bin/ws-server" "$WS_PORT"
+    supervisor_spawn ws-server "$BB_HOME/bin/ws-server" "$WS_PORT" "$WS_HOSTNAME"
 }
 
 supervisor_start_proxy() {
   BRIDGE_LOCAL_PORT="$LOCAL_PROXY_PORT" BRIDGE_LOCAL_HOSTNAME="$LOCAL_PROXY_HOSTNAME" \
     BRIDGE_LOCAL_PROXY_PORT="$LOCAL_PROXY_PORT" BRIDGE_WS_URL="ws://127.0.0.1:$WS_PORT" \
-    supervisor_spawn local-proxy "$BB_HOME/bin/local-proxy" "$LOCAL_PROXY_PORT"
+    supervisor_spawn local-proxy "$BB_HOME/bin/local-proxy" "$LOCAL_PROXY_PORT" "$LOCAL_PROXY_HOSTNAME"
 }
 
 supervisor_tick() {
-  read -r -t 1 < /dev/null || true
+  # Real 1s pause between polls. `read -t 1 < /dev/null` does NOT work here:
+  # /dev/null gives immediate EOF, so read returns at once and the watch loop
+  # would spin at 100% CPU. `sleep 1` still lets the TERM/INT trap run as soon
+  # as the sleep finishes (~1s worst-case shutdown latency).
+  sleep 1
 }
 
 supervisor_shutdown() {
@@ -377,7 +397,7 @@ supervisor_watch() {
     for name in ws-server local-proxy; do
       pidfile="$RUN_DIR/${name}.pid"
       pid=""
-      [[ -f "$pidfile" ]] && pid=$(cat "$pidfile")
+      if [[ -f "$pidfile" ]]; then pid=$(cat "$pidfile"); fi
       if [[ -z "$pid" ]] || ! pid_alive "$pid"; then
         dead="$name"
         break
@@ -407,11 +427,23 @@ supervise() {
   [[ -x "$BB_HOME/bin/ws-server" ]] || die "BB-E002: install not run. Execute the install script first."
   [[ -x "$BB_HOME/bin/local-proxy" ]] || die "BB-E002: install not run. Execute the install script first."
   mkdir -p "$LOG_DIR" "$RUN_DIR"
-  # Idempotent up: a healthy pair started by other means (e.g. an older
-  # unsupervised instance) is left alone; launchd sees a clean exit.
-  if port_in_use "$WS_PORT" && port_in_use "$LOCAL_PROXY_PORT"; then
-    info "supervisor: ports $WS_PORT/$LOCAL_PROXY_PORT already served; nothing to do"
+  # Idempotent up: only a pair WE started earlier (recorded in pidfiles, still
+  # alive, ports answering) counts as "already running" — launchd then sees a
+  # clean exit. Bare port listeners without matching pidfiles are foreign
+  # processes: fail loudly so launchd backs off instead of silently spinning
+  # on "nothing to do" every ThrottleInterval.
+  local ws_pid="" lp_pid=""
+  if [[ -f "$RUN_DIR/ws-server.pid" ]]; then ws_pid=$(cat "$RUN_DIR/ws-server.pid"); fi
+  if [[ -f "$RUN_DIR/local-proxy.pid" ]]; then lp_pid=$(cat "$RUN_DIR/local-proxy.pid"); fi
+  if [[ -n "$ws_pid" ]] && pid_alive "$ws_pid" \
+    && [[ -n "$lp_pid" ]] && pid_alive "$lp_pid" \
+    && port_in_use "$WS_PORT" "$WS_HOSTNAME" \
+    && port_in_use "$LOCAL_PROXY_PORT" "$LOCAL_PROXY_HOSTNAME"; then
+    info "supervisor: services already running (pids $ws_pid/$lp_pid); nothing to do"
     exit 0
+  fi
+  if port_in_use "$WS_PORT" "$WS_HOSTNAME" || port_in_use "$LOCAL_PROXY_PORT" "$LOCAL_PROXY_HOSTNAME"; then
+    die "BB-E010: port $WS_PORT or $LOCAL_PROXY_PORT is held by a process with no recorded bridge pidfile; not taking over (launchd will retry)"
   fi
   trap 'supervisor_shutdown' TERM INT
   supervisor_start_ws
@@ -435,7 +467,7 @@ cmd_service_up() {
     info "bridge service up: already running (supervised by launchd, label ${LAUNCHAGENT_LABEL})"
     return 0
   fi
-  if port_in_use "$WS_PORT" || port_in_use "$LOCAL_PROXY_PORT"; then
+  if port_in_use "$WS_PORT" "$WS_HOSTNAME" || port_in_use "$LOCAL_PROXY_PORT" "$LOCAL_PROXY_HOSTNAME"; then
     die "BB-E010: port $WS_PORT or $LOCAL_PROXY_PORT is occupied by something other than a supervised bridge instance (check 'bridge service status'). Free the port and retry."
   fi
   write_launchagent_plists
@@ -456,13 +488,20 @@ cmd_service_down() {
       launchctl bootout "user/$(id -u)/${LAUNCHAGENT_LABEL}" 2>/dev/null \
         || die "BB-E304: failed to stop the supervisor (launchctl bootout failed)"
       info "supervisor stopped"
+      # The supervisor's trap stops the children; give it a moment before the
+      # sweep below so we don't double-signal them.
+      sleep 1
     else
       info "supervisor not loaded"
     fi
+    # Sweep unsupervised strays (legacy/manual pairs, or children orphaned by
+    # a SIGKILLed supervisor). Quiet when there is nothing to clean up.
+    if [[ -f "$RUN_DIR/ws-server.pid" ]]; then stop_service ws-server; fi
+    if [[ -f "$RUN_DIR/local-proxy.pid" ]]; then stop_service local-proxy; fi
+  else
+    stop_service ws-server
+    stop_service local-proxy
   fi
-  # Also clean up unsupervised (legacy/Linux) instances.
-  stop_service ws-server
-  stop_service local-proxy
 }
 
 cmd_service_restart() {

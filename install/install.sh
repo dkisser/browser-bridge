@@ -415,21 +415,21 @@ main() {
 
   write_artifacts "$version"
 
-  if [[ -x "$BB_HOME/bin/bridge" ]]; then
-    info "Starting bridge services..."
-    if "$BB_HOME/bin/bridge" service up >/dev/null 2>&1; then
-      info "Bridge services started."
-    else
-      info "Bridge services could not auto-start (ports may be in use). Run 'bridge service up' manually."
-    fi
-  fi
-
   if [[ "$(uname -s)" == "Darwin" ]] && [[ "$AUTOSTART" == "true" ]] && [[ -x "$BB_HOME/bin/bridge" ]]; then
     info "Enabling login auto-start..."
     if "$BB_HOME/bin/bridge" service enable >/dev/null 2>&1; then
       info "Login auto-start enabled."
     else
       info "Could not enable login auto-start. Run 'bridge service enable' manually."
+    fi
+  fi
+
+  if [[ -x "$BB_HOME/bin/bridge" ]]; then
+    info "Starting bridge services..."
+    if "$BB_HOME/bin/bridge" service up >/dev/null 2>&1; then
+      info "Bridge services started."
+    else
+      info "Bridge services could not auto-start (ports may be in use). Run 'bridge service up' manually."
     fi
   fi
 

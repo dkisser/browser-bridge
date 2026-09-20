@@ -378,16 +378,23 @@ EOF
   [[ ! -f "$BB_HOME/run/ws-server.pid" ]]
 }
 
-@test "bridge service disable removes plist but keeps services notionally running" {
+@test "bridge service disable removes LaunchAgents and staging plists" {
   make_fake_binaries
   cp "$BB_TEST_ROOT/install/launchagent.plist.tmpl" "$BB_HOME/launchagent.plist.tmpl"
   mkdir -p "$HOME/Library/LaunchAgents"
   cp "$BB_HOME/launchagent.plist.tmpl" "$HOME/Library/LaunchAgents/com.browser-bridge.bridge.plist"
   make_fake_uname Darwin
+  make_fake_launchctl
+  make_fake_id 501
+
+  run bash "$BRIDGE_TMPL" service up
+  [ "$status" -eq 0 ]
+  [[ -f "$BB_HOME/launchagents/com.browser-bridge.bridge.plist" ]]
 
   run bash "$BRIDGE_TMPL" service disable
   [ "$status" -eq 0 ]
   [[ ! -f "$HOME/Library/LaunchAgents/com.browser-bridge.bridge.plist" ]]
+  [[ ! -f "$BB_HOME/launchagents/com.browser-bridge.bridge.plist" ]]
 }
 
 @test "bridge service up bootstraps from staging plist when auto-start is disabled" {
@@ -482,7 +489,24 @@ EOF
   [[ ! -f "$BB_HOME/run/local-proxy.pid" ]]
 }
 
-@test "supervisor exits 0 when both ports are already served" {
+@test "supervisor exits 0 when a recorded pair is already running" {
+  make_fake_binaries
+  mkdir -p "$BB_HOME/run"
+  python3 -c "import socket, time; s=socket.socket(); s.bind(('127.0.0.1',3001)); s.listen(); time.sleep(30)" &
+  P1=$!
+  python3 -c "import socket, time; s=socket.socket(); s.bind(('127.0.0.1',3002)); s.listen(); time.sleep(30)" &
+  P2=$!
+  sleep 0.3
+  echo "$P1" > "$BB_HOME/run/ws-server.pid"
+  echo "$P2" > "$BB_HOME/run/local-proxy.pid"
+
+  run bash "$BRIDGE_TMPL" service up --foreground
+  kill "$P1" "$P2" 2>/dev/null || true
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"nothing to do"* ]]
+}
+
+@test "supervisor refuses to take over foreign listeners without bridge pidfiles" {
   make_fake_binaries
   python3 -c "import socket, time; s=socket.socket(); s.bind(('127.0.0.1',3001)); s.listen(); time.sleep(30)" &
   P1=$!
@@ -492,6 +516,36 @@ EOF
 
   run bash "$BRIDGE_TMPL" service up --foreground
   kill "$P1" "$P2" 2>/dev/null || true
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"BB-E010"* ]]
+}
+
+@test "supervisor_tick pauses at least one second (no busy-loop regression)" {
+  local tmpl="$BB_TEST_TMP/bridge-substituted.sh"
+  sed -e "s|{{ORG}}|dkisser|g" -e "s|{{REPO}}|browser-bridge|g" "$BRIDGE_TMPL" > "$tmpl"
+
+  cat > "$BB_TEST_TMP/tick_test.sh" <<EOF
+source '$tmpl'
+start=\$(date +%s)
+supervisor_tick
+end=\$(date +%s)
+echo "elapsed=\$((end - start))"
+EOF
+
+  run bash "$BB_TEST_TMP/tick_test.sh"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"nothing to do"* ]]
+  [[ "$output" == *"elapsed=1"* || "$output" == *"elapsed=2"* ]]
+}
+
+@test "bridge service down on idle macOS prints no per-service noise" {
+  make_fake_binaries
+  cp "$BB_TEST_ROOT/install/launchagent.plist.tmpl" "$BB_HOME/launchagent.plist.tmpl"
+  make_fake_uname Darwin
+  make_fake_launchctl
+  make_fake_id 501
+
+  run bash "$BRIDGE_TMPL" service down
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"supervisor not loaded"* ]]
+  [[ "$output" != *"already stopped"* ]]
 }

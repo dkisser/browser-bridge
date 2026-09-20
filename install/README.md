@@ -96,6 +96,9 @@ Run `bridge --help` for the full command list.
 | `BB-E304` | `launchctl bootout` failed while stopping services | Check `launchctl list` for `com.browser-bridge.bridge`; retry `bridge service down`. |
 | `BB-E305` | Lifecycle command moved under `bridge service` | Re-run as `bridge service <command>`. |
 | `BB-E306` | Unknown `bridge service` subcommand | Run `bridge service` for the list. |
+| `BB-E300` | Login auto-start is macOS-only | Nothing to do on Linux; `service up/down` work unsupervised. |
+| `BB-E301` | LaunchAgent template missing | Reinstall; check `~/.browser-bridge/launchagent.plist.tmpl`. |
+| `BB-E303` | Bad `bridge autostart` usage (deprecated alias) | Use `bridge service enable|disable`. |
 
 ### macOS Gatekeeper
 
