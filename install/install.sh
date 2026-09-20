@@ -132,7 +132,7 @@ Next steps:
        bridge --browser <browserId> navigate https://example.com
 
 Bridge services are already running. To stop them: bridge service down
-To uninstall later: bridge uninstall --yes
+To uninstall later: bridge service uninstall --yes
 EOF
 }
 

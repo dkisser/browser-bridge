@@ -5,12 +5,13 @@
 <h1 align="center">Browser Bridge</h1>
 
 <p align="center">
-  <a href="#-quick-start">Quick Start</a> •
   <a href="#-features">Features</a> •
+  <a href="#-quick-start">Quick Start</a> •
+  <a href="#-install">Install</a> •
+  <a href="#-token-efficient-by-design">Token Efficiency</a> •
   <a href="#-use-via-cli">CLI</a> •
   <a href="#-use-via-mcp">MCP</a> •
   <a href="#-architecture">Architecture</a> •
-  <a href="#-install">Install</a> •
   <a href="./README_CN.md">中文</a>
 </p>
 
@@ -45,11 +46,8 @@
 
 - 🤖 **Agent-ready interface** — one bridge protocol, consumed via CLI, Claude Code skill, or custom integration.
 - 🔒 **Local session, cloud control** — reuse your logged-in browser; no cloud browser or cookie sync needed.
-- 🌉 **WebSocket bridge** — agents talk to a server, server talks to a local proxy, proxy talks to Chrome.
-- 🧩 **Chrome Extension (MV3)** — built with Vite, loads as an unpacked extension.
-- ⚡ **Bun + TypeScript** — fast startup, strict types, one package manager for the whole monorepo.
-- 🧪 **Dev-friendly** — hot reload for server, proxy, and extension.
-- 🤖 **MCP server** — Streamable HTTP MCP server exposes browser tools to Claude Desktop, Cursor, and other MCP clients.
+- 🔗 **MCP server** — Streamable HTTP MCP server exposes browser tools to Claude Desktop, Cursor, and other MCP clients.
+- 🎯 **Token-efficient reads** — observe-first snapshots, targeted container reads, and hard output caps keep page noise out of your agent's context window.
 
 ---
 
@@ -81,6 +79,64 @@ That’s it. The command travels from CLI → WebSocket server → local proxy �
 The `bridge` CLI is just one consumer of the bridge protocol. Browser Bridge ships with a ready-to-use Claude Code skill in [`./skills`](./skills/browser-bridge-user/SKILL.md), and anything that can open a WebSocket — for example, an MCP server you build, a custom SDK, or another agent framework — can send commands the same way.
 
 For step-by-step usage, see [Use via CLI](#-use-via-cli) and [Use via MCP](#-use-via-mcp) below.
+
+---
+
+## 📦 Install
+
+### Option A: One-line installer (recommended)
+
+```bash
+curl -fsSL https://github.com/dkisser/browser-bridge/releases/latest/download/install.sh | bash
+```
+
+The installer downloads the runtime, exposes `~/Browser-Bridge/extension/` as a symlink for Chrome, and starts the bridge services. You only need to load the unpacked extension in Chrome.
+
+On macOS, the installer also enables login auto-start: a per-user LaunchAgent runs the services under a supervisor, so they start when you log in and are restarted automatically if they crash. To disable this, pass `--no-autostart` or run `bridge service disable` later (`bridge service enable` turns it back on).
+
+To reinstall the same version, pass `--force`. To install a specific version, set `BB_VERSION=vX.Y.Z`.
+
+### Option B: One-line installer with Claude Code skill
+
+If you already have [Claude Code](https://claude.ai/code), clone the repo and run the installer from the project root with `--with-skills` to install Browser Bridge plus the ready-to-use skill in `./skills`:
+
+```bash
+git clone https://github.com/dkisser/browser-bridge.git
+cd browser-bridge
+./install/install.sh --with-skills
+```
+
+Use `--skills-dir <path>` if you want to install skills somewhere other than `~/.claude/skills/`. Use `--no-skills` to explicitly skip skill installation.
+
+By default, the curl installer does **not** install skills; use `--with-skills` when you want them.
+
+### Option C: Build from source (contributors only)
+
+See the [Development](#-development) section below. You only need this if you are contributing to Browser Bridge.
+
+---
+
+## 🎯 Token-Efficient by Design
+
+Agents pay for every character that enters the context window — and noise costs double, spending tokens itself while crowding out signal the session will need later. Browser Bridge treats token efficiency as a design constraint: every read is filtered before it reaches the model.
+
+The tools enforce three mechanisms instead of leaving them to the model's judgment:
+
+1. **Observe first.** `snapshot` returns a budgeted pseudo-tree of interactive elements and headings (typically 3–8K characters) with stable `@eN` refs, so every subsequent read has a target.
+2. **Read the container, not the page.** Follow an `@eN` ref, or a candidate container from an error message, and `get_text` only the node that holds the signal. Rendered text also skips hidden subtrees, scripts, and styles.
+3. **Hard caps as guardrails.** Results over 100K characters are rejected before they can enter the context window; the rejection reports the exact size, so even a failed dump teaches the model to read narrower.
+
+Measured on 2026-09-15 against a logged-in Chrome (JS string length):
+
+| Page | Full-page HTML | Signal needed | Ratio | Snapshot cost |
+|---|---|---|---|---|
+| Eastmoney article | 169,318 | 2,318 (article body) | 1:73 | 8,154 |
+| GitHub notifications | 303,176 | 364 (notification list) | 1:833 | 3,312 |
+| Gmail inbox | 324,078 | 546 (email list) | 1:594 | 2,982 |
+
+The full-page HTML of all three exceeds the 100K cap and would be rejected outright — the signal is 0.1–1.4% of the raw page. Filtering is lossy by design, but the page stays live in your browser, so anything screened out can be re-read at finer granularity at any time.
+
+For the full analysis — why full-page dumps fail, how virtual lists distort the DOM, and the two recurring failure modes — see [docs/saving-tokens.md](docs/saving-tokens.md).
 
 ---
 
@@ -184,37 +240,6 @@ Where to put this block depends on your client:
 | **Codex (OpenAI)** | `~/.codex/config.json` under `mcpServers` |
 | **Cline / Windsurf / others** | the client's own MCP server settings in the same JSON shape |
 
-### Available tools
-
-| Tool | Description |
-|---|---|
-| `list_browsers` | List connected browsers |
-| `set_browser` | Pin a browser for this MCP session |
-| `navigate`, `go_back`, `go_forward`, `refresh` | Navigation |
-| `tab_list`, `tab_new`, `tab_close`, `tab_switch` | Tab management |
-| `click`, `type`, `select`, `scroll`, `hover` | DOM interaction |
-| `snapshot` | Compact pseudo-tree of interactive elements and headings with stable `@eN` refs — the default tool for seeing what to act on; `filter='full'` adds text runs and structure |
-| `get_text`, `get_html`, `screenshot`, `pageinfo` | Data extraction |
-| `wait_element`, `wait_navigation` | Waiting |
-
-All browser-control tools accept an optional `timeout_ms` argument.
-
-### Example workflow
-
-```json
-{
-  "role": "user",
-  "content": "Open a new tab to https://news.ycombinator.com, then get the text of the first story title."
-}
-```
-
-The MCP agent will:
-
-1. Call `list_browsers` and `set_browser` to pick a browser.
-2. Call `tab_new` with `url` to open the page.
-3. Call `get_text` with `selector: ".titleline > a"` to read the title.
-
-See [docs/mcp-setup.md](docs/mcp-setup.md) for environment variables and the full tools list.
 
 ---
 
@@ -241,40 +266,6 @@ See [docs/mcp-setup.md](docs/mcp-setup.md) for environment variables and the ful
 | Local | Chrome Extension | Receives messages and executes browser actions. |
 
 See [`docs/architecture-diagram.html`](./docs/architecture-diagram.html) for the full diagram.
-
----
-
-## 📦 Install
-
-### Option A: One-line installer (recommended)
-
-```bash
-curl -fsSL https://github.com/dkisser/browser-bridge/releases/latest/download/install.sh | bash
-```
-
-The installer downloads the runtime, exposes `~/Browser-Bridge/extension/` as a symlink for Chrome, and starts the bridge services. You only need to load the unpacked extension in Chrome.
-
-On macOS, the installer also enables login auto-start: a per-user LaunchAgent runs the services under a supervisor, so they start when you log in and are restarted automatically if they crash. To disable this, pass `--no-autostart` or run `bridge service disable` later (`bridge service enable` turns it back on).
-
-To reinstall the same version, pass `--force`. To install a specific version, set `BB_VERSION=vX.Y.Z`.
-
-### Option B: One-line installer with Claude Code skill
-
-If you already have [Claude Code](https://claude.ai/code), clone the repo and run the installer from the project root with `--with-skills` to install Browser Bridge plus the ready-to-use skill in `./skills`:
-
-```bash
-git clone https://github.com/dkisser/browser-bridge.git
-cd browser-bridge
-./install/install.sh --with-skills
-```
-
-Use `--skills-dir <path>` if you want to install skills somewhere other than `~/.claude/skills/`. Use `--no-skills` to explicitly skip skill installation.
-
-By default, the curl installer does **not** install skills; use `--with-skills` when you want them.
-
-### Option C: Build from source (contributors only)
-
-See the [Development](#-development) section below. You only need this if you are contributing to Browser Bridge.
 
 ---
 

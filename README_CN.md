@@ -5,12 +5,13 @@
 <h1 align="center">Browser Bridge</h1>
 
 <p align="center">
-  <a href="#-快速开始">快速开始</a> •
   <a href="#-功能特性">功能特性</a> •
+  <a href="#-快速开始">快速开始</a> •
+  <a href="#-安装">安装</a> •
+  <a href="#-省-token-设计">省 token</a> •
   <a href="#-通过-cli-使用">CLI</a> •
   <a href="#-通过-mcp-使用">MCP</a> •
   <a href="#-架构">架构</a> •
-  <a href="#-安装">安装</a> •
   <a href="./README.md">English</a>
 </p>
 
@@ -43,11 +44,8 @@
 
 - 🤖 **Agent 就绪的接口** —— 一个 bridge 协议，可通过 CLI、Claude Code skill 或自定义集成来消费。
 - 🔒 **本地会话，云端控制** —— 复用你已登录的浏览器，无需云端浏览器或同步 Cookie。
-- 🌉 **WebSocket 桥接** —— Agent 与服务端通信，服务端路由到本地代理，再连接到 Chrome。
-- 🧩 **Chrome 扩展（MV3）** —— 基于 Vite 构建，以解压扩展形式加载。
-- ⚡ **Bun + TypeScript** —— 启动快、类型严格、整个 monorepo 一个包管理器。
-- 🧪 **开发友好** —— 服务端、代理、扩展均支持热重载。
-- 🤖 **MCP server** —— Streamable HTTP MCP server，向 Claude Desktop、Cursor 等 MCP 客户端暴露浏览器控制工具。
+- 🔗 **MCP server** —— Streamable HTTP MCP server，向 Claude Desktop、Cursor 等 MCP 客户端暴露浏览器控制工具。
+- 🎯 **省 token 的读取** —— 观测先行的 snapshot、定向容器读取与硬上限，把页面噪声挡在 Agent 的上下文之外。
 
 ---
 
@@ -79,6 +77,64 @@ bridge --browser <browser-id> --tab <tab-id> wait:navigation
 `bridge` CLI 只是 bridge 协议的一种消费者。Browser Bridge 在 [`./skills`](./skills/browser-bridge-user/SKILL.md) 中内置了开箱即用的 Claude Code skill；任何能打开 WebSocket 的客户端——例如你自己构建的 MCP server、自定义 SDK 或其他 Agent 框架——都可以用同样的方式发送命令。
 
 详细用法见下方的 [通过 CLI 使用](#-通过-cli-使用) 和 [通过 MCP 使用](#-通过-mcp-使用)。
+
+---
+
+## 📦 安装
+
+### 方案 A：一行命令安装（推荐）
+
+```bash
+curl -fsSL https://github.com/dkisser/browser-bridge/releases/latest/download/install.sh | bash
+```
+
+安装脚本会下载运行时，在 `~/Browser-Bridge/extension/` 创建扩展的软连接，并自动启动 bridge 服务。你只需在 Chrome 中加载该解压扩展即可。
+
+在 macOS 上，安装脚本还会默认开启登录自启动：一个 per-user LaunchAgent 以监督进程方式运行服务，登录后自动启动，崩溃后自动重启。如需关闭，可在安装时传入 `--no-autostart`，或之后运行 `bridge service disable`（再用 `bridge service enable` 打开）。
+
+如需强制重装同一版本，可传入 `--force`；如需安装指定版本，可设置 `BB_VERSION=vX.Y.Z`。
+
+### 方案 B：一行命令安装并附带 Claude Code skill
+
+如果你已经在使用 [Claude Code](https://claude.ai/code)，先克隆仓库，然后在项目根目录运行安装脚本并传入 `--with-skills`，即可同时安装 Browser Bridge 和 `./skills` 目录下的 skill：
+
+```bash
+git clone https://github.com/dkisser/browser-bridge.git
+cd browser-bridge
+./install/install.sh --with-skills
+```
+
+如果你想把 skill 安装到 `~/.claude/skills/` 以外的目录，请使用 `--skills-dir <路径>` 指定。使用 `--no-skills` 可显式跳过 skill 安装。
+
+curl 一键安装默认**不会**安装 skill；如需安装，请使用 `--with-skills`。
+
+### 方案 C：从源码构建（仅贡献者）
+
+普通用户无需执行。开发者请参考下方的 [🛠️ 开发](#-开发) 章节。
+
+---
+
+## 🎯 省 token 设计
+
+模型按 token 付费，上下文窗口是固定预算——噪声是双份成本：自己占用一份，还会挤占会话后面真正需要的信号。Browser Bridge 把省 token 当作设计约束：信息在进入上下文之前就完成筛选。
+
+三个手段由工具强制执行，而不是依赖模型当时的判断：
+
+1. **观测先行**。`snapshot` 用 3K–8K 字符给出交互元素与标题的预算化结构视图，带稳定的 `@eN` 引用，让后续每次读取都有目标。
+2. **定向读容器**。跟随 `@eN` 引用，或错误信息里给出的候选容器，只对装着信号的那一小块 `get_text`；渲染文本还会跳过隐藏子树和脚本样式。
+3. **上限兜底**。超过十万字符的结果在进入上下文前就被拒绝，拒绝信息附带精确字符数——失败的 dump 本身也在教模型读得更窄。
+
+2026-09-15 在登录态真实 Chrome 上实测（字符口径为 JS String.length）：
+
+| 页面 | 整页 HTML | 任务所需信号 | 信噪比 | snapshot 成本 |
+|---|---|---|---|---|
+| 东财文章页 | 169,318 | 正文 2,318 | 1:73 | 8,154 |
+| GitHub notifications | 303,176 | 通知列表 364 | 1:833 | 3,312 |
+| Gmail 收件箱 | 324,078 | 邮件列表 546 | 1:594 | 2,982 |
+
+三个页面的整页 HTML 全部超过十万字符上限，会在进入上下文前被拒——信号只占原始页面的 0.1%–1.4%。筛选本身是有损的，但页面始终活在浏览器里：被筛掉的内容随时可以用更细的粒度重读，或通过逃生舱拿原始 HTML。
+
+完整原理——整页 dump 为什么必然失败、虚拟列表如何扭曲 DOM、两种反复出现的失败读取模式——见 [docs/saving-tokens.md](docs/saving-tokens.md)。
 
 ---
 
@@ -120,6 +176,7 @@ bridge --browser <browser-id> --tab <tab-id> navigate https://github.com
 bridge --browser <browser-id> --tab <tab-id> click "button.login"
 bridge --browser <browser-id> --tab <tab-id> type "input#search" "browser bridge"
 bridge --browser <browser-id> --tab <tab-id> gettext "h1"
+bridge --browser <browser-id> --tab <tab-id> snapshot
 bridge --browser <browser-id> --tab <tab-id> screenshot
 ```
 
@@ -181,36 +238,6 @@ MCP 端点地址为 `http://localhost:3003/mcp`。
 | **Codex (OpenAI)** | `~/.codex/config.json` 中的 `mcpServers` |
 | **Cline / Windsurf / 其他** | 各客户端自身的 MCP server 设置，JSON 结构相同 |
 
-### 可用工具
-
-| 工具 | 说明 |
-|---|---|
-| `list_browsers` | 列出已连接的浏览器 |
-| `set_browser` | 为当前 MCP 会话固定浏览器 |
-| `navigate`、`go_back`、`go_forward`、`refresh` | 页面导航 |
-| `tab_list`、`tab_new`、`tab_close`、`tab_switch` | 标签页管理 |
-| `click`、`type`、`select`、`scroll`、`hover` | DOM 交互 |
-| `get_text`、`get_html`、`screenshot`、`pageinfo` | 数据提取 |
-| `wait_element`、`wait_navigation` | 等待 |
-
-所有浏览器控制工具都支持可选的 `timeout_ms` 参数。
-
-### 示例工作流
-
-```json
-{
-  "role": "user",
-  "content": "打开新标签页访问 https://news.ycombinator.com，然后获取第一条新闻标题的文本。"
-}
-```
-
-MCP Agent 会依次：
-
-1. 调用 `list_browsers` 和 `set_browser` 选择浏览器。
-2. 调用 `tab_new` 并传入 `url` 打开页面。
-3. 调用 `get_text` 并传入 `selector: ".titleline > a"` 读取标题。
-
-环境变量和完整工具列表请参考 [docs/mcp-setup.md](docs/mcp-setup.md)。
 
 ---
 
@@ -237,40 +264,6 @@ MCP Agent 会依次：
 | 本地 | Chrome Extension | 接收消息并执行浏览器操作。 |
 
 完整架构图见 [`docs/architecture-diagram.html`](./docs/architecture-diagram.html)。
-
----
-
-## 📦 安装
-
-### 方案 A：一行命令安装（推荐）
-
-```bash
-curl -fsSL https://github.com/dkisser/browser-bridge/releases/latest/download/install.sh | bash
-```
-
-安装脚本会下载运行时，在 `~/Browser-Bridge/extension/` 创建扩展的软连接，并自动启动 bridge 服务。你只需在 Chrome 中加载该解压扩展即可。
-
-在 macOS 上，安装脚本还会默认开启登录自启动：一个 per-user LaunchAgent 以监督进程方式运行服务，登录后自动启动，崩溃后自动重启。如需关闭，可在安装时传入 `--no-autostart`，或之后运行 `bridge service disable`（再用 `bridge service enable` 打开）。
-
-如需强制重装同一版本，可传入 `--force`；如需安装指定版本，可设置 `BB_VERSION=vX.Y.Z`。
-
-### 方案 B：一行命令安装并附带 Claude Code skill
-
-如果你已经在使用 [Claude Code](https://claude.ai/code)，先克隆仓库，然后在项目根目录运行安装脚本并传入 `--with-skills`，即可同时安装 Browser Bridge 和 `./skills` 目录下的 skill：
-
-```bash
-git clone https://github.com/dkisser/browser-bridge.git
-cd browser-bridge
-./install/install.sh --with-skills
-```
-
-如果你想把 skill 安装到 `~/.claude/skills/` 以外的目录，请使用 `--skills-dir <路径>` 指定。使用 `--no-skills` 可显式跳过 skill 安装。
-
-curl 一键安装默认**不会**安装 skill；如需安装，请使用 `--with-skills`。
-
-### 方案 C：从源码构建（仅贡献者）
-
-普通用户无需执行。开发者请参考下方的 [🛠️ 开发](#-开发) 章节。
 
 ---
 
