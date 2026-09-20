@@ -106,17 +106,28 @@ EOF
 }
 
 # Create fake runtime binaries under $BB_HOME/bin for bridge.bats tests.
+# ws-server/local-proxy are direct python scripts (not bash wrappers) so the
+# process argv carries the service name — the supervisor's adoption check
+# (pid_is) matches on the command line.
 make_fake_binaries() {
   mkdir -p "$BB_HOME/bin"
   cat > "$BB_HOME/bin/ws-server" <<'EOF'
-#!/usr/bin/env bash
-port="${BRIDGE_WS_PORT:-3001}"
-exec python3 -c "import socket, time; s=socket.socket(); s.bind(('', int('$port'))); s.listen(); time.sleep(9999)"
+#!/usr/bin/env python3
+import os, socket, time
+port = int(os.environ.get("BRIDGE_WS_PORT", "3001"))
+s = socket.socket()
+s.bind(("", port))
+s.listen()
+time.sleep(9999)
 EOF
   cat > "$BB_HOME/bin/local-proxy" <<'EOF'
-#!/usr/bin/env bash
-port="${BRIDGE_LOCAL_PORT:-${BRIDGE_LOCAL_PROXY_PORT:-3002}}"
-exec python3 -c "import socket, time; s=socket.socket(); s.bind(('', int('$port'))); s.listen(); time.sleep(9999)"
+#!/usr/bin/env python3
+import os, socket, time
+port = int(os.environ.get("BRIDGE_LOCAL_PORT") or os.environ.get("BRIDGE_LOCAL_PROXY_PORT") or "3002")
+s = socket.socket()
+s.bind(("", port))
+s.listen()
+time.sleep(9999)
 EOF
   cat > "$BB_HOME/bin/bridge-cmd" <<'EOF'
 #!/usr/bin/env bash

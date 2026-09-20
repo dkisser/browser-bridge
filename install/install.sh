@@ -131,8 +131,8 @@ Next steps:
        bridge browser:list
        bridge --browser <browserId> navigate https://example.com
 
-Bridge services are already running. To stop them: bridge down
-To uninstall later: bridge uninstall --yes
+Bridge services are already running. To stop them: bridge service down
+To uninstall later: bridge service uninstall --yes
 EOF
 }
 
@@ -145,7 +145,8 @@ Options:
   --with-skills      Download skills from the release and install them (requires the
                      release to include a skills tarball).
   --no-skills        Skip installing skills.
-  --no-autostart     Do not enable macOS login auto-start (macOS only).
+  --no-autostart     Do not enable macOS login auto-start (macOS only;
+                     equivalent to running 'bridge service disable').
   --force            Reinstall even if the target version is already installed.
   --help, -h         Show this help message.
 
@@ -393,9 +394,9 @@ main() {
     base="https://github.com/${ORG}/${REPO}/releases/download/${version}"
   fi
 
-  if [[ -x "$BB_HOME/bin/bridge" ]] && "$BB_HOME/bin/bridge" status >/dev/null 2>&1; then
+  if [[ -x "$BB_HOME/bin/bridge" ]] && "$BB_HOME/bin/bridge" service status >/dev/null 2>&1; then
     info "Stopping existing bridge services before update..."
-    "$BB_HOME/bin/bridge" down >/dev/null 2>&1 || true
+    "$BB_HOME/bin/bridge" service down >/dev/null 2>&1 || true
   fi
 
   if [[ "$NO_SKILLS" != "true" ]] && [[ "$WITH_SKILLS" == "true" ]]; then
@@ -414,21 +415,21 @@ main() {
 
   write_artifacts "$version"
 
-  if [[ -x "$BB_HOME/bin/bridge" ]]; then
-    info "Starting bridge services..."
-    if "$BB_HOME/bin/bridge" up >/dev/null 2>&1; then
-      info "Bridge services started."
+  if [[ "$(uname -s)" == "Darwin" ]] && [[ "$AUTOSTART" == "true" ]] && [[ -x "$BB_HOME/bin/bridge" ]]; then
+    info "Enabling login auto-start..."
+    if "$BB_HOME/bin/bridge" service enable >/dev/null 2>&1; then
+      info "Login auto-start enabled."
     else
-      info "Bridge services could not auto-start (ports may be in use). Run 'bridge up' manually."
+      info "Could not enable login auto-start. Run 'bridge service enable' manually."
     fi
   fi
 
-  if [[ "$(uname -s)" == "Darwin" ]] && [[ "$AUTOSTART" == "true" ]] && [[ -x "$BB_HOME/bin/bridge" ]]; then
-    info "Enabling login auto-start..."
-    if "$BB_HOME/bin/bridge" autostart on >/dev/null 2>&1; then
-      info "Login auto-start enabled."
+  if [[ -x "$BB_HOME/bin/bridge" ]]; then
+    info "Starting bridge services..."
+    if "$BB_HOME/bin/bridge" service up >/dev/null 2>&1; then
+      info "Bridge services started."
     else
-      info "Could not enable login auto-start. Run 'bridge autostart on' manually."
+      info "Bridge services could not auto-start (ports may be in use). Run 'bridge service up' manually."
     fi
   fi
 

@@ -8,7 +8,9 @@
   <key>ProgramArguments</key>
   <array>
     <string>{{BB_HOME}}/bin/bridge</string>
+    <string>service</string>
     <string>up</string>
+    <string>--foreground</string>
   </array>
 
   <key>EnvironmentVariables</key>
@@ -35,10 +37,7 @@
   <true/>
 
   <key>KeepAlive</key>
-  <dict>
-    <key>SuccessfulExit</key>
-    <false/>
-  </dict>
+  <true/>
 
   <key>ThrottleInterval</key>
   <integer>10</integer>

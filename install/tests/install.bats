@@ -224,6 +224,7 @@ TPL
   cp "$tarball_path" "$BB_TEST_TMP/www/$tarball_name"
   cp "${tarball_path}.sha256" "$BB_TEST_TMP/www/${tarball_name}.sha256"
 
+  make_fake_uname Linux
   start_mock_http 18762
   bash_path=$(find_modern_bash)
 
@@ -262,6 +263,7 @@ SCRIPT
   cp "$tarball_path" "$BB_TEST_TMP/www/$tarball_name"
   cp "${tarball_path}.sha256" "$BB_TEST_TMP/www/${tarball_name}.sha256"
 
+  make_fake_uname Linux
   start_mock_http 18763
   bash_path=$(find_modern_bash)
 
@@ -363,10 +365,11 @@ SCRIPT
 
   [ "$status" -eq 0 ]
   [[ ! -f "$HOME/Library/LaunchAgents/com.browser-bridge.bridge.plist" ]]
-  [[ ! -f "$BB_TEST_TMP/launchctl_calls.txt" ]]
+  # Services still start now, bootstrapped from the staging plist (not login auto-start).
+  grep -q "launchagents" "$BB_TEST_TMP/launchctl_calls.txt"
 }
 
-@test "install.sh falls back gracefully when auto-start cannot be enabled" {
+@test "install.sh succeeds when service start fails due to launchctl error" {
   mkdir -p "$BB_TEST_TMP/www" "$BB_TEST_TMP/stage"
   echo "fake-extension-content" > "$BB_TEST_TMP/stage/bb.zip"
   ( cd "$BB_TEST_TMP/stage" && zip -q "$BB_TEST_TMP/www/browser-bridge-extension-v9.9.9.zip" bb.zip )
@@ -404,7 +407,7 @@ SCRIPT
   stop_mock_http
 
   [ "$status" -eq 0 ]
-  [[ "$output" == *"Could not enable login auto-start"* ]]
+  [[ "$output" == *"could not auto-start"* ]]
   [[ -f "$BB_TEST_TMP/bb-home-autostart-fail/version" ]]
 }
 
@@ -470,6 +473,7 @@ SCRIPT
 
   bash "$BB_TEST_ROOT/.github/scripts/build-installer.sh" "$BB_TEST_TMP/self-contained-install.sh"
 
+  make_fake_uname Linux
   start_mock_http 18764
   bash_path=$(find_modern_bash)
 
@@ -612,6 +616,7 @@ EOF
 
   mkdir -p "$HOME/.claude/skills"
 
+  make_fake_uname Linux
   start_mock_http 18765
   bash_path=$(find_modern_bash)
 
@@ -655,6 +660,7 @@ description: test
 ---
 EOF
 
+  make_fake_uname Linux
   start_mock_http 18772
   bash_path=$(find_modern_bash)
 
@@ -688,6 +694,7 @@ SCRIPT
   cp "$tarball_path" "$BB_TEST_TMP/www/$tarball_name"
   cp "${tarball_path}.sha256" "$BB_TEST_TMP/www/${tarball_name}.sha256"
 
+  make_fake_uname Linux
   start_mock_http 18773
   bash_path=$(find_modern_bash)
 
@@ -804,6 +811,7 @@ SCRIPT
   mkdir -p "$BB_TEST_TMP/bb-home"
   echo "v9.9.9" > "$BB_TEST_TMP/bb-home/version"
 
+  make_fake_uname Linux
   start_mock_http 18768
   sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_force.sh"
   cat >> "$BB_TEST_TMP/test_force.sh" <<'SCRIPT'
@@ -835,6 +843,7 @@ SCRIPT
   cp "$tarball_path" "$BB_TEST_TMP/www/$tarball_name"
   cp "${tarball_path}.sha256" "$BB_TEST_TMP/www/${tarball_name}.sha256"
 
+  make_fake_uname Linux
   start_mock_http 18769
   bash_path=$(find_modern_bash)
 
@@ -881,6 +890,7 @@ SCRIPT
   old_ws_pid=$(cat "$BB_TEST_TMP/bb-home/run/ws-server.pid")
   old_lp_pid=$(cat "$BB_TEST_TMP/bb-home/run/local-proxy.pid")
 
+  make_fake_uname Linux
   start_mock_http 18770
   bash_path=$(find_modern_bash)
 
@@ -926,6 +936,7 @@ SCRIPT
   PORT_HOLDER_PID=$!
   sleep 0.3
 
+  make_fake_uname Linux
   start_mock_http 18771
   bash_path=$(find_modern_bash)
 

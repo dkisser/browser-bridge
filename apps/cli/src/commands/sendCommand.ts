@@ -26,7 +26,12 @@ export async function sendCommand(
 
   {
     using client = new ManagedClient(options.server);
-    await client.waitForOpen(5000);
+    await client.waitForOpen(5000).catch(() => {
+      throw new Error(
+        `Could not connect to the bridge server at ${options.server}. ` +
+          'Is the service running? Start it with: bridge service up',
+      );
+    });
 
     const response = await client.sendCommand(
       options.browser,

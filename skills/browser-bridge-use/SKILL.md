@@ -21,7 +21,7 @@ Use it for anything that requires a live browser: search and navigation, forms, 
 **Fall back to the `bridge` CLI** only when:
 
 - the MCP tools are not connected in this environment, or
-- the job is service management, which MCP does not expose: `bridge up` / `down` / `restart` / `status` / `logs [name]` / `autostart on|off|status` / `update [version]` / `doctor` / `version`.
+- the job is service management, which MCP does not expose: `bridge service up` / `down` / `restart` / `status` / `logs [name]` / `enable` / `disable` / `update [version]` / `doctor` / `version`.
 
 Both interfaces drive the same browser; the CLI equivalents in the tables below let you translate any MCP call.
 
@@ -29,9 +29,9 @@ Both interfaces drive the same browser; the CLI equivalents in the tables below 
 
 1. **Services running?** MCP cannot start services — use the CLI:
    ```bash
-   bridge up
+   bridge service up
    ```
-   If already running, `bridge up` reports that and does nothing harmful.
+   If already running, `bridge service up` reports that and does nothing harmful.
 2. **Pick a browser**: MCP `list_browsers`. No browsers → ask the user to load and authenticate the extension. Several → ask which one, then `set_browser(browserId=...)`. CLI fallback: `bridge browser:list`, then pass `--browser <id>` to every command.
 3. **Pick a tab**: MCP `tab_list`, then use the reported `tab_id` — never guess. CLI fallback: `bridge --browser <id> tab:list`, then `--tab <id>` on every page-level command.
 
@@ -141,7 +141,7 @@ Most browser tasks need several calls. Plan the sequence, run them in order, and
 
 **Open Gmail and mark GitHub pipeline notifications as read:**
 
-1. `bridge up` (CLI — service management)
+1. `bridge service up` (CLI — service management)
 2. `list_browsers` → pick the `browserId`; `set_browser` if several are online
 3. `tab_new(url="https://mail.google.com")` — note the returned `tab_id`, e.g. `101`
 4. `wait_navigation(tab_id=101)` — raise `timeout_ms` to ~15000 if needed
@@ -167,7 +167,7 @@ Screenshots come back as image content (MCP) or base64 `dataUrl` (CLI); HTML and
 ## Error handling
 
 - `list_browsers` returns no browsers → stop and ask the user to load the extension in Chrome and authenticate.
-- Services not running → `bridge up` first (CLI).
+- Services not running → `bridge service up` first (CLI).
 - A call times out → retry once with a larger `timeout_ms` / `--timeout`, then report failure.
 - Selector not found → report the exact selector, take a `snapshot`, and ask for a better one.
 - An error payload → surface the `error` and `message` fields clearly.

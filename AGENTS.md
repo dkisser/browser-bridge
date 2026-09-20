@@ -18,7 +18,7 @@ For project structure, commands, architecture, and conventions, see [README.md](
 - Use `bun run test` for the Bun unit/integration test suite.
 - Use `bun run test:install` for the BATS installer tests.
 - BATS tests spawn real subprocesses and may hang if background services are not detached cleanly.
-- **If the BATS installer tests fail or hang twice in a row, stop using BATS and validate directly with bash.** Simulate `bridge up` with fake binaries, confirm services bind to `127.0.0.1`, and verify external IPs cannot connect.
+- **If the BATS installer tests fail or hang twice in a row, stop using BATS and validate directly with bash.** Simulate `bridge service up` with fake binaries, confirm services bind to `127.0.0.1`, and verify external IPs cannot connect.
 
 ## Compiled binaries and dynamic imports
 
