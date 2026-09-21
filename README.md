@@ -24,13 +24,13 @@
 
 
 <p align="center">
-  <video src="./docs/assets/outfit-demo.mp4" alt="Recommending outfits with an agent" width="720" autoplay muted loop playsinline></video>
+  <img src="./docs/assets/outfit-demo.gif" alt="Recommending outfits with an agent" width="720" />
   <br />
   <em>Recommending outfits with an agent</em>
 </p>
 
 <p align="center">
-  <video src="./docs/assets/email-demo.mp4" alt="Managing Gmail with an agent" width="720" autoplay muted loop playsinline></video>
+  <img src="./docs/assets/email-demo.gif" alt="Managing Gmail with an agent" width="720" />
   <br />
   <em>Managing Gmail with an agent</em>
 </p>
