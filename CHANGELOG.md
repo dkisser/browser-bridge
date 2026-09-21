@@ -4,6 +4,10 @@ All notable changes to Browser Bridge are documented here. The format follows [K
 
 ## [Unreleased]
 
+### Fixed
+- `bridge [service] update` with no argument works again: the installer now treats `BB_VERSION=latest` (the update command's default target) as "resolve the latest release" instead of failing with `BB-E022: invalid version 'latest'`. Older installed bridges pick up the fix automatically because the update command always downloads the newest release installer.
+- Upgrading from a pre-supervision install no longer strands launchd: `bridge service up` verifies a live supervisor before declaring "already running", replaces a stale loaded LaunchAgent job (old `bridge up` semantics) via `launchctl bootout` + re-bootstrap, and adopts already-running pidfile-owned services instead of refusing with `BB-E010`.
+
 ## [0.2.0] - 2026-09-21
 
 ### Added

@@ -46,6 +46,22 @@ find_modern_bash() {
   [[ "$output" == *"version"* ]]
 }
 
+@test "resolve_version treats BB_VERSION=latest as a query for the latest release" {
+  bash_path=$(find_modern_bash)
+  # `bridge [service] update` from older releases passes BB_VERSION=latest;
+  # it must resolve via the GitHub API like an unset BB_VERSION, not fail
+  # BB-E022. Stub curl (API response) and python3 (tag extraction).
+  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_rv_latest.sh"
+  cat >> "$BB_TEST_TMP/test_rv_latest.sh" <<'SCRIPT'
+curl() { printf '{"tag_name": "v9.9.9"}'; }
+python3() { printf '%s' 'v9.9.9'; }
+resolve_version
+SCRIPT
+  BB_VERSION="latest" run "$bash_path" "$BB_TEST_TMP/test_rv_latest.sh"
+  [ "$status" -eq 0 ]
+  [ "$output" = "v9.9.9" ]
+}
+
 @test "download_extension exits BB-E020 on SHA-256 mismatch" {
   bash_path=$(find_modern_bash)
   mkdir -p "$BB_TEST_TMP/www" "$BB_TEST_TMP/stage"

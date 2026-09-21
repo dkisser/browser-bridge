@@ -520,10 +520,26 @@ cmd_service_up() {
     return
   fi
   if launchagent_loaded; then
-    info "bridge service up: already running (supervised by launchd, label ${LAUNCHAGENT_LABEL})"
-    return 0
+    # The label being loaded is not proof we are up: a job from a
+    # pre-supervision install (or a finished one) stays loaded with stale
+    # ProgramArguments after an upgrade, and launchd would keep running the
+    # old command. Only a live supervisor pidfile means we are supervised.
+    local spid=""
+    if [[ -f "$RUN_DIR/supervisor.pid" ]]; then spid=$(cat "$RUN_DIR/supervisor.pid" 2>/dev/null || true); fi
+    if [[ -n "$spid" ]] && pid_is "$spid" 'service up --foreground'; then
+      info "bridge service up: already running (supervised by launchd, label ${LAUNCHAGENT_LABEL})"
+      return 0
+    fi
+    launchctl bootout "user/$(id -u)/${LAUNCHAGENT_LABEL}" 2>/dev/null || true
+    info "bridge service up: replaced stale LaunchAgent job (label ${LAUNCHAGENT_LABEL})"
   fi
-  if port_in_use "$WS_PORT" "$WS_HOSTNAME" || port_in_use "$LOCAL_PROXY_PORT" "$LOCAL_PROXY_HOSTNAME"; then
+  # Ports held by processes recorded in our own pidfiles are adopted by the
+  # supervisor once launchd starts it; only genuinely foreign listeners
+  # (no trustworthy pidfile) are refused.
+  local ws_state lp_state
+  ws_state=$(classify_service ws-server "$WS_PORT" "$WS_HOSTNAME")
+  lp_state=$(classify_service local-proxy "$LOCAL_PROXY_PORT" "$LOCAL_PROXY_HOSTNAME")
+  if [[ "$ws_state" == foreign || "$lp_state" == foreign ]]; then
     die "BB-E010: port $WS_PORT or $LOCAL_PROXY_PORT is occupied by something other than a supervised bridge instance (check 'bridge service status'). Free the port and retry."
   fi
   write_launchagent_plists

@@ -174,7 +174,9 @@ EOF
 }
 
 resolve_version() {
-  if [[ -n "$BB_VERSION" ]]; then
+  # "latest" — also what `bridge [service] update` passes from older
+  # releases — means "query the GitHub API", same as an unset BB_VERSION.
+  if [[ -n "$BB_VERSION" && "$BB_VERSION" != "latest" ]]; then
     [[ "$BB_VERSION" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "BB-E022: invalid version '$BB_VERSION'"
     # Normalize to always include the leading 'v' (GitHub tags always have it).
     echo "${BB_VERSION#v}" | awk '{print "v"$0}'

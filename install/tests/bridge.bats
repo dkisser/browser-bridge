@@ -425,6 +425,84 @@ EOF
   grep -q "bootstrap user/501 $HOME/Library/LaunchAgents/com.browser-bridge.bridge.plist" "$BB_TEST_TMP/launchctl_calls.txt"
 }
 
+# launchctl fake that reports the label as loaded (as a pre-supervision or
+# finished job would be after an upgrade).
+make_fake_launchctl_loaded() {
+  mkdir -p "$BB_TEST_TMP/bin"
+  cat > "$BB_TEST_TMP/bin/launchctl" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$BB_TEST_TMP/launchctl_calls.txt"
+if [[ "\$1" == "list" ]]; then
+  echo "- 0 com.browser-bridge.bridge"
+fi
+exit 0
+EOF
+  chmod +x "$BB_TEST_TMP/bin/launchctl"
+  export PATH="$BB_TEST_TMP/bin:$PATH"
+}
+
+@test "bridge service up reports already running when the label is loaded and a supervisor is alive" {
+  make_fake_binaries
+  cp "$BB_TEST_ROOT/install/launchagent.plist.tmpl" "$BB_HOME/launchagent.plist.tmpl"
+  make_fake_uname Darwin
+  make_fake_launchctl_loaded
+  make_fake_id 501
+
+  bash "$BRIDGE_TMPL" service up --foreground >"$BB_TEST_TMP/sup.log" 2>&1 &
+  SUP_PID=$!
+  local waited=0
+  while [[ $waited -lt 50 ]]; do
+    [[ -f "$BB_HOME/run/supervisor.pid" ]] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [[ -f "$BB_HOME/run/supervisor.pid" ]]
+
+  run bash "$BRIDGE_TMPL" service up
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"already running"* ]]
+  [[ ! -f "$BB_TEST_TMP/launchctl_calls.txt" ]] || ! grep -q bootout "$BB_TEST_TMP/launchctl_calls.txt"
+
+  kill -TERM "$SUP_PID"
+  wait "$SUP_PID" 2>/dev/null || true
+}
+
+@test "bridge service up replaces a stale loaded LaunchAgent job and bootstraps" {
+  make_fake_binaries
+  cp "$BB_TEST_ROOT/install/launchagent.plist.tmpl" "$BB_HOME/launchagent.plist.tmpl"
+  make_fake_uname Darwin
+  make_fake_launchctl_loaded
+  make_fake_id 501
+
+  run bash "$BRIDGE_TMPL" service up
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"replaced stale LaunchAgent job"* ]]
+  grep -q "bootout user/501/com.browser-bridge.bridge" "$BB_TEST_TMP/launchctl_calls.txt"
+  grep -q "bootstrap user/501" "$BB_TEST_TMP/launchctl_calls.txt"
+}
+
+@test "bridge service up adopts running pidfile-owned services instead of failing BB-E010" {
+  make_fake_binaries
+  cp "$BB_TEST_ROOT/install/launchagent.plist.tmpl" "$BB_HOME/launchagent.plist.tmpl"
+  mkdir -p "$BB_HOME/run"
+  BRIDGE_WS_PORT=3001 "$BB_HOME/bin/ws-server" &
+  WS_PID=$!
+  BRIDGE_LOCAL_PORT=3002 "$BB_HOME/bin/local-proxy" &
+  LP_PID=$!
+  sleep 0.5
+  echo "$WS_PID" > "$BB_HOME/run/ws-server.pid"
+  echo "$LP_PID" > "$BB_HOME/run/local-proxy.pid"
+  make_fake_uname Darwin
+  make_fake_launchctl
+  make_fake_id 501
+
+  run bash "$BRIDGE_TMPL" service up
+  kill "$WS_PID" "$LP_PID" 2>/dev/null || true
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"BB-E010"* ]]
+  grep -q "bootstrap user/501" "$BB_TEST_TMP/launchctl_calls.txt"
+}
+
 @test "bridge service down bootouts the supervisor by label when loaded" {
   make_fake_binaries
   cp "$BB_TEST_ROOT/install/launchagent.plist.tmpl" "$BB_HOME/launchagent.plist.tmpl"
