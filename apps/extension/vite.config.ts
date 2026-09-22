@@ -36,9 +36,9 @@ export default defineConfig({
         settings: resolve(__dirname, 'src/settings.html'),
         offscreen: resolve(__dirname, 'src/offscreen.html'),
         background: resolve(__dirname, 'src/background.ts'),
-        content: resolve(__dirname, 'src/content.ts'),
       },
       output: {
+        format: 'es',
         entryFileNames: '[name].js',
         chunkFileNames: '[name].js',
         assetFileNames: (assetInfo) => {

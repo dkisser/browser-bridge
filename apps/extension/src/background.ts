@@ -15,6 +15,10 @@ import {
   SENSITIVE_FIELD_RECHECK_ERROR,
 } from '@browser-bridge/shared';
 import {
+  type ChromeLike,
+  dispatchToContentScript as dispatchToContentScriptRaw,
+} from './content-bridge';
+import {
   clearSessionScoped,
   decideWithState,
   getPolicyState,
@@ -23,6 +27,18 @@ import {
   updateBadge,
   updatePolicyState,
 } from './policy-state';
+
+// Bind the testable dispatch helper to the live chrome global once so the
+// service-worker hot path doesn't pay the lookup on every command.
+const dispatchToContentScript = (
+  tabId: number,
+  message: Record<string, unknown>,
+): Promise<unknown> =>
+  dispatchToContentScriptRaw(
+    globalThis.chrome as unknown as ChromeLike,
+    tabId,
+    message,
+  );
 
 const OFFSCREEN_DOCUMENT_URL = 'offscreen.html';
 
@@ -423,22 +439,6 @@ async function handleCommand(
   }
 }
 
-async function ensureContentScript(tab: number): Promise<void> {
-  try {
-    const response = await chrome.tabs.sendMessage(tab, { type: 'ping' });
-    if (response?.type === 'pong') return;
-  } catch {
-    // Content script not injected, inject it
-  }
-
-  await chrome.scripting.executeScript({
-    target: { tabId: tab },
-    files: ['content.js'],
-  });
-
-  await new Promise((resolve) => setTimeout(resolve, 100));
-}
-
 async function sendToContentScript(
   tabId: number | undefined,
   payload: Record<string, unknown>,
@@ -446,8 +446,7 @@ async function sendToContentScript(
   if (typeof tabId !== 'number') {
     throw new Error('Missing required tabId');
   }
-  await ensureContentScript(tabId);
-  return await sendContentCommand(tabId, payload);
+  return await dispatchToContentScript(tabId, { type: 'command', payload });
 }
 
 // Policy preflight for `type`: asks the content script to classify the
@@ -459,32 +458,11 @@ async function preflightSelector(
   if (typeof tabId !== 'number') {
     throw new Error('Missing required tabId');
   }
-  await ensureContentScript(tabId);
-  const response: { status?: string; data?: unknown; error?: string } =
-    await chrome.tabs.sendMessage(tabId, { type: 'preflight', selector });
-  if (response?.status === 'error') {
-    throw new Error(response.error ?? 'Content script preflight failed');
-  }
-  if (response?.status === 'ok') {
-    return response.data as { sensitive: boolean };
-  }
-  throw new Error('Content script did not respond');
-}
-
-async function sendContentCommand(
-  tab: number,
-  payload: Record<string, unknown>,
-): Promise<unknown> {
-  const response: { status?: string; data?: unknown; error?: string } =
-    await chrome.tabs.sendMessage(tab, { type: 'command', payload });
-
-  if (response?.status === 'error') {
-    throw new Error(response.error ?? 'Content script command failed');
-  }
-  if (response?.status === 'ok') {
-    return response.data;
-  }
-  throw new Error('Content script did not respond');
+  const data = await dispatchToContentScript(tabId, {
+    type: 'preflight',
+    selector,
+  });
+  return data as { sensitive: boolean };
 }
 
 // Message handler: receives commands from offscreen doc, side panel, and content scripts
