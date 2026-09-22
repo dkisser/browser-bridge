@@ -1,7 +1,7 @@
 import type { FastMCP } from 'fastmcp';
 import { z } from 'zod';
 import { resolveTargetBrowser } from '../browser-lookup';
-import { sendCommand } from '../command-client';
+import { commandErrorMessage, sendCommand } from '../command-client';
 import type { ServerContext, ToolContext } from '../tool-context';
 
 export const TabListInputSchema = z.object({
@@ -27,7 +27,7 @@ export async function executeTabList(
   });
 
   if (result.status !== 'ok')
-    throw new Error(result.error ?? 'tab:list failed');
+    throw new Error(commandErrorMessage(result, 'tab:list failed'));
   return JSON.stringify(result.data ?? [], null, 2);
 }
 

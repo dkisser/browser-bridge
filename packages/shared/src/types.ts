@@ -1,3 +1,4 @@
+import type { Denial } from './policy';
 import type { SnapshotResult } from './snapshot';
 
 export interface Envelope {
@@ -43,6 +44,10 @@ export interface ResponsePayload {
   data?: unknown;
   error?: string;
   message?: string;
+  // Structured policy denial (ADR-0008). Present alongside status 'error'
+  // when the extension's policy gate rejected the command; `error` carries
+  // the machine-readable DenyReason for clients that only read strings.
+  denied?: Denial;
 }
 
 // Command result contracts. These are the single source of truth for the

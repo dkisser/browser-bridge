@@ -1,7 +1,7 @@
 import type { FastMCP } from 'fastmcp';
 import { z } from 'zod';
 import { resolveTargetBrowser } from '../browser-lookup';
-import { sendCommand } from '../command-client';
+import { commandErrorMessage, sendCommand } from '../command-client';
 import type { ServerContext, ToolContext } from '../tool-context';
 import { SELECTOR_GUIDANCE, TAB_ID_GUIDANCE } from '../tool-descriptions';
 
@@ -36,7 +36,8 @@ export async function executeType(
     timeoutMs,
   });
 
-  if (result.status !== 'ok') throw new Error(result.error ?? 'Type failed');
+  if (result.status !== 'ok')
+    throw new Error(commandErrorMessage(result, 'Type failed'));
   return result.message ?? `Typed into ${args.selector}`;
 }
 

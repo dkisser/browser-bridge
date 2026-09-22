@@ -1,7 +1,7 @@
 import type { FastMCP } from 'fastmcp';
 import { z } from 'zod';
 import { resolveTargetBrowser } from '../browser-lookup';
-import { sendCommand } from '../command-client';
+import { commandErrorMessage, sendCommand } from '../command-client';
 import type { ServerContext, ToolContext } from '../tool-context';
 import { SELECTOR_GUIDANCE, TAB_ID_GUIDANCE } from '../tool-descriptions';
 
@@ -29,7 +29,8 @@ export async function executeClick(
     timeoutMs,
   });
 
-  if (result.status !== 'ok') throw new Error(result.error ?? 'Click failed');
+  if (result.status !== 'ok')
+    throw new Error(commandErrorMessage(result, 'Click failed'));
   return result.message ?? `Clicked ${args.selector}`;
 }
 

@@ -3,7 +3,7 @@ import {
   type BrowserResolutionResult,
   resolveBrowser,
 } from './browser-resolver';
-import { sendEvent } from './command-client';
+import { commandErrorMessage, sendEvent } from './command-client';
 import type { ToolContext } from './tool-context';
 
 function isBrowserConnection(value: unknown): value is BrowserConnection {
@@ -33,7 +33,7 @@ export async function fetchBrowserList(
   });
 
   if (result.status !== 'ok') {
-    throw new Error(result.error ?? 'Failed to list browsers');
+    throw new Error(commandErrorMessage(result, 'Failed to list browsers'));
   }
 
   if (!Array.isArray(result.data)) {

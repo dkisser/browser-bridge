@@ -263,6 +263,16 @@ launchagent_loaded() {
   launchctl list 2>/dev/null | awk '{print $3}' | grep -qx "$LAUNCHAGENT_LABEL"
 }
 
+# LaunchAgents live in the GUI session domain: launchd loads
+# ~/Library/LaunchAgents jobs into "gui/$UID" at login, and current macOS
+# rejects "user/$UID" (bootout: "No such process"; bootstrap: EIO). The
+# user-domain fallback covers jobs an older release bootstrapped there. The
+# last attempt keeps stderr attached so the real launchd error shows.
+launchagent_bootout() {
+  launchctl bootout "gui/$(id -u)/${LAUNCHAGENT_LABEL}" 2>/dev/null \
+    || launchctl bootout "user/$(id -u)/${LAUNCHAGENT_LABEL}"
+}
+
 render_launchagent_plist() {
   local tmpl="$BB_HOME/launchagent.plist.tmpl"
   [[ -f "$tmpl" ]] || die "BB-E301: LaunchAgent template missing at $tmpl"
@@ -530,7 +540,7 @@ cmd_service_up() {
       info "bridge service up: already running (supervised by launchd, label ${LAUNCHAGENT_LABEL})"
       return 0
     fi
-    launchctl bootout "user/$(id -u)/${LAUNCHAGENT_LABEL}" 2>/dev/null || true
+    launchagent_bootout || true
     info "bridge service up: replaced stale LaunchAgent job (label ${LAUNCHAGENT_LABEL})"
   fi
   # Ports held by processes recorded in our own pidfiles are adopted by the
@@ -549,7 +559,7 @@ cmd_service_up() {
   else
     plist=$(staging_plist_path)
   fi
-  launchctl bootstrap "user/$(id -u)" "$plist" \
+  launchctl bootstrap "gui/$(id -u)" "$plist" \
     || die "BB-E302: failed to load LaunchAgent with launchctl bootstrap"
   info "bridge service up: supervisor started (label ${LAUNCHAGENT_LABEL})"
 }
@@ -557,7 +567,7 @@ cmd_service_up() {
 cmd_service_down() {
   if is_macos; then
     if launchagent_loaded; then
-      launchctl bootout "user/$(id -u)/${LAUNCHAGENT_LABEL}" 2>/dev/null \
+      launchagent_bootout \
         || die "BB-E304: failed to stop the supervisor (launchctl bootout failed)"
       info "supervisor stopped"
       # The supervisor's trap stops the children; give it a moment before the

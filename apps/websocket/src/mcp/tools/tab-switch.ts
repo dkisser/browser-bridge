@@ -1,7 +1,7 @@
 import type { FastMCP } from 'fastmcp';
 import { z } from 'zod';
 import { resolveTargetBrowser } from '../browser-lookup';
-import { sendCommand } from '../command-client';
+import { commandErrorMessage, sendCommand } from '../command-client';
 import type { ServerContext, ToolContext } from '../tool-context';
 import { TAB_ID_GUIDANCE } from '../tool-descriptions';
 
@@ -29,7 +29,7 @@ export async function executeTabSwitch(
   });
 
   if (result.status !== 'ok')
-    throw new Error(result.error ?? 'tab:switch failed');
+    throw new Error(commandErrorMessage(result, 'tab:switch failed'));
   return result.message ?? `Switched to tab ${args.tab_id}`;
 }
 

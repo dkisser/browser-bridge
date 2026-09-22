@@ -11,6 +11,7 @@ interface ProxyConfig {
   browserId: string;
   serverUrl: string;
   apiToken?: string;
+  extensionTokenHash?: string;
 }
 
 interface BufferedCommand {
@@ -38,6 +39,15 @@ export class StateManager {
 
   get apiToken(): string | undefined {
     return this.config.apiToken;
+  }
+
+  get extensionTokenHash(): string | undefined {
+    return this.config.extensionTokenHash;
+  }
+
+  setExtensionTokenHash(hash: string): void {
+    this.config.extensionTokenHash = hash;
+    this.saveConfig();
   }
 
   get status(): BrowserStatus {

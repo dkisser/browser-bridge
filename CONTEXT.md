@@ -32,6 +32,20 @@ _Avoid_: access layer, frontend, gateway, entry point
 Starting bridge services automatically at macOS login via a per-user LaunchAgent — login-scoped and per-user, never a boot-time system daemon.
 _Avoid_: daemon mode, daemon, autostart
 
+### Control & safety
+
+**Approval**:
+A per-action gate: before the extension executes a gated command, it asks the human once, who allows or denies that single action. The agent keeps the browser; exactly one action is held for confirmation.
+_Avoid_: confirmation prompt, human-in-the-loop, manual gate
+
+**Takeover**:
+A mode switch, not a per-action question: while Takeover is active, every agent command is rejected with a machine-readable reason and the human operates the browser directly; when the human releases it, the agent resumes. Approval governs one action; Takeover governs the whole session.
+_Avoid_: handoff, human assist, pause mode, manual mode
+
+**Working scope**:
+The boundary of what the agent may touch without asking: the tabs it opened itself plus the origins a human approved. Commands inside the scope run silent; anything that would cross it triggers Approval.
+_Avoid_: allowlist, permission set, trust zone
+
 **Service command**:
 The `bridge service …` half of the CLI: everything that manages the service lifecycle (up/down/status/logs/update/enable). Kept strictly separate from browser commands, which never manage services and never fall through to them.
 _Avoid_: daemon command, autostart command

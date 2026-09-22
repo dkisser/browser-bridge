@@ -6,7 +6,7 @@
     <title>Browser Bridge</title>
     <style>
       body {
-        width: 280px;
+        width: 360px;
         padding: 16px;
         font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         font-size: 15px;
@@ -33,6 +33,10 @@
       .label {
         font-size: 15px;
         color: #333;
+      }
+      .status-detail {
+        font-size: 13px;
+        color: #666;
       }
       .browser-id-row {
         display: flex;
@@ -105,15 +109,124 @@
         min-height: 16px;
       }
       .hint {
-        font-size: 15px;
-        color: #171717;
-        margin-top: 12px;
+        font-size: 13px;
+        color: #666;
+        margin-top: 8px;
+      }
+      .panel {
+        border-top: 1px solid #e0e0e0;
+        padding: 10px 0;
+      }
+      .panel h2 {
+        font-size: 13px;
+        font-weight: 600;
+        color: #555;
+        margin: 0 0 8px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .hidden {
+        display: none;
+      }
+      .pair-row {
+        display: flex;
+        gap: 8px;
+      }
+      input[type='text'] {
+        flex: 1;
+        min-width: 0;
+        padding: 7px 8px;
+        font-size: 14px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+      }
+      input[type='text']:focus-visible {
+        outline: 2px solid #2196f3;
+        outline-offset: 0;
       }
       button {
         width: 100%;
         padding: 8px;
         cursor: pointer;
         margin-bottom: 8px;
+      }
+      button.small {
+        width: auto;
+        padding: 7px 12px;
+        margin-bottom: 0;
+        white-space: nowrap;
+      }
+      .toggle-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        font-size: 14px;
+        color: #333;
+        cursor: pointer;
+      }
+      .toggle-row input {
+        margin-top: 2px;
+      }
+      .empty {
+        font-size: 13px;
+        color: #999;
+      }
+      .card {
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        padding: 8px;
+        margin-bottom: 8px;
+      }
+      .card-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: #333;
+        word-break: break-all;
+      }
+      .card-msg {
+        font-size: 12px;
+        color: #666;
+        margin-top: 4px;
+        word-break: break-word;
+      }
+      .card-actions {
+        display: flex;
+        gap: 6px;
+        margin-top: 8px;
+      }
+      .card-actions button {
+        width: auto;
+        padding: 5px 10px;
+        margin-bottom: 0;
+        font-size: 12px;
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 4px 0;
+      }
+      .row-label {
+        font-size: 13px;
+        color: #333;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .row-label .scope {
+        color: #999;
+      }
+      .row-label.denied {
+        color: #f44336;
+      }
+      .row button {
+        width: auto;
+        padding: 3px 8px;
+        margin-bottom: 0;
+        font-size: 12px;
+        flex-shrink: 0;
       }
       #result {
         margin-top: 8px;
@@ -126,8 +239,16 @@
   <body>
     <div class="status-row">
       <div class="status">
-        <div id="statusDot" class="dot disconnected"></div>
-        <span id="statusLabel" class="label">Disconnected</span>
+        <div id="browserDot" class="dot disconnected"></div>
+        <span class="label">Browser</span>
+        <span id="browserStatus" class="status-detail">Disconnected</span>
+      </div>
+    </div>
+    <div class="status-row">
+      <div class="status">
+        <div id="cloudDot" class="dot disconnected"></div>
+        <span class="label">Cloud</span>
+        <span id="cloudStatus" class="status-detail">Disconnected</span>
       </div>
       <label class="toggle-switch">
         <input id="cloudSwitch" type="checkbox" aria-label="Cloud Connection" />
@@ -138,7 +259,54 @@
       <span class="browser-id-label">UID:</span>
       <div id="browserId" class="browser-id"></div>
     </div>
+    <div class="browser-id-row">
+      <button id="rePairButton" type="button" class="small hidden">
+        Re-pair with local proxy…
+      </button>
+    </div>
     <div id="message" class="message"></div>
+
+    <section id="pairingPanel" class="panel hidden">
+      <h2>Pair with Local Proxy</h2>
+      <div class="pair-row">
+        <input id="pairCode" type="text" placeholder="Pairing code" />
+        <button id="pairButton" type="button" class="small">Pair</button>
+      </div>
+      <div id="pairError" class="message"></div>
+      <div class="hint">Run <code>bridge pair</code> in a terminal to get a code.</div>
+    </section>
+
+    <section class="panel">
+      <label class="toggle-row">
+        <input id="takeoverToggle" type="checkbox" />
+        <span>Human assist — reject agent commands while you are driving</span>
+      </label>
+    </section>
+
+    <section class="panel">
+      <h2>Pending approvals</h2>
+      <div id="denialsList"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Origins</h2>
+      <div id="originsList"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Blocklist</h2>
+      <div class="pair-row">
+        <input id="blockInput" type="text" placeholder="example.com" />
+        <button id="blockAdd" type="button" class="small">Add</button>
+      </div>
+      <div id="blocklist"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Paused downloads</h2>
+      <div id="downloadsList"></div>
+    </section>
+
     <div class="hint">Now, you can use your agent to control the browser just like you.</div>
     <script type="module" src="./popup.ts"></script>
   </body>

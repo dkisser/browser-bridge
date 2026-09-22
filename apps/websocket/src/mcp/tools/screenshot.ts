@@ -2,7 +2,7 @@ import type { ScreenshotResult } from '@browser-bridge/shared';
 import type { FastMCP } from 'fastmcp';
 import { z } from 'zod';
 import { resolveTargetBrowser } from '../browser-lookup';
-import { sendCommand } from '../command-client';
+import { commandErrorMessage, sendCommand } from '../command-client';
 import type { ServerContext, ToolContext } from '../tool-context';
 import { TAB_ID_GUIDANCE } from '../tool-descriptions';
 
@@ -33,7 +33,7 @@ export async function executeScreenshot(
   });
 
   if (result.status !== 'ok')
-    throw new Error(result.error ?? 'Screenshot failed');
+    throw new Error(commandErrorMessage(result, 'Screenshot failed'));
   const data = result.data as ScreenshotResult;
   const base64 = data.dataUrl.replace(/^data:image\/[a-zA-Z]+;base64,/, '');
   if (!base64) {

@@ -2,20 +2,31 @@
 // The Service Worker can't hold persistent connections (it sleeps after ~30s idle),
 // so we move the WebSocket here. Commands from the proxy are relayed to the SW
 // via chrome.runtime.sendMessage, and responses are sent back through this doc.
+// Only chrome.runtime is available in this context — chrome.storage is not, so
+// the SW pushes the pairing token here via the connect_ws message.
 
 import { LOCAL_WS_PORT } from '@browser-bridge/shared';
 
 const LOCAL_WS_URL = `ws://localhost:${LOCAL_WS_PORT}`;
 
 let ws: WebSocket | null = null;
+let currentToken: string | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
 function connect(): void {
   if (ws && ws.readyState === WebSocket.OPEN) return;
+  if (!currentToken) {
+    notifyStatus(false);
+    return;
+  }
+  openSocket(currentToken);
+}
 
-  ws = new WebSocket(LOCAL_WS_URL);
+function openSocket(token: string): void {
+  const socket = new WebSocket(`${LOCAL_WS_URL}/?token=${token}`);
+  ws = socket;
 
-  ws.addEventListener('open', () => {
+  socket.addEventListener('open', () => {
     console.log('[offscreen] Connected to Local Proxy');
     if (reconnectTimer) {
       clearTimeout(reconnectTimer);
@@ -24,7 +35,7 @@ function connect(): void {
     notifyStatus(true);
   });
 
-  ws.addEventListener('message', (event) => {
+  socket.addEventListener('message', (event) => {
     try {
       const envelope = JSON.parse(event.data as string);
       if (envelope.type === 'command') {
@@ -51,15 +62,17 @@ function connect(): void {
     }
   });
 
-  ws.addEventListener('close', () => {
+  socket.addEventListener('close', () => {
     console.log('[offscreen] Disconnected from Local Proxy');
+    if (ws !== socket) return; // replaced by a newer socket (e.g. re-pair)
     ws = null;
     notifyStatus(false);
     scheduleReconnect();
   });
 
-  ws.addEventListener('error', () => {
+  socket.addEventListener('error', () => {
     console.error('[offscreen] WebSocket error');
+    if (ws !== socket) return;
     ws = null;
     notifyStatus(false);
     scheduleReconnect();
@@ -97,11 +110,22 @@ function notifyStatus(connected: boolean): void {
   }
 }
 
-// Handle messages from Service Worker
+// Handle messages from the Service Worker. Re-pairing rotates the token:
+// the SW watches storage (unavailable in this context) and pushes the new
+// token via connect_ws; connect() caches it for reconnects.
 chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   if (request.type === 'connect_ws') {
+    currentToken =
+      typeof request.token === 'string' && request.token !== ''
+        ? request.token
+        : null;
+    if (ws) {
+      const stale = ws;
+      ws = null;
+      stale.close();
+    }
     connect();
-    sendResponse({ ok: true });
+    sendResponse({ ok: currentToken !== null });
     return true;
   }
 
@@ -125,6 +149,3 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
 
   return false;
 });
-
-// Start connection immediately
-connect();

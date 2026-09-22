@@ -3,10 +3,10 @@ import {
   type DomCommandType,
   defaultMaxCharsForFilter,
   renderSnapshotTree,
-  selectorNotFoundMessage,
   type SnapshotFilter,
   type SnapshotNode,
   type SnapshotRole,
+  selectorNotFoundMessage,
   textContainerCandidatesHint,
   type WaitElementResult,
 } from '@browser-bridge/shared';
@@ -66,8 +66,7 @@ function textContainerCandidates(): string[] {
       CANDIDATE_TAGS.has(el.tagName) ||
       el.getAttribute('role') === 'main';
     if (!addressable) continue;
-    const length =
-      el instanceof HTMLElement ? el.innerText.trim().length : 0;
+    const length = el instanceof HTMLElement ? el.innerText.trim().length : 0;
     if (length < CANDIDATE_MIN_TEXT_CHARS) continue;
     pool.push({ el, length });
   }
@@ -415,6 +414,9 @@ function executeCommand(
       input.value = params.text as string;
       input.dispatchEvent(new Event('input', { bubbles: true }));
       input.dispatchEvent(new Event('change', { bubbles: true }));
+      if (params.submit === true && input.form) {
+        input.form.requestSubmit();
+      }
       return { typed: params.text as string };
     }
 
@@ -530,6 +532,22 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
     const payload = request.payload as DomCommand;
     Promise.resolve()
       .then(() => executeCommand(payload))
+      .then((data) => sendResponse({ status: 'ok', data }))
+      .catch((err) => sendResponse({ status: 'error', error: String(err) }));
+    return true;
+  }
+
+  if (request.type === 'preflight') {
+    const selector = request.selector as string;
+    Promise.resolve()
+      .then(() => {
+        const el = resolveSelector(selector);
+        return {
+          sensitive: el.matches(
+            'input[type="password"], [autocomplete^="cc-"]',
+          ),
+        };
+      })
       .then((data) => sendResponse({ status: 'ok', data }))
       .catch((err) => sendResponse({ status: 'error', error: String(err) }));
     return true;

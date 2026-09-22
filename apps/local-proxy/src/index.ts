@@ -6,6 +6,7 @@ import {
   DEFAULT_SERVER_URL,
 } from './config';
 import { LocalServer } from './local-server';
+import { PairingManager } from './pairing';
 import { Router } from './router';
 import { StateManager } from './state';
 
@@ -51,6 +52,11 @@ async function main() {
 
   let router: Router;
 
+  const pairing = new PairingManager(
+    () => state.extensionTokenHash,
+    (hash) => state.setExtensionTokenHash(hash),
+  );
+
   const local = new LocalServer(
     localPort,
     {
@@ -70,6 +76,7 @@ async function main() {
         serverUrl,
       },
     },
+    pairing,
     localHostname,
   );
 
