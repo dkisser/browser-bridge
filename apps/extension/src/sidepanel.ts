@@ -83,8 +83,16 @@ const panels: Record<SidePanelTab, HTMLElement> = {
   downloads: getElement<HTMLElement>('panel-downloads'),
 };
 
-function setMessage(text: string): void {
+let messagePersistent = false;
+
+function setMessage(text: string, persistent = true): void {
   messageEl.textContent = text;
+  messagePersistent = persistent;
+}
+
+function clearTransientMessage(): void {
+  if (messagePersistent) return;
+  messageEl.textContent = '';
 }
 
 function setConnectionDot(
@@ -111,10 +119,10 @@ async function setCloudConnection(connect: boolean): Promise<void> {
     const response = await fetch(`${API_BASE}${endpoint}`, { method: 'POST' });
     const result = (await response.json()) as StatusResponse;
     if (!result.success) {
-      setMessage(result.error ?? 'Request failed');
+      setMessage(result.error ?? 'Request failed', false);
     }
   } catch {
-    setMessage('Local proxy unreachable');
+    setMessage('Local proxy unreachable', false);
   }
 }
 
@@ -134,35 +142,53 @@ async function refreshConnection(): Promise<void> {
   setConnectionDot(browserDot, browserStatusLabel, browserConnected);
 
   const result = await fetchStatus();
-  if (result.success && result.data) {
+  if (
+    result.success &&
+    result.data &&
+    typeof result.data.browserId === 'string'
+  ) {
     cloudSwitch.checked = result.data.connected;
     setConnectionDot(cloudDot, cloudStatusLabel, result.data.connected);
     uidEl.textContent = result.data.browserId;
     uidEl.title = result.data.browserId;
-    // Don't clear message here: a poll every 5 s would wipe transient
-    // diagnostics from setCloudConnection before the user can read them.
-    cloudSwitch.disabled = false;
+    // Don't re-enable the switch while a user-initiated POST is in flight
+    // either — that race would let the user double-click or fight the
+    // optimistic state. Transient connection diagnostics from a previous
+    // failed POST get cleared on this successful poll; persistent messages
+    // (from user-initiated actions) are kept.
+    clearTransientMessage();
+    cloudSwitch.disabled = cloudSwitchInFlight;
   } else {
     // Failure path: the cloud dot is red, and the switch's checked state
     // must reflect reality, not the optimistic click that triggered this.
     cloudSwitch.checked = false;
     setConnectionDot(cloudDot, cloudStatusLabel, false);
-    setMessage(result.error ?? 'Unknown error');
+    setMessage(result.error ?? 'Unknown error', false);
     cloudSwitch.disabled = true;
   }
 }
 
+let cloudSwitchInFlight = false;
+
 cloudSwitch.addEventListener('change', () => {
   cloudSwitch.disabled = true;
+  cloudSwitchInFlight = true;
   // Optimistically reflect the click in the dot, then sync checked-state on
   // failure inside refreshConnection (which sets checked=false).
-  void setCloudConnection(cloudSwitch.checked).finally(refreshConnection);
+  void setCloudConnection(cloudSwitch.checked).finally(() => {
+    cloudSwitchInFlight = false;
+    void refreshConnection();
+  });
 });
 
 takeoverSwitch.addEventListener('change', () => {
-  void setPolicyState({ takeover: takeoverSwitch.checked }).catch(
-    (error: unknown) => setMessage(toErrorMessage(error)),
-  );
+  const desired = takeoverSwitch.checked;
+  void setPolicyState({ takeover: desired }).catch((error: unknown) => {
+    // Storage write failed; revert the switch so the UI matches persisted
+    // state and the user is not misled about whether takeover is active.
+    takeoverSwitch.checked = !desired;
+    setMessage(toErrorMessage(error));
+  });
 });
 
 settingsLink.addEventListener('click', (event) => {
@@ -194,9 +220,18 @@ function activateTab(tab: SidePanelTab): void {
   }
 }
 
+function isSidePanelTab(value: string | undefined): value is SidePanelTab {
+  return (
+    value === 'approvals' ||
+    value === 'origins' ||
+    value === 'blocklist' ||
+    value === 'downloads'
+  );
+}
+
 for (const button of tabButtons) {
-  const tab = button.dataset.tab as SidePanelTab | undefined;
-  if (!tab) continue;
+  const tab = button.dataset.tab;
+  if (!isSidePanelTab(tab)) continue;
   button.addEventListener('click', () => activateTab(tab));
 }
 
@@ -224,8 +259,8 @@ if (tabStrip) {
     if (event.key === 'Home') nextIndex = 0;
     if (event.key === 'End') nextIndex = tabButtons.length - 1;
     const nextButton = tabButtons[nextIndex];
-    const nextTab = nextButton.dataset.tab as SidePanelTab | undefined;
-    if (!nextTab) return;
+    const nextTab = nextButton.dataset.tab;
+    if (!isSidePanelTab(nextTab)) return;
     event.preventDefault();
     activateTab(nextTab);
     nextButton.focus();
@@ -454,7 +489,7 @@ function renderDownloads(state: PolicyState): void {
   }
 }
 
-async function renderPolicy(): Promise<void> {
+async function renderPolicy(): Promise<PolicyState> {
   const state = await getPolicyState();
   renderPairing(state);
   renderTakeover(state);
@@ -465,6 +500,7 @@ async function renderPolicy(): Promise<void> {
   // Activate the default view only on the very first paint — subsequent
   // storage changes (denials, downloads, agent-tab bookkeeping) re-render
   // the panel contents but must not yank the user off the tab they chose.
+  return state;
 }
 
 async function handleDenialAction(
@@ -519,8 +555,11 @@ async function handleDenialAction(
 denialsList.addEventListener('click', (event) => {
   const button = (event.target as HTMLElement).closest('button');
   if (!button) return;
+  // Number(null) === 0 and Number.isFinite(0) is true, so guard with >= 0.
+  // Mirrors the downloads handler at line ~618.
   const index = Number(button.getAttribute('data-index'));
   const action = button.getAttribute('data-action') ?? '';
+  if (!Number.isFinite(index) || index < 0) return;
   void handleDenialAction(action, index).catch((error: unknown) =>
     setMessage(toErrorMessage(error)),
   );
@@ -562,7 +601,11 @@ blockAdd.addEventListener('click', () => {
 });
 
 blockInput.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter') void addBlockEntry();
+  if (event.key === 'Enter') {
+    void addBlockEntry().catch((error: unknown) =>
+      setMessage(toErrorMessage(error)),
+    );
+  }
 });
 
 blocklistDiv.addEventListener('click', (event) => {
@@ -620,20 +663,48 @@ void refreshConnection().catch((error: unknown) =>
 // default view. After this, storage-change listeners re-render contents
 // only — the user's manual tab selection sticks.
 void (async (): Promise<void> => {
-  await renderPolicy();
-  const state = await getPolicyState();
+  const state = await renderPolicy();
   activateTab(selectDefaultView(state));
-})().catch((error: unknown) => setMessage(toErrorMessage(error)));
+})().catch((error: unknown) => {
+  // If the very first storage read fails, fall back to the HTML default
+  // (Approvals tab) so the panel is never blank. Only surface the error if
+  // the panel can still render — otherwise the message is invisible anyway.
+  activateTab('approvals');
+  setMessage(toErrorMessage(error));
+});
 void updateBadge().catch((error: unknown) => setMessage(toErrorMessage(error)));
 
-const poll = setInterval(() => {
-  void refreshConnection().catch((error: unknown) =>
-    setMessage(toErrorMessage(error)),
-  );
-}, POLL_INTERVAL_MS);
+// Side panels persist across tab switches and browser restarts of the host
+// tab, so the document is rarely torn down — only unloaded when the host
+// tab closes. Pause polling while the document is hidden so we do not
+// burn /api/status and chrome.runtime.sendMessage round-trips indefinitely.
+let pollTimer: ReturnType<typeof setInterval> | null = null;
+function startPoll(): void {
+  if (pollTimer !== null) return;
+  pollTimer = setInterval(() => {
+    if (document.visibilityState !== 'visible') return;
+    void refreshConnection().catch((error: unknown) =>
+      setMessage(toErrorMessage(error)),
+    );
+  }, POLL_INTERVAL_MS);
+}
+function stopPoll(): void {
+  if (pollTimer === null) return;
+  clearInterval(pollTimer);
+  pollTimer = null;
+}
+startPoll();
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    // Catch up immediately after becoming visible again.
+    void refreshConnection().catch((error: unknown) =>
+      setMessage(toErrorMessage(error)),
+    );
+  }
+});
 
 window.addEventListener('unload', () => {
-  clearInterval(poll);
+  stopPoll();
 });
 
 // Helpers

@@ -9,12 +9,12 @@ import type { PolicyState } from './policy-state';
 export type SidePanelTab = 'approvals' | 'origins' | 'blocklist' | 'downloads';
 
 // The default tab is the side panel's first view when the panel opens.
-// Approval-worthy items (denials and paused downloads) are time-sensitive —
-// the user must see them immediately — so when either is present, approvals
-// wins. Otherwise origins is the most common lookup target.
+// Approval-worthy items are time-sensitive — the user must see them
+// immediately. Denials surface on the Approvals tab; paused downloads
+// surface on the Downloads tab. Routing only denials to Approvals (and
+// downloads to Downloads) avoids landing the user on an empty panel.
 export function selectDefaultView(state: PolicyState): SidePanelTab {
-  if (state.recentDenials.length > 0 || state.pendingDownloads.length > 0) {
-    return 'approvals';
-  }
+  if (state.recentDenials.length > 0) return 'approvals';
+  if (state.pendingDownloads.length > 0) return 'downloads';
   return 'origins';
 }

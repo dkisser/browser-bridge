@@ -615,20 +615,33 @@ async function initialize(): Promise<void> {
   await clearSessionScoped();
   await updateBadge();
   await connectOffscreen();
-  // The human surface is the side panel (ADR-0010). Make the extension icon
-  // a one-click trigger to open the panel on the active tab.
-  await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+}
+
+// The human surface is the side panel (ADR-0010). Make the extension icon
+// a one-click trigger to open the panel on the active tab. Re-applied on
+// every SW wake so a disable/re-enable in chrome://extensions recovers the
+// behaviour without waiting for the next browser restart.
+async function ensurePanelBehavior(): Promise<void> {
+  try {
+    await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+  } catch (error: unknown) {
+    console.error(error);
+  }
 }
 
 // Initialize offscreen document on extension install/startup
 chrome.runtime.onInstalled.addListener(() => {
   initialize().catch(console.error);
+  ensurePanelBehavior().catch(console.error);
 });
 
 chrome.runtime.onStartup.addListener(() => {
   initialize().catch(console.error);
+  ensurePanelBehavior().catch(console.error);
 });
 
 // Also try on SW wake — if the offscreen was killed or the proxy restarted
-// while we slept, this reconnects it with the stored token.
+// while we slept, this reconnects it with the stored token. The panel
+// behaviour must also be re-applied on every wake (findings #4, #5).
 connectOffscreen().catch(console.error);
+ensurePanelBehavior().catch(console.error);

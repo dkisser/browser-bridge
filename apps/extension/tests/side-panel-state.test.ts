@@ -33,14 +33,14 @@ describe('selectDefaultView', () => {
     expect(selectDefaultView(state)).toBe<SidePanelTab>('approvals');
   });
 
-  it('returns approvals when there is a paused download', () => {
+  it('returns downloads when there is a paused download and no denials', () => {
     const state: PolicyState = {
       ...EMPTY_STATE,
       pendingDownloads: [
         { id: 1, filename: 'foo.zip', url: 'https://x.example/foo.zip' },
       ],
     };
-    expect(selectDefaultView(state)).toBe<SidePanelTab>('approvals');
+    expect(selectDefaultView(state)).toBe<SidePanelTab>('downloads');
   });
 
   it('returns approvals when both denials and downloads are present', () => {
