@@ -3,9 +3,38 @@
 // Commands arrive from offscreen via chrome.runtime.sendMessage, are executed here
 // using Chrome APIs, and responses are returned via the sendResponse callback.
 
-import type { CommandResultMap, CommandType } from '@browser-bridge/shared';
+import {
+  blocklistHit,
+  type CommandResultMap,
+  type CommandType,
+  type Denial,
+  evaluatePolicy,
+  humanDenialMessage,
+  originOf,
+  type PolicyContext,
+  SENSITIVE_FIELD_RECHECK_ERROR,
+} from '@browser-bridge/shared';
+import {
+  clearSessionScoped,
+  decideWithState,
+  getPolicyState,
+  type PolicyState,
+  recordDenial,
+  updateBadge,
+  updatePolicyState,
+} from './policy-state';
 
 const OFFSCREEN_DOCUMENT_URL = 'offscreen.html';
+
+class PolicyDeniedError extends Error {
+  readonly denial: Denial;
+
+  constructor(denial: Denial) {
+    super(humanDenialMessage(denial));
+    this.name = 'PolicyDeniedError';
+    this.denial = denial;
+  }
+}
 
 let _wsConnected = false;
 let creatingOffscreen: Promise<void> | null = null;
@@ -62,11 +91,118 @@ async function queryOffscreenStatus(): Promise<boolean> {
   }
 }
 
+// The offscreen document cannot read chrome.storage, so the SW owns the
+// pairing token and pushes it here. Idempotent: safe to call on every
+// service-worker wake and on every pairing-token change.
+async function connectOffscreen(): Promise<void> {
+  await ensureOffscreenDocument();
+  const state = await getPolicyState();
+  await chrome.runtime
+    .sendMessage({ type: 'connect_ws', token: state.pairingToken })
+    .catch(() => {});
+}
+
+// Read-only commands bypass the gate entirely (no origin lookups at all).
+const GATE_EXEMPT_COMMANDS = new Set<CommandType>(['tab:list', 'pageinfo']);
+
+// Policy enforcement point (ADR-0006..0009): every command is evaluated
+// against the shared policy core before it executes. Throws PolicyDeniedError
+// when the decision is a denial; returns the policy state the decision was
+// made against so handlers can reuse it.
+async function applyPolicyGate(
+  command: CommandType,
+  tabId: number | undefined,
+  params: Record<string, unknown>,
+): Promise<{
+  state: PolicyState;
+  origin: string | null;
+  sensitiveApproved: boolean;
+}> {
+  const notApproved = async () => ({
+    state: await getPolicyState(),
+    origin: null,
+    sensitiveApproved: false,
+  });
+  if (GATE_EXEMPT_COMMANDS.has(command)) return notApproved();
+
+  let origin: string | null = null;
+  let isActiveTab = false;
+
+  if (command === 'navigate' || command === 'tab:new') {
+    // A blank tab:new opens no page — there is no navigation target to gate.
+    if (command === 'tab:new' && !params.url) return notApproved();
+    origin = originOf(params.url as string | undefined);
+  } else if (typeof tabId === 'number') {
+    const tab = await chrome.tabs.get(tabId);
+    origin = originOf(tab.url);
+    if (command === 'screenshot') {
+      const [activeTab] = await chrome.tabs.query({
+        windowId: tab.windowId,
+        active: true,
+      });
+      isActiveTab = activeTab?.id === tabId;
+    }
+  }
+
+  let sensitiveField: boolean | undefined;
+  if (command === 'type' && origin !== null) {
+    // Protected contexts deny `type` below regardless of the field kind, and
+    // content scripts cannot be injected there — skip the preflight.
+    const preflight = await preflightSelector(tabId, params.selector as string);
+    sensitiveField = preflight.sensitive;
+  }
+
+  // Decide against fresh state inside the serialized write queue: the
+  // decision and any grant consumption below are atomic with respect to
+  // concurrent commands, so a singleUse grant cannot be double-consumed.
+  const { decision, state } = await decideWithState((fresh) => {
+    const ctx: PolicyContext = {
+      takeover: fresh.takeover,
+      origin,
+      blocklistHit: blocklistHit(origin, fresh.blockedOrigins),
+      grants: fresh.grants,
+      ...(typeof tabId === 'number' ? { tabId } : {}),
+      ...(sensitiveField !== undefined ? { sensitiveField } : {}),
+      ...(params.submit === true ? { submit: true } : {}),
+    };
+    if (origin !== null) {
+      if (fresh.deniedOrigins[origin] !== undefined) {
+        ctx.originState = 'denied';
+      } else if (fresh.origins[origin] !== undefined) {
+        ctx.originState = 'approved';
+      }
+    }
+    if (command === 'screenshot') {
+      ctx.isVisibleApprovedTab = isActiveTab && ctx.originState === 'approved';
+    }
+    if (command === 'tab:close') {
+      ctx.isAgentTab = fresh.agentTabs.includes(params.tabId as number);
+    }
+    return evaluatePolicy(command, ctx);
+  });
+
+  if (!decision.allow) {
+    await recordDenial(decision.denial);
+    await updateBadge();
+    throw new PolicyDeniedError(decision.denial);
+  }
+  const sensitiveApproved = (decision.consume ?? []).some(
+    (grant) => grant.capability === 'sensitive-field',
+  );
+  return { state, origin, sensitiveApproved };
+}
+
 async function handleCommand(
   msg: CommandMessage,
 ): Promise<CommandResultMap[CommandType]> {
   const { payload } = msg;
   const { command, tabId, params } = payload;
+
+  const { origin, sensitiveApproved } = await applyPolicyGate(
+    command,
+    tabId,
+    params,
+  );
 
   switch (command) {
     case 'navigate': {
@@ -135,11 +271,19 @@ async function handleCommand(
         url: params.url as string | undefined,
         active,
       });
+      if (newTab.id !== undefined) {
+        await updatePolicyState((fresh) => ({
+          agentTabs: [...fresh.agentTabs, newTab.id as number],
+        }));
+      }
       return { id: newTab.id, url: newTab.url };
     }
 
     case 'tab:close': {
       await chrome.tabs.remove(params.tabId as number);
+      await updatePolicyState((fresh) => ({
+        agentTabs: fresh.agentTabs.filter((id) => id !== params.tabId),
+      }));
       return { ok: true };
     }
 
@@ -235,31 +379,54 @@ async function handleCommand(
     case 'gettext':
     case 'gethtml':
     case 'snapshot':
-    case 'wait:element':
-      return (await sendToContentScript(
-        tabId,
-        payload,
-      )) as CommandResultMap[typeof command];
+    case 'wait:element': {
+      // A sensitive-field grant consumed at the gate authorizes this one type
+      // command; the content script re-verifies the field at execution time.
+      const forwarded =
+        command === 'type' && sensitiveApproved
+          ? {
+              ...payload,
+              params: { ...payload.params, sensitiveApproved: true },
+            }
+          : payload;
+      try {
+        return (await sendToContentScript(
+          tabId,
+          forwarded,
+        )) as CommandResultMap[typeof command];
+      } catch (err) {
+        // Execution-point recheck: the field became sensitive between the
+        // preflight and the write. Surface it as a policy denial so the agent
+        // asks for approval instead of retrying blindly.
+        if (
+          err instanceof Error &&
+          err.message === SENSITIVE_FIELD_RECHECK_ERROR
+        ) {
+          const denial: Denial = {
+            reason: 'approval_required',
+            command,
+            ...(origin !== null ? { origin } : {}),
+            capability: 'sensitive-field',
+            detail:
+              'target field was classified sensitive at execution time — obtain approval and retry',
+          };
+          await recordDenial(denial);
+          await updateBadge();
+          throw new PolicyDeniedError(denial);
+        }
+        throw err;
+      }
+    }
 
     default:
       throw new Error(`Unknown command: ${command}`);
   }
 }
 
-async function sendToContentScript(
-  tabId: number | undefined,
-  payload: Record<string, unknown>,
-): Promise<unknown> {
-  if (typeof tabId !== 'number') {
-    throw new Error('Missing required tabId');
-  }
-  const tab = tabId;
-
+async function ensureContentScript(tab: number): Promise<void> {
   try {
     const response = await chrome.tabs.sendMessage(tab, { type: 'ping' });
-    if (response?.type === 'pong') {
-      return await sendContentCommand(tab, payload);
-    }
+    if (response?.type === 'pong') return;
   } catch {
     // Content script not injected, inject it
   }
@@ -270,7 +437,38 @@ async function sendToContentScript(
   });
 
   await new Promise((resolve) => setTimeout(resolve, 100));
-  return await sendContentCommand(tab, payload);
+}
+
+async function sendToContentScript(
+  tabId: number | undefined,
+  payload: Record<string, unknown>,
+): Promise<unknown> {
+  if (typeof tabId !== 'number') {
+    throw new Error('Missing required tabId');
+  }
+  await ensureContentScript(tabId);
+  return await sendContentCommand(tabId, payload);
+}
+
+// Policy preflight for `type`: asks the content script to classify the
+// target element (password / credit-card) before the policy decision.
+async function preflightSelector(
+  tabId: number | undefined,
+  selector: string,
+): Promise<{ sensitive: boolean }> {
+  if (typeof tabId !== 'number') {
+    throw new Error('Missing required tabId');
+  }
+  await ensureContentScript(tabId);
+  const response: { status?: string; data?: unknown; error?: string } =
+    await chrome.tabs.sendMessage(tabId, { type: 'preflight', selector });
+  if (response?.status === 'error') {
+    throw new Error(response.error ?? 'Content script preflight failed');
+  }
+  if (response?.status === 'ok') {
+    return response.data as { sensitive: boolean };
+  }
+  throw new Error('Content script did not respond');
 }
 
 async function sendContentCommand(
@@ -296,9 +494,18 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
     const envelope = request.envelope as CommandMessage;
     handleCommand(envelope)
       .then((data) => sendResponse({ status: 'ok', data }))
-      .catch((err: Error) =>
-        sendResponse({ status: 'error', error: err.message }),
-      );
+      .catch((err: Error) => {
+        if (err instanceof PolicyDeniedError) {
+          sendResponse({
+            status: 'error',
+            error: err.denial.reason,
+            message: humanDenialMessage(err.denial),
+            denied: err.denial,
+          });
+          return;
+        }
+        sendResponse({ status: 'error', error: err.message });
+      });
     return true; // async response
   }
 
@@ -318,12 +525,8 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
 
   // Popup: trigger connection
   if (request.type === 'connect') {
-    ensureOffscreenDocument()
-      .then(() => {
-        // Ask offscreen to connect
-        chrome.runtime.sendMessage({ type: 'connect_ws' }).catch(() => {});
-        sendResponse({ type: 'connected' });
-      })
+    connectOffscreen()
+      .then(() => sendResponse({ type: 'connected' }))
       .catch((err: Error) => {
         sendResponse({ type: 'error', message: err.message });
       });
@@ -333,14 +536,84 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   return false;
 });
 
+// Keep agentTabs in sync with reality: tabs the user closed are no longer
+// agent tabs.
+chrome.tabs.onRemoved.addListener((tabId) => {
+  updatePolicyState((state) => ({
+    agentTabs: state.agentTabs.filter((id) => id !== tabId),
+  })).catch(console.error);
+});
+
+// Downloads started by agent-created tabs are paused until the human
+// resumes or cancels them in the popup (unless human assist is active,
+// in which case the user is in charge already).
+chrome.downloads.onCreated.addListener((item) => {
+  // Installed @types/chrome predates DownloadItem.tabId (Chrome 116+).
+  const download = item as chrome.downloads.DownloadItem & {
+    tabId?: number;
+  };
+  if (download.tabId === undefined || download.tabId < 0) return;
+  void (async () => {
+    try {
+      await chrome.downloads.pause(download.id);
+    } catch {
+      // Pause can race with a download that already completed; ignore.
+    }
+    const recorded = await updatePolicyState((state) => {
+      if (
+        state.takeover ||
+        !state.agentTabs.includes(download.tabId as number)
+      ) {
+        return null;
+      }
+      return {
+        pendingDownloads: [
+          ...state.pendingDownloads,
+          {
+            id: download.id,
+            filename: download.filename,
+            url: download.url,
+          },
+        ],
+      };
+    }).then((state) =>
+      state.pendingDownloads.some((entry) => entry.id === download.id),
+    );
+    if (recorded) await updateBadge();
+  })().catch(console.error);
+});
+
+// Re-pairing rotates the pairing token. The offscreen cannot watch storage
+// itself (only chrome.runtime is available there), so the SW forwards token
+// changes to it — this also covers clears (token → null), which tear the
+// socket down until a new pairing completes.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local' || !changes.policyState) return;
+  const oldToken = (
+    changes.policyState.oldValue as { pairingToken?: string | null } | undefined
+  )?.pairingToken;
+  const newToken = (
+    changes.policyState.newValue as { pairingToken?: string | null } | undefined
+  )?.pairingToken;
+  if (newToken === oldToken) return;
+  connectOffscreen().catch(console.error);
+});
+
+async function initialize(): Promise<void> {
+  await clearSessionScoped();
+  await updateBadge();
+  await connectOffscreen();
+}
+
 // Initialize offscreen document on extension install/startup
 chrome.runtime.onInstalled.addListener(() => {
-  ensureOffscreenDocument().catch(console.error);
+  initialize().catch(console.error);
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  ensureOffscreenDocument().catch(console.error);
+  initialize().catch(console.error);
 });
 
-// Also try on SW wake — if offscreen was somehow killed, recreate it
-ensureOffscreenDocument().catch(console.error);
+// Also try on SW wake — if the offscreen was killed or the proxy restarted
+// while we slept, this reconnects it with the stored token.
+connectOffscreen().catch(console.error);

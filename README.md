@@ -324,9 +324,15 @@ Browser-Bridge/
 
 ## 🛡️ Security
 
-- Only authenticated extensions can register with the WebSocket server.
-- Commands are routed through the server; the local network is not exposed directly.
-- The local proxy connects outbound to the server and extension, minimizing open ports.
+Browser Bridge drives your everyday, logged-in browser, so safety is enforced where actions execute — in the extension — not at the network edge.
+
+- **Paired channel**: `bridge pair` prints a short-lived pairing code; entering it in the extension popup issues a token that authenticates the extension ↔ local-proxy WebSocket (only the token's SHA-256 hash is stored on disk). Unpaired connections are refused, and web pages cannot call the proxy's HTTP API — CORS is restricted to `chrome-extension://` origins.
+- **Loopback only**: the local proxy, WebSocket server, and MCP endpoint bind to `127.0.0.1`; the proxy connects outbound to the server. For non-local deployments the WebSocket server supports API-key auth (`BRIDGE_API_KEYS`).
+- **Single-user, single-machine**: the threat model is one human, one browser, one machine. The WebSocket server does not yet isolate commands/responses between users sharing one server (responses are fanned out to every connected CLI, and command routing keys on the browser ID only) — do not expose it to multiple users until that lands (tracked in `TODO.md`). The default auth provider is a no-op placeholder intended only for loopback.
+- **Working-scope policy** (see `docs/adr/0006`-`0009`): agents act silently only inside their working scope — tabs they opened plus origins a human approved. Crossing it denies the command immediately with a machine-readable reason (`origin_not_approved`, `approval_required`, …) and shows an approval card in the extension popup; approve there, then retry.
+- **Hard denials**: browser system pages (`chrome://`, `chrome-extension://`, `file:`, `javascript:`, …) and the built-in blocklist (including the Chrome Web Store) are rejected with no approval path, so an agent cannot reconfigure the browser.
+- **Human assist**: a takeover switch in the extension popup rejects every agent command until you release it.
+- **Sensitive actions**: typing into password or credit-card fields and form submission (`type` with `submit`) always require a one-time approval; downloads initiated in agent tabs are paused for your review.
 
 ---
 

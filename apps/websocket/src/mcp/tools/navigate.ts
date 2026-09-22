@@ -1,7 +1,7 @@
 import type { FastMCP } from 'fastmcp';
 import { z } from 'zod';
 import { resolveTargetBrowser } from '../browser-lookup';
-import { sendCommand } from '../command-client';
+import { commandErrorMessage, sendCommand } from '../command-client';
 import type { ServerContext, ToolContext } from '../tool-context';
 import { TAB_ID_GUIDANCE } from '../tool-descriptions';
 
@@ -32,9 +32,8 @@ export async function executeNavigate(
     timeoutMs,
   });
 
-  if (result.status !== 'ok') {
-    throw new Error(result.error ?? 'Navigation failed');
-  }
+  if (result.status !== 'ok')
+    throw new Error(commandErrorMessage(result, 'Navigation failed'));
 
   return result.message ?? `Navigated to ${args.url} in tab ${args.tab_id}`;
 }

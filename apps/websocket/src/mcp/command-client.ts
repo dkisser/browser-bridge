@@ -73,6 +73,17 @@ export async function sendEvent(
   }
 }
 
+// Error responses may carry a human-readable `message` next to the machine
+// `error` code (policy denials, relay failures). Prefer it so tool callers
+// see how to recover — e.g. asking the user to approve an origin in the
+// extension popup — instead of a bare reason code that invites blind retries.
+export function commandErrorMessage(
+  result: ResponsePayload,
+  fallback: string,
+): string {
+  return result.message ?? result.error ?? fallback;
+}
+
 function waitForOpen(
   client: ReturnType<typeof createClient>,
   timeoutMs: number,

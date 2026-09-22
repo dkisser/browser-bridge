@@ -1,4 +1,10 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { BrowserStatus } from '@browser-bridge/shared/types';
@@ -11,6 +17,7 @@ interface ProxyConfig {
   browserId: string;
   serverUrl: string;
   apiToken?: string;
+  extensionTokenHash?: string;
 }
 
 interface BufferedCommand {
@@ -38,6 +45,15 @@ export class StateManager {
 
   get apiToken(): string | undefined {
     return this.config.apiToken;
+  }
+
+  get extensionTokenHash(): string | undefined {
+    return this.config.extensionTokenHash;
+  }
+
+  setExtensionTokenHash(hash: string): void {
+    this.config.extensionTokenHash = hash;
+    this.saveConfig();
   }
 
   get status(): BrowserStatus {
@@ -95,6 +111,9 @@ export class StateManager {
     try {
       if (existsSync(CONFIG_FILE)) {
         const data = readFileSync(CONFIG_FILE, 'utf-8');
+        // Tighten permissions on config files written by older versions:
+        // the file holds the extension token hash and cloud API token.
+        chmodSync(CONFIG_FILE, 0o600);
         return JSON.parse(data) as ProxyConfig;
       }
     } catch {
@@ -113,7 +132,10 @@ export class StateManager {
   }
 
   private saveConfigSync(config: ProxyConfig): void {
-    mkdirSync(CONFIG_DIR, { recursive: true });
-    writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+    mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
+    writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), {
+      mode: 0o600,
+    });
+    chmodSync(CONFIG_FILE, 0o600);
   }
 }

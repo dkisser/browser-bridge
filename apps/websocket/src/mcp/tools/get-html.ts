@@ -2,7 +2,7 @@ import { type GethtmlResult, MAX_READ_RESULT_CHARS } from '@browser-bridge/share
 import type { FastMCP } from 'fastmcp';
 import { z } from 'zod';
 import { resolveTargetBrowser } from '../browser-lookup';
-import { sendCommand } from '../command-client';
+import { commandErrorMessage, sendCommand } from '../command-client';
 import type { ServerContext, ToolContext } from '../tool-context';
 import { SELECTOR_GUIDANCE, TAB_ID_GUIDANCE } from '../tool-descriptions';
 
@@ -30,7 +30,8 @@ export async function executeGethtml(
     timeoutMs,
   });
 
-  if (result.status !== 'ok') throw new Error(result.error ?? 'gethtml failed');
+  if (result.status !== 'ok')
+    throw new Error(commandErrorMessage(result, 'gethtml failed'));
   const data = result.data as GethtmlResult;
   if (data.html.length > MAX_READ_RESULT_CHARS) {
     throw new Error(

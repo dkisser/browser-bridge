@@ -3,10 +3,11 @@ import {
   type DomCommandType,
   defaultMaxCharsForFilter,
   renderSnapshotTree,
-  selectorNotFoundMessage,
+  SENSITIVE_FIELD_RECHECK_ERROR,
   type SnapshotFilter,
   type SnapshotNode,
   type SnapshotRole,
+  selectorNotFoundMessage,
   textContainerCandidatesHint,
   type WaitElementResult,
 } from '@browser-bridge/shared';
@@ -21,6 +22,17 @@ function querySelector(selector: string): Element {
   const el = document.querySelector(selector);
   if (!el) throw new Error(`Element not found: ${selector}`);
   return el;
+}
+
+// Fields that always need a one-time human approval before the agent may
+// type into them. The policy preflight and the execution point below share
+// this classifier, and the execution point re-runs it on the live element —
+// a page that flips a field's type between the two checks cannot widen a
+// preflight clear into an unapproved write.
+function isSensitiveField(el: Element): boolean {
+  return el.matches(
+    'input[type="password"], [autocomplete^="cc-"], input[name*="card" i], input[id*="card" i], input[name*="cvv" i], input[name*="password" i], input[name*="passwd" i]',
+  );
 }
 
 function querySelectorByText(text: string): Element {
@@ -66,8 +78,7 @@ function textContainerCandidates(): string[] {
       CANDIDATE_TAGS.has(el.tagName) ||
       el.getAttribute('role') === 'main';
     if (!addressable) continue;
-    const length =
-      el instanceof HTMLElement ? el.innerText.trim().length : 0;
+    const length = el instanceof HTMLElement ? el.innerText.trim().length : 0;
     if (length < CANDIDATE_MIN_TEXT_CHARS) continue;
     pool.push({ el, length });
   }
@@ -410,11 +421,17 @@ function executeCommand(
 
     case 'type': {
       const el = resolveSelector(params.selector as string);
+      if (params.sensitiveApproved !== true && isSensitiveField(el)) {
+        throw new Error(SENSITIVE_FIELD_RECHECK_ERROR);
+      }
       const input = el as HTMLInputElement;
       input.focus();
       input.value = params.text as string;
       input.dispatchEvent(new Event('input', { bubbles: true }));
       input.dispatchEvent(new Event('change', { bubbles: true }));
+      if (params.submit === true && input.form) {
+        input.form.requestSubmit();
+      }
       return { typed: params.text as string };
     }
 
@@ -530,6 +547,18 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
     const payload = request.payload as DomCommand;
     Promise.resolve()
       .then(() => executeCommand(payload))
+      .then((data) => sendResponse({ status: 'ok', data }))
+      .catch((err) => sendResponse({ status: 'error', error: String(err) }));
+    return true;
+  }
+
+  if (request.type === 'preflight') {
+    const selector = request.selector as string;
+    Promise.resolve()
+      .then(() => {
+        const el = resolveSelector(selector);
+        return { sensitive: isSensitiveField(el) };
+      })
       .then((data) => sendResponse({ status: 'ok', data }))
       .catch((err) => sendResponse({ status: 'error', error: String(err) }));
     return true;

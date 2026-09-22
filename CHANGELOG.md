@@ -4,6 +4,18 @@ All notable changes to Browser Bridge are documented here. The format follows [K
 
 ## [Unreleased]
 
+### Added
+- Pairing-based channel authentication: `bridge pair` prints a short-lived code; entering it in the extension popup issues a token (only its SHA-256 hash is stored on disk). The local proxy refuses unpaired WebSocket connections, and its HTTP API rejects non-extension web origins (CORS restricted to `chrome-extension://`).
+- Extension-side policy gate (design in `docs/adr/0006`-`0009`): commands are denied immediately with machine-readable reasons (`human_assist_active`, `origin_not_approved`, `origin_denied`, `origin_blocked`, `action_out_of_scope`, `approval_required`) and surfaced as approval cards in the extension popup. Agents act silently only inside their working scope — agent-opened tabs plus human-approved origins; browser system pages and the built-in blocklist (including the Chrome Web Store) are hard-denied with no approval path.
+- Human assist (takeover) toggle in the popup; one-time approvals for password/credit-card input and form submission (`type` now honors the previously ignored `submit` param); downloads initiated in agent tabs are paused for review; user-managed origin approvals/denials, custom blocklist entries, and session-scoped approvals that expire on browser restart.
+
+### Changed
+- **Breaking for existing installs**: the local proxy now requires a paired extension. After upgrading, run `bridge pair` and enter the code in the extension popup to reconnect (the popup also has a re-pair button if the token goes stale).
+
+### Fixed
+- MCP tools now surface the human-readable recovery guidance from error responses (policy denials, relay failures) instead of only the machine-readable reason code. An `origin_not_approved` denial tells the agent that a human must approve the origin in the Browser Bridge extension popup (toolbar icon) and not to bypass the gate with WebFetch, instead of leaving the agent to blindly retry and fall back to other tools.
+- `bridge service down`/`restart` no longer fail with `BB-E304` on macOS: launchd loads LaunchAgents into the GUI session domain, and current macOS rejects the per-user domain for both `bootout` ("No such process") and `bootstrap` (I/O error), so service lifecycle calls now target `gui/$UID`; `bootout` still falls back to `user/$UID` for jobs parked there by older releases, and a failed bootout surfaces the launchd error instead of swallowing it.
+
 ## [0.2.1] - 2026-09-21
 
 ### Fixed

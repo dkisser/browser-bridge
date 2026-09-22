@@ -1,7 +1,7 @@
 import type { FastMCP } from 'fastmcp';
 import { z } from 'zod';
 import { resolveTargetBrowser } from '../browser-lookup';
-import { sendCommand } from '../command-client';
+import { commandErrorMessage, sendCommand } from '../command-client';
 import type { ServerContext, ToolContext } from '../tool-context';
 import { SELECTOR_GUIDANCE, TAB_ID_GUIDANCE } from '../tool-descriptions';
 
@@ -30,7 +30,7 @@ export async function executeWaitElement(
   });
 
   if (result.status !== 'ok')
-    throw new Error(result.error ?? 'Wait element failed');
+    throw new Error(commandErrorMessage(result, 'Wait element failed'));
   return result.message ?? `Element ${args.selector} found`;
 }
 

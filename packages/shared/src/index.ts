@@ -1,6 +1,29 @@
 export type { AuthProvider, AuthResult, AuthToken } from './auth';
 export { ApiKeyAuthProvider, NoopAuthProvider } from './auth';
-export { LOCAL_WS_PORT, MAX_READ_RESULT_CHARS, WEBSOCKET_PORT } from './constants';
+export {
+  BUILT_IN_BLOCKED_ENTRIES,
+  blocklistHit,
+} from './blocklist';
+export {
+  LOCAL_WS_PORT,
+  MAX_READ_RESULT_CHARS,
+  SENSITIVE_FIELD_RECHECK_ERROR,
+  WEBSOCKET_PORT,
+} from './constants';
+export {
+  selectorMatchedButEmptyMessage,
+  selectorNotFoundMessage,
+  textContainerCandidatesHint,
+} from './messages';
+export type {
+  Denial,
+  DenyReason,
+  Grant,
+  GrantCapability,
+  PolicyContext,
+  PolicyDecision,
+} from './policy';
+export { evaluatePolicy, humanDenialMessage, originOf } from './policy';
 export type {
   SnapshotFilter,
   SnapshotMeta,
@@ -42,8 +65,3 @@ export type {
   WaitElementResult,
 } from './types';
 export { isLocalhost } from './utils';
-export {
-  selectorMatchedButEmptyMessage,
-  selectorNotFoundMessage,
-  textContainerCandidatesHint,
-} from './messages';

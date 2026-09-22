@@ -408,7 +408,7 @@ EOF
   [ "$status" -eq 0 ]
   [[ -f "$BB_HOME/launchagents/com.browser-bridge.bridge.plist" ]]
   [[ ! -f "$HOME/Library/LaunchAgents/com.browser-bridge.bridge.plist" ]]
-  grep -q "bootstrap user/501 $BB_HOME/launchagents/com.browser-bridge.bridge.plist" "$BB_TEST_TMP/launchctl_calls.txt"
+  grep -q "bootstrap gui/501 $BB_HOME/launchagents/com.browser-bridge.bridge.plist" "$BB_TEST_TMP/launchctl_calls.txt"
 }
 
 @test "bridge service up bootstraps from LaunchAgents plist when auto-start is enabled" {
@@ -422,7 +422,7 @@ EOF
 
   run bash "$BRIDGE_TMPL" service up
   [ "$status" -eq 0 ]
-  grep -q "bootstrap user/501 $HOME/Library/LaunchAgents/com.browser-bridge.bridge.plist" "$BB_TEST_TMP/launchctl_calls.txt"
+  grep -q "bootstrap gui/501 $HOME/Library/LaunchAgents/com.browser-bridge.bridge.plist" "$BB_TEST_TMP/launchctl_calls.txt"
 }
 
 # launchctl fake that reports the label as loaded (as a pre-supervision or
@@ -477,8 +477,8 @@ EOF
   run bash "$BRIDGE_TMPL" service up
   [ "$status" -eq 0 ]
   [[ "$output" == *"replaced stale LaunchAgent job"* ]]
-  grep -q "bootout user/501/com.browser-bridge.bridge" "$BB_TEST_TMP/launchctl_calls.txt"
-  grep -q "bootstrap user/501" "$BB_TEST_TMP/launchctl_calls.txt"
+  grep -q "bootout gui/501/com.browser-bridge.bridge" "$BB_TEST_TMP/launchctl_calls.txt"
+  grep -q "bootstrap gui/501" "$BB_TEST_TMP/launchctl_calls.txt"
 }
 
 @test "bridge service up adopts running pidfile-owned services instead of failing BB-E010" {
@@ -500,7 +500,7 @@ EOF
   kill "$WS_PID" "$LP_PID" 2>/dev/null || true
   [ "$status" -eq 0 ]
   [[ "$output" != *"BB-E010"* ]]
-  grep -q "bootstrap user/501" "$BB_TEST_TMP/launchctl_calls.txt"
+  grep -q "bootstrap gui/501" "$BB_TEST_TMP/launchctl_calls.txt"
 }
 
 @test "bridge service down bootouts the supervisor by label when loaded" {
@@ -523,6 +523,33 @@ EOF
 
   run bash "$BRIDGE_TMPL" service down
   [ "$status" -eq 0 ]
+  grep -q "bootout gui/501/com.browser-bridge.bridge" "$BB_TEST_TMP/launchctl_calls.txt"
+}
+
+@test "bridge service down falls back to the user domain for jobs parked there" {
+  make_fake_binaries
+  cp "$BB_TEST_ROOT/install/launchagent.plist.tmpl" "$BB_HOME/launchagent.plist.tmpl"
+  make_fake_uname Darwin
+  make_fake_id 501
+  mkdir -p "$BB_TEST_TMP/bin"
+  cat > "$BB_TEST_TMP/bin/launchctl" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$BB_TEST_TMP/launchctl_calls.txt"
+if [[ "\$1" == "list" ]]; then
+  echo "PID Status Label"
+  echo "4242 0 com.browser-bridge.bridge"
+elif [[ "\$1" == "bootout" && "\$2" == gui/* ]]; then
+  echo "Boot-out failed: 3: No such process" >&2
+  exit 3
+fi
+exit 0
+EOF
+  chmod +x "$BB_TEST_TMP/bin/launchctl"
+  export PATH="$BB_TEST_TMP/bin:$PATH"
+
+  run bash "$BRIDGE_TMPL" service down
+  [ "$status" -eq 0 ]
+  grep -q "bootout gui/501/com.browser-bridge.bridge" "$BB_TEST_TMP/launchctl_calls.txt"
   grep -q "bootout user/501/com.browser-bridge.bridge" "$BB_TEST_TMP/launchctl_calls.txt"
 }
 

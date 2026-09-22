@@ -1,9 +1,10 @@
 #!/usr/bin/env bun
 import type { SnapshotResult } from '@browser-bridge/shared';
-import { WEBSOCKET_PORT } from '@browser-bridge/shared';
+import { LOCAL_WS_PORT, WEBSOCKET_PORT } from '@browser-bridge/shared';
 import type { CommandType } from '@browser-bridge/shared/types';
 import { Command } from 'commander';
 import { listBrowsers } from './commands/listBrowsers';
+import { pair } from './commands/pair';
 import { sendCommand } from './commands/sendCommand';
 
 const program = new Command();
@@ -152,7 +153,7 @@ program
 program
   .command('click <selector>')
   .description(
-    'Click an element. The selector must exist on the page — run snapshot first if unsure.'
+    'Click an element. The selector must exist on the page — run snapshot first if unsure.',
   )
   .action(async (selector: string) => {
     const global = getGlobalOptions(program.opts());
@@ -162,7 +163,7 @@ program
 program
   .command('type <selector> <text>')
   .description(
-    'Type text into an element. The selector must exist on the page — run snapshot first if unsure.'
+    'Type text into an element. The selector must exist on the page — run snapshot first if unsure.',
   )
   .action(async (selector: string, text: string) => {
     const global = getGlobalOptions(program.opts());
@@ -172,7 +173,7 @@ program
 program
   .command('select <selector> <value>')
   .description(
-    'Select an option in a dropdown. The selector must exist on the page — run snapshot first if unsure.'
+    'Select an option in a dropdown. The selector must exist on the page — run snapshot first if unsure.',
   )
   .action(async (selector: string, value: string) => {
     const global = getGlobalOptions(program.opts());
@@ -194,7 +195,7 @@ program
 program
   .command('hover <selector>')
   .description(
-    'Hover over an element. The selector must exist on the page — run snapshot first if unsure.'
+    'Hover over an element. The selector must exist on the page — run snapshot first if unsure.',
   )
   .action(async (selector: string) => {
     const global = getGlobalOptions(program.opts());
@@ -205,7 +206,7 @@ program
 program
   .command('gettext <selector>')
   .description(
-    'Get text content of an element. The selector must exist on the page — run snapshot first if unsure.'
+    'Get text content of an element. The selector must exist on the page — run snapshot first if unsure.',
   )
   .action(async (selector: string) => {
     const global = getGlobalOptions(program.opts());
@@ -215,7 +216,7 @@ program
 program
   .command('gethtml <selector>')
   .description(
-    'Get inner HTML of an element. The selector must exist on the page — run snapshot first if unsure.'
+    'Get inner HTML of an element. The selector must exist on the page — run snapshot first if unsure.',
   )
   .action(async (selector: string) => {
     const global = getGlobalOptions(program.opts());
@@ -296,7 +297,7 @@ program
 program
   .command('wait:element <selector>')
   .description(
-    'Wait for an element to appear. Pick the selector from a snapshot of this page — a guessed selector may never match.'
+    'Wait for an element to appear. Pick the selector from a snapshot of this page — a guessed selector may never match.',
   )
   .option('--timeout <ms>', 'Timeout in ms', '10000')
   .action(async (selector: string, opts: Record<string, unknown>) => {
@@ -343,6 +344,20 @@ program
     } catch (err) {
       outputError(global, 'list_failed', String(err));
     }
+  });
+
+program
+  .command('pair')
+  .description(
+    'Generate a pairing code to connect the browser extension to the local proxy',
+  )
+  .option(
+    '--local <url>',
+    'Local proxy URL',
+    `http://localhost:${LOCAL_WS_PORT}`,
+  )
+  .action(async (opts: { local?: string }) => {
+    await pair({ local: opts.local });
   });
 
 // Reserved for future distributed-mode support. Not yet implemented.

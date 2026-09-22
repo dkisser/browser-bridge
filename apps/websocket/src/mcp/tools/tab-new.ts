@@ -1,7 +1,7 @@
 import type { FastMCP } from 'fastmcp';
 import { z } from 'zod';
 import { resolveTargetBrowser } from '../browser-lookup';
-import { sendCommand } from '../command-client';
+import { commandErrorMessage, sendCommand } from '../command-client';
 import type { ServerContext, ToolContext } from '../tool-context';
 
 export const TabNewInputSchema = z.object({
@@ -33,7 +33,8 @@ export async function executeTabNew(
     timeoutMs,
   });
 
-  if (result.status !== 'ok') throw new Error(result.error ?? 'tab:new failed');
+  if (result.status !== 'ok')
+    throw new Error(commandErrorMessage(result, 'tab:new failed'));
   return result.message ?? 'New tab opened';
 }
 
