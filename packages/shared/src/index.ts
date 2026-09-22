@@ -45,6 +45,7 @@ export type {
   CommandPayload,
   CommandResultMap,
   CommandType,
+  ContentScriptUnavailableReason,
   DomCommandResult,
   DomCommandType,
   Envelope,

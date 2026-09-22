@@ -16,6 +16,7 @@ import {
 } from '@browser-bridge/shared';
 import {
   type ChromeLike,
+  ContentScriptUnavailableError,
   dispatchToContentScript as dispatchToContentScriptRaw,
 } from './content-bridge';
 import {
@@ -479,6 +480,18 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
             error: err.denial.reason,
             message: humanDenialMessage(err.denial),
             denied: err.denial,
+          });
+          return;
+        }
+        // ContentScriptUnavailableError carries a structured reason so MCP
+        // tools can attach a recovery hint (see withRecoveryHint in the
+        // websocket command-client). Surface it alongside the message.
+        if (err instanceof ContentScriptUnavailableError) {
+          sendResponse({
+            status: 'error',
+            error: err.reason,
+            message: err.message,
+            reason: err.reason,
           });
           return;
         }

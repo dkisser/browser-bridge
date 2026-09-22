@@ -8,6 +8,8 @@
 // opaque message. This wrapper classifies each failure mode so callers (and
 // end users via the MCP tool error path) get an actionable reason code.
 
+import type { ContentScriptUnavailableReason } from '@browser-bridge/shared';
+
 export interface ChromeLike {
   tabs: {
     sendMessage: (tabId: number, message: unknown) => Promise<unknown>;
@@ -29,22 +31,27 @@ const LISTENER_WAIT_TIMEOUT_MS = 2000;
 // URLs where chrome.scripting.executeScript is not allowed. Content
 // scripts can never reach these pages — surface a clean error instead of
 // letting the generic "Receiving end does not exist" mask the real cause.
+//
+// Note: this is independent of `originOf`'s policy-layer gating, which
+// only blocks http(s)-vs-everything for *command* evaluation. The bridge
+// needs the *injection* surface; a page can be policy-allowed (e.g. via a
+// per-origin grant) yet still reject executeScript if it lives at one of
+// these schemes. Keep the two lists separate.
 const RESTRICTED_URL_PREFIXES = [
   'chrome://',
   'chrome-extension://',
+  'chrome-devtools://',
+  'chrome-error://',
+  'chrome-search://',
+  'chrome-untrusted://',
   'edge://',
+  'brave://',
   'devtools://',
   'view-source:',
   'data:',
 ];
 
 const RECEIVING_END_PATTERN = /Receiving end does not exist/i;
-
-export type ContentScriptUnavailableReason =
-  | 'tab_not_found'
-  | 'restricted_page'
-  | 'injection_failed'
-  | 'no_listener';
 
 export class ContentScriptUnavailableError extends Error {
   readonly reason: ContentScriptUnavailableReason;
@@ -194,9 +201,21 @@ export async function dispatchToContentScript(
     throw new Error('Content script did not respond');
   } catch (err) {
     if (isReceivingEndError(err)) {
+      // Chrome emits "Receiving end does not exist" for both "the listener
+      // disappeared" and "the tab itself is gone". Without this re-check,
+      // agents retry blindly on a tab that will never come back. The cheap
+      // round-trip is worth the precise reason code.
+      let tabStillExists = true;
+      try {
+        await chrome.tabs.get(tabId);
+      } catch {
+        tabStillExists = false;
+      }
       throw new ContentScriptUnavailableError(
-        `content script on tab ${tabId} stopped responding mid-command`,
-        'no_listener',
+        tabStillExists
+          ? `content script on tab ${tabId} stopped responding mid-command`
+          : `tab ${tabId} was closed during command`,
+        tabStillExists ? 'no_listener' : 'tab_not_found',
         tabId,
       );
     }

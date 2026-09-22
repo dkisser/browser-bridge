@@ -195,6 +195,28 @@ describe('ensureContentScript', () => {
       expect(state.scriptingCalls).toHaveLength(0);
     });
 
+    it('throws restricted_page for every other Chrome internal / browser-specific scheme', async () => {
+      // Keep this in sync with RESTRICTED_URL_PREFIXES in content-bridge.ts.
+      // Each entry MUST be rejected without calling executeScript — Chrome
+      // throws "Cannot access contents of the page" on these schemes, and
+      // surfacing that as `injection_failed` would hide the real reason.
+      for (const url of [
+        'chrome-devtools://devtools/bundled/devtools_app.html',
+        'chrome-error://chromewebdata/',
+        'chrome-search://local-ntp/local-ntp.html',
+        'chrome-untrusted://terminal/terminal.html',
+        'edge://settings/',
+        'brave://settings/',
+      ]) {
+        const { chrome, state } = createMock();
+        state.tabs.set(1, tab(1, url));
+
+        const err = await ensureContentScript(chrome, 1).catch((e) => e);
+        expect(err).toMatchObject({ reason: 'restricted_page', url });
+        expect(state.scriptingCalls).toHaveLength(0);
+      }
+    });
+
     it('throws restricted_page when the tab has no URL yet', async () => {
       const { chrome, state } = createMock();
       state.tabs.set(1, { id: 1 } as chrome.tabs.Tab);
@@ -255,10 +277,12 @@ describe('dispatchToContentScript', () => {
     );
   });
 
-  it('wraps the mid-command "Receiving end does not exist" as no_listener', async () => {
+  it('wraps the mid-command "Receiving end does not exist" as no_listener when the tab is still alive', async () => {
     const { chrome, state } = createMock({ requireInjectionForPing: false });
     state.tabs.set(1, tab(1));
     // Ping succeeds so ensureContentScript passes; commands then fail.
+    // Tab stays registered in `state.tabs`, so chrome.tabs.get(tabId)
+    // still resolves — listener is gone, not the tab.
     state.dropNonPing = true;
 
     const err = await dispatchToContentScript(chrome, 1, {
@@ -267,6 +291,34 @@ describe('dispatchToContentScript', () => {
     }).catch((e) => e);
     expect(err).toBeInstanceOf(ContentScriptUnavailableError);
     expect(err).toMatchObject({ reason: 'no_listener', tabId: 1 });
+  });
+
+  it('classifies the same mid-command error as tab_not_found when the tab was closed', async () => {
+    // Chrome emits "Receiving end does not exist" for both "listener gone"
+    // and "tab gone"; without the re-check, an agent would retry blindly
+    // on a tab that will never come back. Simulate "tab closed mid-command"
+    // by making `tabs.get` reject on the second call (the catch-block's
+    // re-check) while succeeding on the first (ensureContentScript's
+    // existence check).
+    const { chrome, state } = createMock({ requireInjectionForPing: false });
+    state.tabs.set(1, tab(1));
+    const realGet = chrome.tabs.get;
+    let getCalls = 0;
+    (chrome.tabs as unknown as { get: typeof realGet }).get = async (
+      tabId: number,
+    ) => {
+      getCalls += 1;
+      if (getCalls >= 2) throw new Error(`No tab with id: ${tabId}`);
+      return realGet(tabId);
+    };
+    state.dropNonPing = true;
+
+    const err = await dispatchToContentScript(chrome, 1, {
+      type: 'command',
+      payload: { command: 'scroll' },
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(ContentScriptUnavailableError);
+    expect(err).toMatchObject({ reason: 'tab_not_found', tabId: 1 });
   });
 
   it('propagates content script status:error responses as Error', async () => {
