@@ -167,8 +167,32 @@ describe('read-only commands', () => {
 
 describe('origin gate', () => {
   it('allows gated commands on approved origins', () => {
-    for (const command of ['navigate', 'click', 'type', 'gettext'] as const) {
+    for (const command of [
+      'navigate',
+      'click',
+      'type',
+      'gettext',
+      'snapshot',
+      'wait:element',
+    ] as const) {
       expect(evaluatePolicy(command, ctx()).allow).toBe(true);
+    }
+  });
+
+  it('denies page-content reads (snapshot, wait:element, gettext, gethtml) on unapproved origins', () => {
+    for (const command of [
+      'snapshot',
+      'wait:element',
+      'gettext',
+      'gethtml',
+    ] as const) {
+      expectDeny(
+        evaluatePolicy(
+          command,
+          ctx({ origin: 'https://unapproved.site', originState: undefined }),
+        ),
+        'origin_not_approved',
+      );
     }
   });
 
@@ -275,6 +299,39 @@ describe('type: submit and sensitive fields', () => {
     );
   });
 
+  it('an origin grant does not short-circuit the sensitive-field check', () => {
+    // Regression: the origin gate used to return early with the origin grant,
+    // letting `type` into a password field through with only origin approval.
+    const decision = evaluatePolicy(
+      'type',
+      ctx({
+        originState: undefined,
+        sensitiveField: true,
+        grants: [grant()],
+      }),
+    );
+    expectDeny(decision, 'approval_required');
+    if (!decision.allow)
+      expect(decision.denial.capability).toBe('sensitive-field');
+  });
+
+  it('consumes the origin grant together with submit/sensitive grants', () => {
+    const originGrant = grant();
+    const g1 = grant({ capability: 'submit' });
+    const g2 = grant({ capability: 'sensitive-field' });
+    const decision = evaluatePolicy(
+      'type',
+      ctx({
+        originState: undefined,
+        submit: true,
+        sensitiveField: true,
+        grants: [originGrant, g1, g2],
+      }),
+    );
+    expect(decision.allow).toBe(true);
+    if (decision.allow) expect(decision.consume).toEqual([originGrant, g1, g2]);
+  });
+
   it('consumes both grants when submit and sensitive apply together', () => {
     const g1 = grant({ capability: 'submit' });
     const g2 = grant({ capability: 'sensitive-field' });
@@ -337,18 +394,32 @@ describe('tab:close', () => {
   });
 });
 
-describe('everything else passes', () => {
-  it('allows goBack/goForward/refresh/wait/tab:switch on normal origins', () => {
+describe('unrestricted commands', () => {
+  it('allows goBack/goForward/refresh/wait:navigation/tab:switch on normal origins', () => {
     for (const command of [
       'goBack',
       'goForward',
       'refresh',
-      'wait:element',
       'wait:navigation',
       'tab:switch',
     ] as const) {
       expect(evaluatePolicy(command, ctx()).allow).toBe(true);
     }
+  });
+});
+
+describe('fail-closed policy', () => {
+  it('denies commands it does not recognize instead of allowing them', () => {
+    const decision = evaluatePolicy('wipeHistory' as CommandType, ctx());
+    expectDeny(decision, 'unknown_command');
+  });
+
+  it('denies unknown commands even on approved origins with grants', () => {
+    const decision = evaluatePolicy(
+      'eval' as CommandType,
+      ctx({ grants: [grant()], sensitiveField: true, submit: true }),
+    );
+    expectDeny(decision, 'unknown_command');
   });
 });
 
@@ -383,6 +454,7 @@ describe('humanDenialMessage', () => {
       'origin_blocked',
       'action_out_of_scope',
       'approval_required',
+      'unknown_command',
     ] as const;
     for (const reason of reasons) {
       const message = humanDenialMessage({

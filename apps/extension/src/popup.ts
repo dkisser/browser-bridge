@@ -10,6 +10,7 @@ import {
   removeDenial,
   setPolicyState,
   updateBadge,
+  updatePolicyState,
 } from './policy-state';
 
 const API_BASE = `http://localhost:${LOCAL_WS_PORT}`;
@@ -377,50 +378,50 @@ async function handleDenialAction(
   action: string,
   index: number,
 ): Promise<void> {
-  const state = await getPolicyState();
-  const denial = state.recentDenials[index];
-  if (!denial) return;
-  const remaining = state.recentDenials.filter((_, i) => i !== index);
-  switch (action) {
-    case 'approve-session':
-    case 'approve-always': {
-      if (denial.origin === undefined) return;
-      await setPolicyState({
-        origins: {
-          ...state.origins,
-          [denial.origin]: action === 'approve-session' ? 'session' : 'always',
-        },
-        recentDenials: remaining,
-      });
-      break;
-    }
-    case 'deny-origin': {
-      if (denial.origin === undefined) return;
-      await setPolicyState({
-        deniedOrigins: { ...state.deniedOrigins, [denial.origin]: 'always' },
-        recentDenials: remaining,
-      });
-      break;
-    }
-    case 'allow-once': {
-      const grant: Grant = {
-        capability: denial.capability ?? 'submit',
-        ...(denial.origin !== undefined ? { origin: denial.origin } : {}),
-        expiresAt: Date.now() + GRANT_TTL_MS,
-        singleUse: true,
-      };
-      await setPolicyState({
-        grants: [...state.grants, grant],
-        recentDenials: remaining,
-      });
-      break;
-    }
-    case 'dismiss':
-      await removeDenial(index);
-      break;
-    default:
-      return;
+  if (action === 'dismiss') {
+    await removeDenial(index);
+    await updateBadge();
+    return;
   }
+  // Fresh state inside the serialized queue: a concurrent grant consumption
+  // cannot be overwritten by a stale read-modify-write here.
+  await updatePolicyState((state) => {
+    const denial = state.recentDenials[index];
+    if (!denial) return null;
+    const remaining = state.recentDenials.filter((_, i) => i !== index);
+    switch (action) {
+      case 'approve-session':
+      case 'approve-always': {
+        if (denial.origin === undefined) return null;
+        return {
+          origins: {
+            ...state.origins,
+            [denial.origin]:
+              action === 'approve-session' ? 'session' : 'always',
+          },
+          recentDenials: remaining,
+        };
+      }
+      case 'deny-origin': {
+        if (denial.origin === undefined) return null;
+        return {
+          deniedOrigins: { ...state.deniedOrigins, [denial.origin]: 'always' },
+          recentDenials: remaining,
+        };
+      }
+      case 'allow-once': {
+        const grant: Grant = {
+          capability: denial.capability ?? 'submit',
+          ...(denial.origin !== undefined ? { origin: denial.origin } : {}),
+          expiresAt: Date.now() + GRANT_TTL_MS,
+          singleUse: true,
+        };
+        return { grants: [...state.grants, grant], recentDenials: remaining };
+      }
+      default:
+        return null;
+    }
+  });
   await updateBadge();
 }
 
@@ -443,26 +444,23 @@ originsList.addEventListener('click', (event) => {
     return;
   }
   void (async () => {
-    const state = await getPolicyState();
-    const map = kind === 'origins' ? state.origins : state.deniedOrigins;
-    const next = Object.fromEntries(
-      Object.entries(map).filter(([key]) => key !== origin),
-    );
-    await setPolicyState(
-      kind === 'origins' ? { origins: next } : { deniedOrigins: next },
-    );
+    await updatePolicyState((state) => {
+      const map = kind === 'origins' ? state.origins : state.deniedOrigins;
+      const next = Object.fromEntries(
+        Object.entries(map).filter(([key]) => key !== origin),
+      );
+      return kind === 'origins' ? { origins: next } : { deniedOrigins: next };
+    });
   })().catch(console.error);
 });
 
 async function addBlockEntry(): Promise<void> {
   const entry = blockInput.value.trim();
   if (entry === '') return;
-  const state = await getPolicyState();
-  if (state.blockedOrigins.includes(entry)) {
-    blockInput.value = '';
-    return;
-  }
-  await setPolicyState({ blockedOrigins: [...state.blockedOrigins, entry] });
+  await updatePolicyState((state) => {
+    if (state.blockedOrigins.includes(entry)) return null;
+    return { blockedOrigins: [...state.blockedOrigins, entry] };
+  });
   blockInput.value = '';
 }
 
@@ -480,10 +478,9 @@ blocklistDiv.addEventListener('click', (event) => {
   const entry = button.getAttribute('data-entry');
   if (entry === null) return;
   void (async () => {
-    const state = await getPolicyState();
-    await setPolicyState({
+    await updatePolicyState((state) => ({
       blockedOrigins: state.blockedOrigins.filter((item) => item !== entry),
-    });
+    }));
   })().catch(console.error);
 });
 
@@ -503,10 +500,9 @@ downloadsList.addEventListener('click', (event) => {
     } catch {
       // The download may have finished or been cancelled already.
     }
-    const state = await getPolicyState();
-    await setPolicyState({
+    await updatePolicyState((state) => ({
       pendingDownloads: state.pendingDownloads.filter((d) => d.id !== id),
-    });
+    }));
     await updateBadge();
   })().catch(console.error);
 });

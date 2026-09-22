@@ -8,6 +8,10 @@ import {
 const CODE_LENGTH = 8;
 const CODE_TTL_MS = 5 * 60 * 1000;
 const MAX_CONFIRM_ATTEMPTS = 5;
+// Failed confirmations count against a rolling window that start() must not
+// reset — otherwise alternating start/confirm re-opens a fresh 5-try budget
+// for every new code.
+const ATTEMPT_WINDOW_MS = 10 * 60 * 1000;
 // Crockford Base32: no I, L, O, U — unambiguous to read and type.
 const CODE_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 
@@ -23,7 +27,6 @@ export type PairConfirmResult =
 interface PendingCode {
   code: string;
   expiresAt: number;
-  attempts: number;
 }
 
 export function hashToken(token: string): string {
@@ -32,6 +35,10 @@ export function hashToken(token: string): string {
 
 export class PairingManager {
   private pending: PendingCode | null = null;
+  // Timestamps of failed confirmations inside the rolling window. start()
+  // intentionally does NOT clear this: the failure budget is per-window, not
+  // per-code.
+  private failures: number[] = [];
 
   constructor(
     private getTokenHash: () => string | undefined,
@@ -47,7 +54,7 @@ export class PairingManager {
     for (let i = 0; i < CODE_LENGTH; i++) {
       code += CODE_ALPHABET[randomInt(CODE_ALPHABET.length)];
     }
-    this.pending = { code, expiresAt: now + CODE_TTL_MS, attempts: 0 };
+    this.pending = { code, expiresAt: now + CODE_TTL_MS };
     return { code, expiresIn: CODE_TTL_MS };
   }
 
@@ -60,25 +67,26 @@ export class PairingManager {
       this.pending = null;
       return { ok: false, error: 'code_expired' };
     }
-    if (pending.attempts >= MAX_CONFIRM_ATTEMPTS) {
-      this.pending = null;
+    this.failures = this.failures.filter((at) => now - at < ATTEMPT_WINDOW_MS);
+    if (this.failures.length >= MAX_CONFIRM_ATTEMPTS) {
       return { ok: false, error: 'too_many_attempts' };
     }
-    if (normalizeCode(code) !== pending.code) {
-      pending.attempts += 1;
-      if (pending.attempts >= MAX_CONFIRM_ATTEMPTS) {
-        this.pending = null;
+    if (!codesEqual(code, pending.code)) {
+      this.failures.push(now);
+      if (this.failures.length >= MAX_CONFIRM_ATTEMPTS) {
         return { ok: false, error: 'too_many_attempts' };
       }
       return {
         ok: false,
         error: 'invalid_code',
-        attemptsRemaining: MAX_CONFIRM_ATTEMPTS - pending.attempts,
+        attemptsRemaining: MAX_CONFIRM_ATTEMPTS - this.failures.length,
       };
     }
     const token = randomBytes(32).toString('hex');
     this.setTokenHash(hashToken(token));
     this.pending = null;
+    // A successful pairing clears the failure budget for the next round.
+    this.failures = [];
     return { ok: true, token };
   }
 
@@ -95,4 +103,13 @@ export class PairingManager {
 
 function normalizeCode(code: string): string {
   return code.toUpperCase().replace(/-/g, '').trim();
+}
+
+// Constant-time comparison, matching the discipline of verify(): the pairing
+// code is a bearer secret while it lives, so its check must not short-circuit
+// on the first differing character.
+function codesEqual(input: string, expected: string): boolean {
+  const a = Buffer.from(normalizeCode(input));
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
 }

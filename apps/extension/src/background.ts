@@ -12,14 +12,16 @@ import {
   humanDenialMessage,
   originOf,
   type PolicyContext,
+  SENSITIVE_FIELD_RECHECK_ERROR,
 } from '@browser-bridge/shared';
 import {
   clearSessionScoped,
+  decideWithState,
   getPolicyState,
   type PolicyState,
   recordDenial,
-  setPolicyState,
   updateBadge,
+  updatePolicyState,
 } from './policy-state';
 
 const OFFSCREEN_DOCUMENT_URL = 'offscreen.html';
@@ -105,81 +107,89 @@ const GATE_EXEMPT_COMMANDS = new Set<CommandType>(['tab:list', 'pageinfo']);
 
 // Policy enforcement point (ADR-0006..0009): every command is evaluated
 // against the shared policy core before it executes. Throws PolicyDeniedError
-// when the decision is a denial; returns the loaded policy state so handlers
-// can reuse it.
+// when the decision is a denial; returns the policy state the decision was
+// made against so handlers can reuse it.
 async function applyPolicyGate(
   command: CommandType,
   tabId: number | undefined,
   params: Record<string, unknown>,
-): Promise<PolicyState> {
-  const state = await getPolicyState();
-  if (GATE_EXEMPT_COMMANDS.has(command)) return state;
+): Promise<{
+  state: PolicyState;
+  origin: string | null;
+  sensitiveApproved: boolean;
+}> {
+  const notApproved = async () => ({
+    state: await getPolicyState(),
+    origin: null,
+    sensitiveApproved: false,
+  });
+  if (GATE_EXEMPT_COMMANDS.has(command)) return notApproved();
 
-  const ctx: PolicyContext = { takeover: state.takeover, origin: null };
   let origin: string | null = null;
+  let isActiveTab = false;
 
   if (command === 'navigate' || command === 'tab:new') {
     // A blank tab:new opens no page — there is no navigation target to gate.
-    if (command === 'tab:new' && !params.url) return state;
+    if (command === 'tab:new' && !params.url) return notApproved();
     origin = originOf(params.url as string | undefined);
   } else if (typeof tabId === 'number') {
-    ctx.tabId = tabId;
     const tab = await chrome.tabs.get(tabId);
     origin = originOf(tab.url);
-  }
-  ctx.origin = origin;
-  ctx.blocklistHit = blocklistHit(origin, state.blockedOrigins);
-
-  if (origin !== null) {
-    if (state.deniedOrigins[origin] !== undefined) {
-      ctx.originState = 'denied';
-    } else if (state.origins[origin] !== undefined) {
-      ctx.originState = 'approved';
+    if (command === 'screenshot') {
+      const [activeTab] = await chrome.tabs.query({
+        windowId: tab.windowId,
+        active: true,
+      });
+      isActiveTab = activeTab?.id === tabId;
     }
   }
 
-  if (command === 'screenshot' && typeof tabId === 'number') {
-    const tab = await chrome.tabs.get(tabId);
-    const [activeTab] = await chrome.tabs.query({
-      windowId: tab.windowId,
-      active: true,
-    });
-    ctx.isVisibleApprovedTab =
-      activeTab?.id === tabId && ctx.originState === 'approved';
-  }
-
-  if (command === 'tab:close') {
-    ctx.isAgentTab = state.agentTabs.includes(params.tabId as number);
-  }
-
-  if (command === 'type') {
+  let sensitiveField: boolean | undefined;
+  if (command === 'type' && origin !== null) {
     // Protected contexts deny `type` below regardless of the field kind, and
     // content scripts cannot be injected there — skip the preflight.
-    if (origin !== null) {
-      const preflight = await preflightSelector(
-        tabId,
-        params.selector as string,
-      );
-      ctx.sensitiveField = preflight.sensitive;
-    }
-    ctx.submit = params.submit === true;
+    const preflight = await preflightSelector(tabId, params.selector as string);
+    sensitiveField = preflight.sensitive;
   }
 
-  ctx.grants = state.grants;
+  // Decide against fresh state inside the serialized write queue: the
+  // decision and any grant consumption below are atomic with respect to
+  // concurrent commands, so a singleUse grant cannot be double-consumed.
+  const { decision, state } = await decideWithState((fresh) => {
+    const ctx: PolicyContext = {
+      takeover: fresh.takeover,
+      origin,
+      blocklistHit: blocklistHit(origin, fresh.blockedOrigins),
+      grants: fresh.grants,
+      ...(typeof tabId === 'number' ? { tabId } : {}),
+      ...(sensitiveField !== undefined ? { sensitiveField } : {}),
+      ...(params.submit === true ? { submit: true } : {}),
+    };
+    if (origin !== null) {
+      if (fresh.deniedOrigins[origin] !== undefined) {
+        ctx.originState = 'denied';
+      } else if (fresh.origins[origin] !== undefined) {
+        ctx.originState = 'approved';
+      }
+    }
+    if (command === 'screenshot') {
+      ctx.isVisibleApprovedTab = isActiveTab && ctx.originState === 'approved';
+    }
+    if (command === 'tab:close') {
+      ctx.isAgentTab = fresh.agentTabs.includes(params.tabId as number);
+    }
+    return evaluatePolicy(command, ctx);
+  });
 
-  const decision = evaluatePolicy(command, ctx);
   if (!decision.allow) {
     await recordDenial(decision.denial);
     await updateBadge();
     throw new PolicyDeniedError(decision.denial);
   }
-  if (decision.consume) {
-    const consumed = decision.consume;
-    await setPolicyState({
-      grants: state.grants.filter((grant) => !consumed.includes(grant)),
-    });
-  }
-  return state;
+  const sensitiveApproved = (decision.consume ?? []).some(
+    (grant) => grant.capability === 'sensitive-field',
+  );
+  return { state, origin, sensitiveApproved };
 }
 
 async function handleCommand(
@@ -188,7 +198,11 @@ async function handleCommand(
   const { payload } = msg;
   const { command, tabId, params } = payload;
 
-  const state = await applyPolicyGate(command, tabId, params);
+  const { origin, sensitiveApproved } = await applyPolicyGate(
+    command,
+    tabId,
+    params,
+  );
 
   switch (command) {
     case 'navigate': {
@@ -258,16 +272,18 @@ async function handleCommand(
         active,
       });
       if (newTab.id !== undefined) {
-        await setPolicyState({ agentTabs: [...state.agentTabs, newTab.id] });
+        await updatePolicyState((fresh) => ({
+          agentTabs: [...fresh.agentTabs, newTab.id as number],
+        }));
       }
       return { id: newTab.id, url: newTab.url };
     }
 
     case 'tab:close': {
       await chrome.tabs.remove(params.tabId as number);
-      await setPolicyState({
-        agentTabs: state.agentTabs.filter((id) => id !== params.tabId),
-      });
+      await updatePolicyState((fresh) => ({
+        agentTabs: fresh.agentTabs.filter((id) => id !== params.tabId),
+      }));
       return { ok: true };
     }
 
@@ -363,11 +379,44 @@ async function handleCommand(
     case 'gettext':
     case 'gethtml':
     case 'snapshot':
-    case 'wait:element':
-      return (await sendToContentScript(
-        tabId,
-        payload,
-      )) as CommandResultMap[typeof command];
+    case 'wait:element': {
+      // A sensitive-field grant consumed at the gate authorizes this one type
+      // command; the content script re-verifies the field at execution time.
+      const forwarded =
+        command === 'type' && sensitiveApproved
+          ? {
+              ...payload,
+              params: { ...payload.params, sensitiveApproved: true },
+            }
+          : payload;
+      try {
+        return (await sendToContentScript(
+          tabId,
+          forwarded,
+        )) as CommandResultMap[typeof command];
+      } catch (err) {
+        // Execution-point recheck: the field became sensitive between the
+        // preflight and the write. Surface it as a policy denial so the agent
+        // asks for approval instead of retrying blindly.
+        if (
+          err instanceof Error &&
+          err.message === SENSITIVE_FIELD_RECHECK_ERROR
+        ) {
+          const denial: Denial = {
+            reason: 'approval_required',
+            command,
+            ...(origin !== null ? { origin } : {}),
+            capability: 'sensitive-field',
+            detail:
+              'target field was classified sensitive at execution time — obtain approval and retry',
+          };
+          await recordDenial(denial);
+          await updateBadge();
+          throw new PolicyDeniedError(denial);
+        }
+        throw err;
+      }
+    }
 
     default:
       throw new Error(`Unknown command: ${command}`);
@@ -490,13 +539,9 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
 // Keep agentTabs in sync with reality: tabs the user closed are no longer
 // agent tabs.
 chrome.tabs.onRemoved.addListener((tabId) => {
-  getPolicyState()
-    .then((state) =>
-      setPolicyState({
-        agentTabs: state.agentTabs.filter((id) => id !== tabId),
-      }),
-    )
-    .catch(console.error);
+  updatePolicyState((state) => ({
+    agentTabs: state.agentTabs.filter((id) => id !== tabId),
+  })).catch(console.error);
 });
 
 // Downloads started by agent-created tabs are paused until the human
@@ -509,26 +554,32 @@ chrome.downloads.onCreated.addListener((item) => {
   };
   if (download.tabId === undefined || download.tabId < 0) return;
   void (async () => {
-    const state = await getPolicyState();
-    if (state.takeover || !state.agentTabs.includes(download.tabId as number)) {
-      return;
-    }
     try {
       await chrome.downloads.pause(download.id);
     } catch {
       // Pause can race with a download that already completed; ignore.
     }
-    await setPolicyState({
-      pendingDownloads: [
-        ...state.pendingDownloads,
-        {
-          id: download.id,
-          filename: download.filename,
-          url: download.url,
-        },
-      ],
-    });
-    await updateBadge();
+    const recorded = await updatePolicyState((state) => {
+      if (
+        state.takeover ||
+        !state.agentTabs.includes(download.tabId as number)
+      ) {
+        return null;
+      }
+      return {
+        pendingDownloads: [
+          ...state.pendingDownloads,
+          {
+            id: download.id,
+            filename: download.filename,
+            url: download.url,
+          },
+        ],
+      };
+    }).then((state) =>
+      state.pendingDownloads.some((entry) => entry.id === download.id),
+    );
+    if (recorded) await updateBadge();
   })().catch(console.error);
 });
 

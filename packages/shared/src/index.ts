@@ -7,6 +7,7 @@ export {
 export {
   LOCAL_WS_PORT,
   MAX_READ_RESULT_CHARS,
+  SENSITIVE_FIELD_RECHECK_ERROR,
   WEBSOCKET_PORT,
 } from './constants';
 export {

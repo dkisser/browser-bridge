@@ -201,10 +201,13 @@ describe('LocalServer HTTP API', () => {
   });
 
   describe('websocket upgrade gate', () => {
-    function tryWs(url: string): Promise<{ opened: boolean }> {
+    function tryWs(
+      url: string,
+      protocols?: string[],
+    ): Promise<{ opened: boolean }> {
       return new Promise((resolve) => {
         let opened = false;
-        const ws = new WebSocket(url);
+        const ws = new WebSocket(url, protocols);
         const timer = setTimeout(() => {
           ws.close();
           resolve({ opened });
@@ -228,13 +231,13 @@ describe('LocalServer HTTP API', () => {
     });
 
     it('rejects upgrade with a wrong token', async () => {
-      const { opened } = await tryWs(
-        `ws://localhost:${port}/?token=${'ab'.repeat(32)}`,
-      );
+      const { opened } = await tryWs(`ws://localhost:${port}/`, [
+        'ab'.repeat(32),
+      ]);
       expect(opened).toBe(false);
     });
 
-    it('accepts upgrade with the paired token', async () => {
+    it('accepts upgrade with the paired token in the subprotocol header', async () => {
       const startRes = await fetch(`http://localhost:${port}/api/pair/start`, {
         method: 'POST',
       });
@@ -249,11 +252,11 @@ describe('LocalServer HTTP API', () => {
       );
       const { token } = (await confirmRes.json()).data;
 
-      const { opened } = await tryWs(`ws://localhost:${port}/?token=${token}`);
+      const { opened } = await tryWs(`ws://localhost:${port}/`, [token]);
       expect(opened).toBe(true);
     });
 
-    it('accepts a fresh token after re-pairing', async () => {
+    it('rejects a stale token after re-pairing', async () => {
       const startRes = await fetch(`http://localhost:${port}/api/pair/start`, {
         method: 'POST',
       });
@@ -268,8 +271,25 @@ describe('LocalServer HTTP API', () => {
       );
       const { token } = (await confirmRes.json()).data;
 
-      const { opened } = await tryWs(`ws://localhost:${port}/?token=${token}`);
-      expect(opened).toBe(true);
+      // Re-pair: the previous token must no longer authenticate.
+      const start2 = await fetch(`http://localhost:${port}/api/pair/start`, {
+        method: 'POST',
+      });
+      const { code: code2 } = (await start2.json()).data;
+      const confirm2 = await fetch(
+        `http://localhost:${port}/api/pair/confirm`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: code2 }),
+        },
+      );
+      const { token: token2 } = (await confirm2.json()).data;
+
+      const stale = await tryWs(`ws://localhost:${port}/`, [token]);
+      expect(stale.opened).toBe(false);
+      const fresh = await tryWs(`ws://localhost:${port}/`, [token2]);
+      expect(fresh.opened).toBe(true);
     });
   });
 });

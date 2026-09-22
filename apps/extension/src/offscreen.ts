@@ -23,7 +23,9 @@ function connect(): void {
 }
 
 function openSocket(token: string): void {
-  const socket = new WebSocket(`${LOCAL_WS_URL}/?token=${token}`);
+  // The token travels in the Sec-WebSocket-Protocol header, not the URL:
+  // URLs end up in logs and caches, a bearer token must not.
+  const socket = new WebSocket(LOCAL_WS_URL, [token]);
   ws = socket;
 
   socket.addEventListener('open', () => {

@@ -6,7 +6,8 @@ export type DenyReason =
   | 'origin_denied'
   | 'origin_blocked'
   | 'action_out_of_scope'
-  | 'approval_required';
+  | 'approval_required'
+  | 'unknown_command';
 
 export type GrantCapability =
   | 'origin'
@@ -52,11 +53,15 @@ export interface PolicyContext {
   now?: number;
 }
 
-const READONLY_COMMANDS = new Set<CommandType>(['tab:list', 'pageinfo']);
+// Command classification. `as const` arrays + the exhaustiveness check below
+// make adding a CommandType without classifying it a compile error, and the
+// fallthrough in evaluatePolicy denies anything unclassified (fail closed,
+// ADR-0007: new commands default to deny).
+const READONLY_COMMANDS_ARR = ['tab:list', 'pageinfo'] as const;
 
 // Commands that act on or read page content; denied outright in protected
 // contexts and on blocklist hits, before any other rule.
-const PAGE_CONTEXT_COMMANDS = new Set<CommandType>([
+const PAGE_CONTEXT_COMMANDS_ARR = [
   'navigate',
   'tab:new',
   'goBack',
@@ -72,10 +77,13 @@ const PAGE_CONTEXT_COMMANDS = new Set<CommandType>([
   'snapshot',
   'wait:element',
   'screenshot',
-]);
+] as const;
 
-// Commands that additionally require an approved origin to run.
-const ORIGIN_GATE_COMMANDS = new Set<CommandType>([
+// Commands that additionally require an approved origin to run. snapshot and
+// wait:element read page content like gettext/gethtml, so they are gated the
+// same way — otherwise tab:list (read-only) + snapshot would silently read
+// any unapproved http(s) origin.
+const ORIGIN_GATE_COMMANDS_ARR = [
   'navigate',
   'tab:new',
   'click',
@@ -85,7 +93,39 @@ const ORIGIN_GATE_COMMANDS = new Set<CommandType>([
   'hover',
   'gettext',
   'gethtml',
-]);
+  'snapshot',
+  'wait:element',
+] as const;
+
+// Commands allowed on any http(s) origin once takeover and the protected /
+// blocklist checks above pass: navigation-shape actions on a tab the agent
+// already holds. Everything else — including commands this policy version
+// does not recognize — is denied.
+const UNRESTRICTED_COMMANDS_ARR = [
+  'goBack',
+  'goForward',
+  'refresh',
+  'wait:navigation',
+  'tab:switch',
+] as const;
+
+type ClassifiedCommand =
+  | (typeof READONLY_COMMANDS_ARR)[number]
+  | (typeof PAGE_CONTEXT_COMMANDS_ARR)[number]
+  | (typeof UNRESTRICTED_COMMANDS_ARR)[number]
+  // Handled by dedicated branches in evaluatePolicy.
+  | 'screenshot'
+  | 'tab:close';
+type AllCommandsClassified = [CommandType] extends [ClassifiedCommand]
+  ? true
+  : never;
+const _allCommandsClassified: AllCommandsClassified = true;
+void _allCommandsClassified;
+
+const READONLY_COMMANDS = new Set<CommandType>(READONLY_COMMANDS_ARR);
+const PAGE_CONTEXT_COMMANDS = new Set<CommandType>(PAGE_CONTEXT_COMMANDS_ARR);
+const ORIGIN_GATE_COMMANDS = new Set<CommandType>(ORIGIN_GATE_COMMANDS_ARR);
+const UNRESTRICTED_COMMANDS = new Set<CommandType>(UNRESTRICTED_COMMANDS_ARR);
 
 function denial(
   command: CommandType,
@@ -161,7 +201,11 @@ export function evaluatePolicy(
 
   const now = ctx.now ?? Date.now();
 
-  if (ORIGIN_GATE_COMMANDS.has(command)) {
+  // Gated commands other than `type`: approved origins pass, unapproved ones
+  // need a one-shot origin grant. `type` is excluded — its origin gate is
+  // folded into its own branch so an origin grant cannot short-circuit the
+  // submit / sensitive-field checks.
+  if (ORIGIN_GATE_COMMANDS.has(command) && command !== 'type') {
     if (ctx.originState === 'denied') {
       return denial(command, 'origin_denied', ctx);
     }
@@ -170,10 +214,21 @@ export function evaluatePolicy(
       if (grant) return { allow: true, consume: [grant] };
       return denial(command, 'origin_not_approved', ctx, 'origin');
     }
+    return { allow: true };
   }
 
   if (command === 'type') {
     const consume: Grant[] = [];
+    if (ctx.originState === 'denied') {
+      return denial(command, 'origin_denied', ctx);
+    }
+    if (ctx.originState !== 'approved') {
+      const originGrant = findGrant(ctx, now, 'origin');
+      if (!originGrant) {
+        return denial(command, 'origin_not_approved', ctx, 'origin');
+      }
+      consume.push(originGrant);
+    }
     if (ctx.submit === true) {
       const grant = findGrant(ctx, now, 'submit');
       if (!grant) {
@@ -233,10 +288,21 @@ export function evaluatePolicy(
     );
   }
 
-  // Everything else — goBack, goForward, refresh, wait:element, wait:navigation,
-  // tab:list, pageinfo, tab:switch — passes once takeover and the protected
-  // context checks above are cleared.
-  return { allow: true };
+  // Fail closed: anything that reached this point is not recognized by the
+  // policy (a command from a newer client, or malformed wire data) — deny it
+  // rather than letting it through by default. Navigation-shape commands on
+  // an already-held tab pass once takeover and the protected checks above
+  // are cleared.
+  if (UNRESTRICTED_COMMANDS.has(command)) {
+    return { allow: true };
+  }
+  return denial(
+    command,
+    'unknown_command',
+    ctx,
+    undefined,
+    'command is not recognized by the policy',
+  );
 }
 
 export function humanDenialMessage(d: Denial): string {
@@ -272,5 +338,7 @@ export function humanDenialMessage(d: Denial): string {
         'A human must approve it once in the Browser Bridge extension popup ' +
         '(click the Browser Bridge icon in the browser toolbar), then the command can be retried.'
       );
+    case 'unknown_command':
+      return `Command "${d.command}" is not recognized by the installed Browser Bridge policy. Update the extension and the local proxy to matching versions, then retry.`;
   }
 }

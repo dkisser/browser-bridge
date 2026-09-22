@@ -86,8 +86,57 @@ describe('PairingManager', () => {
     }
     const fifth = manager.confirm('ZZZZZZZZ', NOW);
     expect(fifth).toEqual({ ok: false, error: 'too_many_attempts' });
-    // pending code is cleared — the right code no longer works either
+    // failure budget still exhausted — the right code no longer works either
     expect(manager.confirm(code, NOW).ok).toBe(false);
+  });
+
+  it('start() does not reset the failure budget', () => {
+    const { manager } = makeManager();
+    // 4 failures against the first code...
+    manager.start(NOW);
+    for (let i = 0; i < 4; i++) {
+      manager.confirm('ZZZZZZZZ', NOW);
+    }
+    // ...then a fresh code must NOT reopen a full 5-try window: one more
+    // failure inside the window exhausts the budget...
+    manager.start(NOW + 1000);
+    expect(manager.confirm('ZZZZZZZZ', NOW + 1000)).toEqual({
+      ok: false,
+      error: 'too_many_attempts',
+    });
+    // ...and the fresh code is locked out with it.
+    const { code } = manager.start(NOW + 2000);
+    expect(manager.confirm(code, NOW + 2000)).toEqual({
+      ok: false,
+      error: 'too_many_attempts',
+    });
+  });
+
+  it('failures expire from the rolling window', () => {
+    const { manager } = makeManager();
+    manager.start(NOW);
+    for (let i = 0; i < 4; i++) {
+      manager.confirm('ZZZZZZZZ', NOW);
+    }
+    // After the window passes, only failures still inside it count.
+    const { code } = manager.start(NOW + 11 * 60 * 1000);
+    const result = manager.confirm(code, NOW + 11 * 60 * 1000);
+    expect(result.ok).toBe(true);
+  });
+
+  it('successful pairing clears the failure budget', () => {
+    const { manager } = makeManager();
+    const first = manager.start(NOW);
+    manager.confirm('ZZZZZZZZ', NOW);
+    expect(manager.confirm(first.code, NOW).ok).toBe(true);
+    // A later pairing round starts with a clean budget.
+    const second = manager.start(NOW + 60_000);
+    for (let i = 1; i <= 4; i++) {
+      const result = manager.confirm('YYYYYYYY', NOW + 60_000);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.attemptsRemaining).toBe(5 - i);
+    }
+    expect(manager.confirm(second.code, NOW + 60_000).ok).toBe(true);
   });
 
   it('re-pairing rotates the token and invalidates the old one', () => {

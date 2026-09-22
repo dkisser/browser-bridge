@@ -2,7 +2,7 @@
 // Single chrome.storage.local key, deep-merged over defaults so older or
 // partial stored objects still yield a complete PolicyState.
 
-import type { Denial, Grant } from '@browser-bridge/shared';
+import type { Denial, Grant, PolicyDecision } from '@browser-bridge/shared';
 
 export interface PendingDownload {
   id: number;
@@ -66,12 +66,62 @@ export async function getPolicyState(): Promise<PolicyState> {
   return mergeDeep(DEFAULT_STATE, result[STORAGE_KEY]);
 }
 
+// chrome.storage has no transactions, so read-modify-write cycles (grant
+// consumption, denial recording, agent-tab bookkeeping) are serialized here.
+// Without this, two commands processed concurrently could both pass the
+// policy check against the same grant state and double-consume a singleUse
+// grant, or overwrite each other's fields.
+let writeQueue: Promise<unknown> = Promise.resolve();
+
+function enqueue<T>(task: () => Promise<T>): Promise<T> {
+  const run = writeQueue.then(task, task);
+  writeQueue = run.catch(() => {
+    // Keep the queue alive even when a task rejects.
+  });
+  return run;
+}
+
 export async function setPolicyState(
   patch: Partial<PolicyState>,
 ): Promise<void> {
-  const current = await getPolicyState();
-  await chrome.storage.local.set({
-    [STORAGE_KEY]: { ...current, ...patch },
+  await updatePolicyState(() => patch);
+}
+
+// Read-modify-write with fresh state: `update` sees the latest stored state
+// and its patch is merged and persisted in the same serialized step.
+export async function updatePolicyState(
+  update: (state: PolicyState) => Partial<PolicyState> | null,
+): Promise<PolicyState> {
+  return enqueue(async () => {
+    const current = await getPolicyState();
+    const patch = update(current);
+    if (patch === null) return current;
+    const next = { ...current, ...patch };
+    await chrome.storage.local.set({ [STORAGE_KEY]: next });
+    return next;
+  });
+}
+
+// The policy decision and any grant consumption are evaluated against fresh
+// state and persisted atomically with respect to other callers: the callback
+// runs inside the serialized queue, so a grant found by `evaluate` is
+// guaranteed to still be there when the consumption is written — a
+// concurrent command sees the post-consumption state and is denied.
+export async function decideWithState(
+  evaluate: (state: PolicyState) => PolicyDecision,
+): Promise<{ decision: PolicyDecision; state: PolicyState }> {
+  return enqueue(async () => {
+    const state = await getPolicyState();
+    const decision = evaluate(state);
+    if (decision.allow && decision.consume && decision.consume.length > 0) {
+      const grants = state.grants.filter(
+        (grant) => !decision.consume?.includes(grant),
+      );
+      const next = { ...state, grants };
+      await chrome.storage.local.set({ [STORAGE_KEY]: next });
+      return { decision, state: next };
+    }
+    return { decision, state };
   });
 }
 
@@ -80,38 +130,38 @@ function denialKey(denial: Denial): string {
 }
 
 export async function recordDenial(denial: Denial): Promise<void> {
-  const state = await getPolicyState();
-  const recentDenials = [
-    denial,
-    ...state.recentDenials.filter((d) => denialKey(d) !== denialKey(denial)),
-  ].slice(0, MAX_RECENT_DENIALS);
-  await setPolicyState({ recentDenials });
+  await updatePolicyState((state) => ({
+    recentDenials: [
+      denial,
+      ...state.recentDenials.filter((d) => denialKey(d) !== denialKey(denial)),
+    ].slice(0, MAX_RECENT_DENIALS),
+  }));
 }
 
 export async function removeDenial(index: number): Promise<void> {
-  const state = await getPolicyState();
-  await setPolicyState({
+  await updatePolicyState((state) => ({
     recentDenials: state.recentDenials.filter((_, i) => i !== index),
-  });
+  }));
 }
 
 // Session-scoped approvals expire with the browser session: drop every
 // 'session'-valued origin entry plus all one-shot grants, agent tabs, and
 // paused downloads.
 export async function clearSessionScoped(): Promise<void> {
-  const state = await getPolicyState();
-  const keepAlways = (
-    map: Record<string, 'always' | 'session'>,
-  ): Record<string, 'always' | 'session'> =>
-    Object.fromEntries(
-      Object.entries(map).filter(([, scope]) => scope !== 'session'),
-    );
-  await setPolicyState({
-    origins: keepAlways(state.origins),
-    deniedOrigins: keepAlways(state.deniedOrigins),
-    grants: [],
-    agentTabs: [],
-    pendingDownloads: [],
+  await updatePolicyState((state) => {
+    const keepAlways = (
+      map: Record<string, 'always' | 'session'>,
+    ): Record<string, 'always' | 'session'> =>
+      Object.fromEntries(
+        Object.entries(map).filter(([, scope]) => scope !== 'session'),
+      );
+    return {
+      origins: keepAlways(state.origins),
+      deniedOrigins: keepAlways(state.deniedOrigins),
+      grants: [],
+      agentTabs: [],
+      pendingDownloads: [],
+    };
   });
 }
 

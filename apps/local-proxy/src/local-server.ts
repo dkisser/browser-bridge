@@ -48,13 +48,26 @@ export class LocalServer {
       hostname: this.hostname,
       async fetch(req, server) {
         // WebSocket upgrade: only a connection carrying the pairing token
-        // may claim to be the extension. Everything else gets 403.
+        // may claim to be the extension. The token arrives in the
+        // Sec-WebSocket-Protocol header (browser WebSockets cannot set
+        // arbitrary headers) and is echoed back as the selected subprotocol
+        // so the handshake completes. Everything else gets 403.
         if (req.headers.get('upgrade')?.toLowerCase() === 'websocket') {
-          const token = new URL(req.url).searchParams.get('token');
-          if (!self.pairing.verify(token)) {
+          const protocol = req.headers.get('sec-websocket-protocol');
+          const token = protocol
+            ?.split(',')
+            .map((entry) => entry.trim())
+            .find((entry) => entry !== '');
+          if (!token || !self.pairing.verify(token)) {
             return new Response('unauthorized', { status: 403 });
           }
-          if (server.upgrade(req, { data: undefined })) return;
+          if (
+            server.upgrade(req, {
+              data: undefined,
+              headers: { 'Sec-WebSocket-Protocol': token },
+            })
+          )
+            return;
           return new Response('upgrade failed', { status: 500 });
         }
 
