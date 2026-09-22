@@ -305,12 +305,12 @@ function denialCardButtons(denial: Denial): string[][] {
 }
 
 function renderPairing(state: PolicyState): void {
+  // Pairing input and Re-pair button are mutually exclusive: only one is
+  // visible at any time. Inline display is set rather than the .hidden
+  // class so an accidental CSS override cannot put both on screen at once.
   const paired = state.pairingToken !== null;
-  // Once paired, only the Re-pair escape hatch can rotate the token. Hide
-  // the always-visible Pair input/button so a stray code paste cannot
-  // silently overwrite the live pairing token and tear down the socket.
-  rePairButton.classList.toggle('hidden', paired);
-  pairInputCard.classList.toggle('hidden', paired);
+  pairInputCard.style.display = paired ? 'none' : '';
+  rePairButton.style.display = paired ? '' : 'none';
 }
 
 function renderTakeover(state: PolicyState): void {
