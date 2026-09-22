@@ -306,11 +306,12 @@ function denialCardButtons(denial: Denial): string[][] {
 
 function renderPairing(state: PolicyState): void {
   // Pairing input and Re-pair button are mutually exclusive: only one is
-  // visible at any time. Inline display is set rather than the .hidden
-  // class so an accidental CSS override cannot put both on screen at once.
+  // visible at any time. Both initial HTML and the JS update use explicit
+  // inline display values (block / inline-block / none) so the visibility
+  // does not depend on CSS cascade or empty-string fallback behaviour.
   const paired = state.pairingToken !== null;
-  pairInputCard.style.display = paired ? 'none' : '';
-  rePairButton.style.display = paired ? '' : 'none';
+  pairInputCard.style.display = paired ? 'none' : 'block';
+  rePairButton.style.display = paired ? 'inline-block' : 'none';
 }
 
 function renderTakeover(state: PolicyState): void {
