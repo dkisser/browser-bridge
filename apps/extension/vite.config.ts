@@ -29,16 +29,20 @@ export default defineConfig({
   base: './',
   build: {
     outDir: 'dist',
-    emptyOutDir: true,
+    // emptyOutDir would wipe dist/content.js on every rebuild — the
+    // content vite (vite.content.config.ts) shares this directory and
+    // races with us. The `build` script does an explicit `rm -rf dist`
+    // before invoking vite to keep production builds clean.
+    emptyOutDir: false,
     rollupOptions: {
       input: {
         sidepanel: resolve(__dirname, 'src/sidepanel.html'),
         settings: resolve(__dirname, 'src/settings.html'),
         offscreen: resolve(__dirname, 'src/offscreen.html'),
         background: resolve(__dirname, 'src/background.ts'),
-        content: resolve(__dirname, 'src/content.ts'),
       },
       output: {
+        format: 'es',
         entryFileNames: '[name].js',
         chunkFileNames: '[name].js',
         assetFileNames: (assetInfo) => {

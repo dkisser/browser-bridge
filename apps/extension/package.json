@@ -4,8 +4,8 @@
   "private": true,
   "description": "Chrome extension for Browser Bridge",
   "scripts": {
-    "dev": "vite build --watch --mode development",
-    "build": "vite build",
+    "dev": "vite build --watch --mode development && vite build --config vite.content.config.ts --watch --mode development",
+    "build": "rm -rf dist && vite build && vite build --config vite.content.config.ts",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
