@@ -487,7 +487,7 @@ async function sendContentCommand(
   throw new Error('Content script did not respond');
 }
 
-// Message handler: receives commands from offscreen doc, popup, and content scripts
+// Message handler: receives commands from offscreen doc, side panel, and content scripts
 chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   // Command from offscreen document (originating from Local Proxy)
   if (request.type === 'ws_command') {
@@ -533,6 +533,18 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
     return true;
   }
 
+  // Side panel: open the read-only settings page in a new tab. The page
+  // itself is a separate extension options page (see manifest options_ui).
+  if (request.type === 'open-options') {
+    chrome.runtime
+      .openOptionsPage()
+      .then(() => sendResponse({ status: 'ok' }))
+      .catch((err: Error) =>
+        sendResponse({ status: 'error', error: err.message }),
+      );
+    return true;
+  }
+
   return false;
 });
 
@@ -545,7 +557,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 // Downloads started by agent-created tabs are paused until the human
-// resumes or cancels them in the popup (unless human assist is active,
+// resumes or cancels them in the side panel (unless human assist is active,
 // in which case the user is in charge already).
 chrome.downloads.onCreated.addListener((item) => {
   // Installed @types/chrome predates DownloadItem.tabId (Chrome 116+).
@@ -603,6 +615,9 @@ async function initialize(): Promise<void> {
   await clearSessionScoped();
   await updateBadge();
   await connectOffscreen();
+  // The human surface is the side panel (ADR-0010). Make the extension icon
+  // a one-click trigger to open the panel on the active tab.
+  await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 }
 
 // Initialize offscreen document on extension install/startup

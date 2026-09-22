@@ -32,7 +32,8 @@ export default defineConfig({
     emptyOutDir: true,
     rollupOptions: {
       input: {
-        popup: resolve(__dirname, 'src/popup.html'),
+        sidepanel: resolve(__dirname, 'src/sidepanel.html'),
+        settings: resolve(__dirname, 'src/settings.html'),
         offscreen: resolve(__dirname, 'src/offscreen.html'),
         background: resolve(__dirname, 'src/background.ts'),
         content: resolve(__dirname, 'src/content.ts'),
@@ -54,7 +55,11 @@ export default defineConfig({
         const distDir = resolve(__dirname, 'dist');
 
         // Flatten nested HTML files (Vite puts them under src/)
-        for (const htmlFile of ['popup.html', 'offscreen.html']) {
+        for (const htmlFile of [
+          'sidepanel.html',
+          'settings.html',
+          'offscreen.html',
+        ]) {
           const nested = resolve(distDir, 'src', htmlFile);
           const flat = resolve(distDir, htmlFile);
 
