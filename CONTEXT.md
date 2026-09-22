@@ -49,3 +49,29 @@ _Avoid_: allowlist, permission set, trust zone
 **Service command**:
 The `bridge service …` half of the CLI: everything that manages the service lifecycle (up/down/status/logs/update/enable). Kept strictly separate from browser commands, which never manage services and never fall through to them.
 _Avoid_: daemon command, autostart command
+
+### Human surface
+
+**Side panel**:
+The browser-managed right-side panel of the extension, opened by clicking the extension icon (after `chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })`). Per-tab; survives in-tab navigations; browser-owned lifecycle, so it does not vanish on focus loss the way the legacy popup did. Hosts the human surface: connection state, approval cards, origins, blocklist, paused downloads, takeover, and the entry point to the settings tab.
+_Avoid_: popup, drawer, side drawer, sidebar
+
+**State bar**:
+The top strip of the side panel, always visible. Shows Browser / Cloud connection dots, the browser UID, and the Cloud / Takeover switches.
+_Avoid_: header, toolbar
+
+**Side panel tab**:
+One of the tabs in the strip below the state bar — Approvals, Origins, Blocklist, Downloads, Settings. Side panel tabs are view selectors, not extension UI surfaces; the same policy state is shown across them.
+_Avoid_: tab page, workspace tab
+
+**Default view**:
+What the user sees first when the side panel opens. State bar plus the Approvals tab when there are pending denials or paused downloads; otherwise the Origins tab. UI state (selected tab, scroll position, transient filters) does not persist across reopens — the default view always returns.
+_Avoid_: landing view, last-view
+
+**Settings tab**:
+A separate extension options page opened via `chrome.runtime.openOptionsPage()` from the side panel's state bar. Dedicated to read-only display of hard configuration (WebSocket port, local-proxy URL, LaunchAgent plist path, log path, CLI binary path). Inert: never edits. Not a side panel tab — the side panel's tabs are Approvals, Origins, Blocklist, Downloads only.
+_Avoid_: options page, preferences
+
+**Hard configuration**:
+Network endpoints, paths, and other values that are normally hard-coded or set at install time. Read-only in the settings tab; edits happen through file edits or installer commands, not the UI.
+_Avoid_: constants, defaults, env vars

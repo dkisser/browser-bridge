@@ -38,9 +38,7 @@ export async function pair(options: PairOptions): Promise<void> {
   console.log('');
   console.log(`  Pairing code:  ${body.data.code}`);
   console.log('');
-  console.log(
-    '  Enter this code in the Browser Bridge extension popup to pair.',
-  );
+  console.log('  Enter this code in the Browser Bridge side panel to pair ');
   console.log(
     `  The code is valid for ${Math.round(body.data.expiresIn / 60000)} minutes. Re-running this command generates a new code and invalidates the previous one.`,
   );

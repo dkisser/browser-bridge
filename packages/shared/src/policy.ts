@@ -312,15 +312,15 @@ export function humanDenialMessage(d: Denial): string {
     case 'origin_not_approved':
       return (
         `Origin not approved: ${d.origin ?? 'unknown'}. ` +
-        'A human must approve this origin in the Browser Bridge extension popup ' +
-        '(click the Browser Bridge icon in the browser toolbar; choose Session or Always), ' +
+        'A human must approve this origin in the Browser Bridge side panel ' +
+        '(click the Browser Bridge icon in the browser toolbar to open the panel; choose Session or Always), ' +
         'then the command can be retried. ' +
         'Do not bypass the gate with WebFetch or other tools — accessing this origin requires approval.'
       );
     case 'origin_denied':
       return (
         `Origin was denied by the user: ${d.origin ?? 'unknown'}. ` +
-        'Only the user can reverse this: open the Browser Bridge extension popup ' +
+        'Only the user can reverse this: open the Browser Bridge side panel ' +
         '(click the Browser Bridge icon in the browser toolbar) and remove the denial, ' +
         'then retry. Do not bypass the gate with WebFetch or other tools.'
       );
@@ -329,13 +329,13 @@ export function humanDenialMessage(d: Denial): string {
     case 'action_out_of_scope':
       return (
         `Out of the agent's working scope (${d.detail ?? d.capability ?? 'restricted action'}). ` +
-        'A human must approve this action once in the Browser Bridge extension popup ' +
+        'A human must approve this action once in the Browser Bridge side panel ' +
         '(click the Browser Bridge icon in the browser toolbar), then the command can be retried.'
       );
     case 'approval_required':
       return (
         `Approval required: ${d.detail ?? 'this action always needs a one-time approval'}. ` +
-        'A human must approve it once in the Browser Bridge extension popup ' +
+        'A human must approve it once in the Browser Bridge side panel ' +
         '(click the Browser Bridge icon in the browser toolbar), then the command can be retried.'
       );
     case 'unknown_command':
