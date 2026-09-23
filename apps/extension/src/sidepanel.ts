@@ -80,6 +80,10 @@ const panels: Record<SidePanelTab, HTMLElement> = {
 let messagePersistent = false;
 
 function setMessage(text: string, persistent = true): void {
+  // Don't overwrite a persistent user-action error with a transient
+  // poll-failure message; that pair of writes clears the persistent
+  // message and leaves the user with no feedback on their last action.
+  if (messagePersistent && !persistent) return;
   messageEl.textContent = text;
   messagePersistent = persistent;
 }
@@ -103,7 +107,7 @@ async function fetchStatus(): Promise<StatusResponse> {
     const response = await fetch(`${API_BASE}/api/status`);
     return (await response.json()) as StatusResponse;
   } catch {
-    return { success: false, error: 'Control plane unreachable' };
+    return { success: false, error: 'Bridge unreachable' };
   }
 }
 
@@ -248,7 +252,7 @@ async function confirmPairing(code: string): Promise<void> {
       pairError.textContent = `Pairing failed: ${result.error ?? 'unknown'}${attempts}`;
     }
   } catch {
-    pairError.textContent = 'Control plane unreachable';
+    pairError.textContent = 'Bridge unreachable';
   }
 }
 

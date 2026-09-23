@@ -15,7 +15,6 @@ const BUFFER_TIMEOUT_MS = 5000;
 
 interface BridgeConfig {
   browserId: string;
-  serverUrl: string;
   extensionTokenHash?: string;
 }
 
@@ -38,10 +37,6 @@ export class StateManager {
     return this.config.browserId;
   }
 
-  get serverUrl(): string {
-    return this.config.serverUrl;
-  }
-
   get extensionTokenHash(): string | undefined {
     return this.config.extensionTokenHash;
   }
@@ -61,7 +56,6 @@ export class StateManager {
   }
 
   set status(status: BrowserStatus) {
-    console.log(`Browser status: ${this.browserStatus} → ${status}`);
     this.browserStatus = status;
     if (status !== 'idle_wait' && this.bufferedCommand) {
       clearTimeout(this.bufferedCommand.timer);
@@ -104,14 +98,27 @@ export class StateManager {
         // Tighten permissions on config files written by older versions:
         // the file holds the extension token hash.
         chmodSync(CONFIG_FILE, 0o600);
-        return JSON.parse(data) as BridgeConfig;
+        // Destructure only known fields so pre-cleanup config files
+        // (which may still carry apiToken / serverUrl from the pre-merge
+        // ws-server + local-proxy design) do not silently re-serialize
+        // those ghost fields on every saveConfig().
+        const { browserId, extensionTokenHash } = JSON.parse(data) as {
+          browserId?: unknown;
+          extensionTokenHash?: unknown;
+        };
+        if (typeof browserId !== 'string') throw new Error('missing browserId');
+        return {
+          browserId,
+          ...(typeof extensionTokenHash === 'string'
+            ? { extensionTokenHash }
+            : {}),
+        };
       }
     } catch {
       // fall through to defaults
     }
     const config: BridgeConfig = {
       browserId: `b-${crypto.randomUUID().slice(0, 8)}`,
-      serverUrl: 'ws://localhost:3001',
     };
     this.saveConfigSync(config);
     return config;
