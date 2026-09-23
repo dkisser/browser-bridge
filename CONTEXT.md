@@ -69,7 +69,7 @@ The browser-managed right-side panel of the extension, opened by clicking the ex
 _Avoid_: popup, drawer, side drawer, sidebar
 
 **State bar**:
-The top strip of the side panel, always visible. Shows Browser / Cloud connection dots, the browser UID, and the Cloud / Takeover switches.
+The top strip of the side panel, always visible. Shows the Browser connection dot, the browser UID, the Takeover switch, and a link to settings.
 _Avoid_: header, toolbar
 
 **Side panel tab**:

@@ -16,7 +16,6 @@ const BUFFER_TIMEOUT_MS = 5000;
 interface BridgeConfig {
   browserId: string;
   serverUrl: string;
-  apiToken?: string;
   extensionTokenHash?: string;
 }
 
@@ -41,10 +40,6 @@ export class StateManager {
 
   get serverUrl(): string {
     return this.config.serverUrl;
-  }
-
-  get apiToken(): string | undefined {
-    return this.config.apiToken;
   }
 
   get extensionTokenHash(): string | undefined {
@@ -107,7 +102,7 @@ export class StateManager {
       if (existsSync(CONFIG_FILE)) {
         const data = readFileSync(CONFIG_FILE, 'utf-8');
         // Tighten permissions on config files written by older versions:
-        // the file holds the extension token hash and cloud API token.
+        // the file holds the extension token hash.
         chmodSync(CONFIG_FILE, 0o600);
         return JSON.parse(data) as BridgeConfig;
       }

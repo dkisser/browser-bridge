@@ -45,7 +45,7 @@
 ## ✨ Features
 
 - 🤖 **Agent-ready interface** — one bridge protocol, consumed via CLI, Claude Code skill, or custom integration.
-- 🔒 **Local session, cloud control** — reuse your logged-in browser; no cloud browser or cookie sync needed.
+- 🔒 **Local session, local control** — reuse your logged-in browser; no cloud browser or cookie sync needed.
 - 🔗 **MCP server** — Streamable HTTP MCP server exposes browser tools to Claude Desktop, Cursor, and other MCP clients.
 - 🎯 **Token-efficient reads** — observe-first snapshots, targeted container reads, and hard output caps keep page noise out of your agent's context window.
 

@@ -157,11 +157,6 @@
       position: relative;
     }
 
-    .layer--cloud {
-      border-top-left-radius: 4rem;
-      border-bottom-right-radius: 3rem;
-    }
-
     .layer--local {
       border-top-right-radius: 4rem;
       border-bottom-left-radius: 3rem;
@@ -187,11 +182,6 @@
       text-transform: uppercase;
       padding: 4px 12px;
       border-radius: 999px;
-    }
-
-    .layer__badge--cloud {
-      background: rgba(193, 140, 93, 0.14);
-      color: var(--secondary);
     }
 
     .layer__badge--local {
@@ -238,11 +228,6 @@
       color: var(--secondary);
     }
 
-    .component__icon--server {
-      background: rgba(161, 140, 120, 0.15);
-      color: #8B7B68;
-    }
-
     .component__icon--local {
       background: rgba(120, 120, 108, 0.12);
       color: var(--muted-foreground);
@@ -269,74 +254,6 @@
       font-size: 0.85rem;
       color: var(--muted-foreground);
       margin: 0;
-    }
-
-    /* Bridge section */
-    .bridge {
-      position: relative;
-      width: 100%;
-      max-width: 920px;
-      height: 160px;
-      margin: -12px 0;
-      z-index: 2;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-    }
-
-    .bridge__label {
-      font-size: 0.85rem;
-      font-weight: 700;
-      color: var(--primary);
-      background: rgba(93, 112, 82, 0.1);
-      padding: 8px 20px;
-      border-radius: 999px;
-      margin-bottom: 8px;
-      border: 1px solid rgba(93, 112, 82, 0.2);
-    }
-
-    .bridge__sublabel {
-      font-size: 0.8rem;
-      color: var(--muted-foreground);
-    }
-
-    .bridge__svg {
-      position: absolute;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-      pointer-events: none;
-      overflow: visible;
-    }
-
-    .bridge__path {
-      fill: none;
-      stroke: var(--primary);
-      stroke-width: 3;
-      stroke-linecap: round;
-      stroke-dasharray: 10 8;
-      opacity: 0.35;
-    }
-
-    .bridge__flow {
-      fill: none;
-      stroke: var(--primary);
-      stroke-width: 3;
-      stroke-linecap: round;
-      stroke-dasharray: 12 180;
-      animation: flow 2.4s linear infinite;
-    }
-
-    @keyframes flow {
-      to {
-        stroke-dashoffset: -192;
-      }
-    }
-
-    .bridge__dot {
-      fill: var(--primary);
-      opacity: 0.8;
     }
 
     /* Steps */
@@ -435,10 +352,6 @@
         min-width: 0;
       }
 
-      .bridge {
-        height: 120px;
-      }
-
       .steps {
         flex-direction: column;
         align-items: center;
@@ -447,12 +360,6 @@
       .step {
         max-width: 100%;
         width: 100%;
-      }
-    }
-
-    @media (prefers-reduced-motion: reduce) {
-      .bridge__flow {
-        animation: none;
       }
     }
   </style>
@@ -470,47 +377,6 @@
     </header>
 
     <section class="diagram" aria-label="Browser Bridge 架构图">
-      <!-- Cloud Layer -->
-      <div class="layer layer--cloud">
-        <div class="layer__title">
-          <span class="layer__badge layer__badge--cloud">Cloud</span>
-          云端
-        </div>
-        <div class="components">
-          <div class="component">
-            <div class="component__icon component__icon--cli" aria-hidden="true">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><title>CLI</title><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
-            </div>
-            <div class="component__text">
-              <h3>CLI</h3>
-              <p>输入命令，发送到服务端</p>
-            </div>
-          </div>
-          <div class="component">
-            <div class="component__icon component__icon--server" aria-hidden="true">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><title>WebSocket Server</title><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
-            </div>
-            <div class="component__text">
-              <h3>WebSocket Server</h3>
-              <p>鉴权并路由到对应客户端</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Bridge -->
-      <div class="bridge">
-        <svg class="bridge__svg" viewBox="0 0 920 160" preserveAspectRatio="none" aria-hidden="true">
-          <!-- Organic curved bridge path -->
-          <path class="bridge__path" d="M 280 10 C 380 80, 540 80, 640 10" />
-          <path class="bridge__flow" d="M 280 10 C 380 80, 540 80, 640 10" />
-          <circle class="bridge__dot" cx="280" cy="10" r="5" />
-          <circle class="bridge__dot" cx="640" cy="10" r="5" />
-        </svg>
-        <div class="bridge__label">WebSocket 长连接</div>
-        <div class="bridge__sublabel">云端与本地的有机桥接</div>
-      </div>
-
       <!-- Local Layer -->
       <div class="layer layer--local">
         <div class="layer__title">
