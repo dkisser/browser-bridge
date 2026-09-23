@@ -141,11 +141,13 @@ start_service() {
   fi
   mkdir -p "$LOG_DIR" "$RUN_DIR"
   local logfile="$LOG_DIR/${SERVICE_NAME}.log" pidfile="$RUN_DIR/${SERVICE_NAME}.pid"
-  BRIDGE_WS_PORT="$WS_PORT" BRIDGE_WS_HOSTNAME="$WS_HOSTNAME" \
-  BRIDGE_LOCAL_PORT="$LOCAL_PORT" BRIDGE_LOCAL_HOSTNAME="$LOCAL_HOSTNAME" \
-  BRIDGE_MCP_PORT="$MCP_PORT" BRIDGE_MCP_HOSTNAME="$MCP_HOSTNAME" \
-  BRIDGE_API_KEYS="${BRIDGE_API_KEYS:-}" \
-    ( exec "$BB_HOME/bin/bridge-core" >"$logfile" 2>&1 ) & pid=$!
+  BRIDGE_API_KEYS="${BRIDGE_API_KEYS:-}"
+  env BRIDGE_WS_PORT="$WS_PORT" BRIDGE_WS_HOSTNAME="$WS_HOSTNAME" \
+      BRIDGE_LOCAL_PORT="$LOCAL_PORT" BRIDGE_LOCAL_HOSTNAME="$LOCAL_HOSTNAME" \
+      BRIDGE_MCP_PORT="$MCP_PORT" BRIDGE_MCP_HOSTNAME="$MCP_HOSTNAME" \
+      BRIDGE_API_KEYS="$BRIDGE_API_KEYS" \
+      "$BB_HOME/bin/bridge-core" >"$logfile" 2>&1 &
+  pid=$!
   disown
   echo "$pid" >"$pidfile"
   for _ in {1..50}; do
@@ -355,11 +357,12 @@ supervisor_spawn() {
   if port_in_use "$WS_PORT" "$WS_HOSTNAME"; then
     die "BB-E010: $SERVICE_NAME port $WS_PORT is already in use"
   fi
-  BRIDGE_WS_PORT="$WS_PORT" BRIDGE_WS_HOSTNAME="$WS_HOSTNAME" \
-  BRIDGE_LOCAL_PORT="$LOCAL_PORT" BRIDGE_LOCAL_HOSTNAME="$LOCAL_HOSTNAME" \
-  BRIDGE_MCP_PORT="$MCP_PORT" BRIDGE_MCP_HOSTNAME="$MCP_HOSTNAME" \
-  BRIDGE_API_KEYS="${BRIDGE_API_KEYS:-}" \
-    ( exec "$BB_HOME/bin/bridge-core" >"$logfile" 2>&1 ) &
+  BRIDGE_API_KEYS="${BRIDGE_API_KEYS:-}"
+  env BRIDGE_WS_PORT="$WS_PORT" BRIDGE_WS_HOSTNAME="$WS_HOSTNAME" \
+      BRIDGE_LOCAL_PORT="$LOCAL_PORT" BRIDGE_LOCAL_HOSTNAME="$LOCAL_HOSTNAME" \
+      BRIDGE_MCP_PORT="$MCP_PORT" BRIDGE_MCP_HOSTNAME="$MCP_HOSTNAME" \
+      BRIDGE_API_KEYS="$BRIDGE_API_KEYS" \
+      "$BB_HOME/bin/bridge-core" >"$logfile" 2>&1 &
   local pid=$!
   echo "$pid" >"$pidfile"
   for _ in {1..50}; do
