@@ -1,6 +1,7 @@
 import type {
   CommandPayload,
   CommandType,
+  ContentScriptUnavailableReason,
   ResponsePayload,
 } from '@browser-bridge/shared';
 import { createClient } from '../client';
@@ -116,9 +117,35 @@ const NO_TAB_ID_PATTERN = /No tab with id: \d+/i;
 const TAB_LIST_HINT =
   ' Call tab_list to discover valid tab ids for the selected browser.';
 
-function withRecoveryHint(payload: ResponsePayload): ResponsePayload {
+// Recovery hints keyed off the structured `reason` the SW sends when a
+// content-script dispatch fails. The MCP tool sees a single-line error;
+// the hint turns a dead end into an actionable next step.
+const CONTENT_SCRIPT_RECOVERY: Record<ContentScriptUnavailableReason, string> =
+  {
+    tab_not_found:
+      ' The tab was closed between commands — call tab_list to discover valid tab ids.',
+    restricted_page:
+      ' Content commands only work on http(s) pages. Navigate to a non-restricted URL first.',
+    injection_failed:
+      ' The extension could not inject its content script into this page. Verify host_permissions cover the origin.',
+    no_listener:
+      ' The content script did not respond. Reload the page or retry the command.',
+  };
+
+export function withRecoveryHint(payload: ResponsePayload): ResponsePayload {
+  if (payload.status !== 'error') return payload;
+
+  // 1. Structured reason from the SW (preferred — exact classification).
+  if (payload.reason && CONTENT_SCRIPT_RECOVERY[payload.reason]) {
+    const hint = CONTENT_SCRIPT_RECOVERY[payload.reason];
+    if (typeof payload.error === 'string' && !payload.error.endsWith(hint)) {
+      return { ...payload, error: `${payload.error}${hint}` };
+    }
+  }
+
+  // 2. Legacy fallback: pattern-match the Chrome error string for tabs
+  //    that pre-date this PR's structured `reason` field.
   if (
-    payload.status === 'error' &&
     typeof payload.error === 'string' &&
     NO_TAB_ID_PATTERN.test(payload.error) &&
     !payload.error.includes('tab_list')

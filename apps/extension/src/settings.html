@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Browser Bridge — Settings</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #ffffff;
+        --bg-elevated: #f6f6f7;
+        --border: #e0e0e0;
+        --text: #1a1a1a;
+        --text-muted: #6a6a6a;
+        --accent: #2196f3;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #1e1e1e;
+          --bg-elevated: #252526;
+          --border: #3c3c3c;
+          --text: #ececec;
+          --text-muted: #a0a0a0;
+        }
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        padding: 0;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        font-size: 14px;
+        color: var(--text);
+        background: var(--bg);
+      }
+      main {
+        max-width: 720px;
+        margin: 0 auto;
+        padding: 28px 24px;
+      }
+      h1 {
+        font-size: 18px;
+        margin: 0 0 4px;
+      }
+      .subtitle {
+        font-size: 13px;
+        color: var(--text-muted);
+        margin: 0 0 24px;
+      }
+      .config-list {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--bg-elevated);
+        overflow: hidden;
+      }
+      .config-row {
+        display: grid;
+        grid-template-columns: 200px 1fr;
+        gap: 16px;
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--border);
+      }
+      .config-row:last-child { border-bottom: none; }
+      .config-label {
+        font-weight: 600;
+        font-size: 13px;
+        color: var(--text-muted);
+      }
+      .config-value {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 13px;
+        word-break: break-all;
+      }
+      .note {
+        margin-top: 24px;
+        padding: 12px 16px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--bg-elevated);
+        font-size: 12px;
+        color: var(--text-muted);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Hard configuration</h1>
+      <p class="subtitle">
+        These values are baked into the installed bridge. Edits happen through file
+        changes and re-running the installer, not this page.
+      </p>
+      <div class="config-list" id="configList" aria-label="Hard configuration values"></div>
+      <p class="note">
+        The state bar of the side panel links back to this page, and policy edits
+        (origins, blocklist, approvals, takeover) stay on the side panel itself.
+      </p>
+    </main>
+    <script type="module" src="./settings.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Browser Bridge</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #ffffff;
+        --bg-elevated: #f6f6f7;
+        --border: #e0e0e0;
+        --text: #1a1a1a;
+        --text-muted: #6a6a6a;
+        --accent: #2196f3;
+        --ok: #2e7d32;
+        --warn: #c62828;
+        --tab-active-bg: #e3f0ff;
+        --tab-active-text: #0d47a1;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #1e1e1e;
+          --bg-elevated: #252526;
+          --border: #3c3c3c;
+          --text: #ececec;
+          --text-muted: #a0a0a0;
+          --tab-active-bg: #1e3a5f;
+          --tab-active-text: #b3d4fc;
+        }
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        padding: 0;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        font-size: 14px;
+        color: var(--text);
+        background: var(--bg);
+        height: 100%;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+        min-height: 100vh;
+      }
+
+      /* State bar */
+      .state-bar {
+        flex: 0 0 auto;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 14px;
+        background: var(--bg-elevated);
+        border-bottom: 1px solid var(--border);
+        flex-wrap: wrap;
+      }
+      .state-dot-row { display: flex; align-items: center; gap: 6px; }
+      .state-dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: var(--text-muted);
+      }
+      .state-dot.connected { background: var(--ok); }
+      .state-dot.disconnected { background: var(--warn); }
+      .state-label { font-size: 13px; }
+      .state-detail { font-size: 12px; color: var(--text-muted); }
+      .uid {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12px;
+        color: var(--text-muted);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        max-width: 100%;
+      }
+      .state-spacer { flex: 1 1 auto; }
+      .state-actions { display: flex; align-items: center; gap: 10px; }
+
+      /* Toggle switch (reused for Cloud / Takeover) */
+      .switch {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        cursor: pointer;
+        font-size: 12px;
+        color: var(--text-muted);
+      }
+      .switch input { position: absolute; opacity: 0; pointer-events: none; }
+      .switch-track {
+        position: relative;
+        width: 32px;
+        height: 18px;
+        background: #bdbdbd;
+        border-radius: 9px;
+        transition: background-color 0.15s ease;
+      }
+      .switch-track::before {
+        content: '';
+        position: absolute;
+        left: 2px;
+        top: 2px;
+        width: 14px;
+        height: 14px;
+        background: #fff;
+        border-radius: 50%;
+        transition: transform 0.15s ease;
+      }
+      .switch input:checked + .switch-track { background: var(--ok); }
+      .switch input:checked + .switch-track::before { transform: translateX(14px); }
+      .switch input:disabled + .switch-track { opacity: 0.5; cursor: not-allowed; }
+      .switch input:focus-visible + .switch-track {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+
+      .settings-link {
+        font-size: 12px;
+        color: var(--accent);
+        text-decoration: none;
+        padding: 4px 6px;
+        border-radius: 4px;
+      }
+      .settings-link:hover { background: var(--tab-active-bg); }
+      .settings-link:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+
+      /* Tab strip */
+      .tab-strip {
+        flex: 0 0 auto;
+        display: flex;
+        gap: 2px;
+        padding: 6px 8px 0;
+        background: var(--bg-elevated);
+        border-bottom: 1px solid var(--border);
+        overflow-x: auto;
+      }
+      .tab {
+        flex: 0 0 auto;
+        padding: 6px 12px;
+        border: 1px solid transparent;
+        border-bottom: none;
+        border-radius: 6px 6px 0 0;
+        background: transparent;
+        cursor: pointer;
+        font: inherit;
+        font-size: 13px;
+        color: var(--text-muted);
+      }
+      .tab:hover { color: var(--text); }
+      .tab[aria-selected='true'] {
+        background: var(--bg);
+        border-color: var(--border);
+        color: var(--tab-active-text);
+        font-weight: 600;
+        position: relative;
+        top: 1px;
+      }
+      .tab:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: -2px;
+      }
+      .tab-badge {
+        display: inline-block;
+        min-width: 18px;
+        padding: 0 5px;
+        margin-left: 6px;
+        border-radius: 9px;
+        background: var(--warn);
+        color: #fff;
+        font-size: 11px;
+        line-height: 16px;
+        text-align: center;
+      }
+
+      /* Panels */
+      .panel-host {
+        flex: 1 1 auto;
+        overflow-y: auto;
+        padding: 12px 14px;
+      }
+      .panel { display: none; }
+      .panel.active { display: block; }
+      .panel h2 {
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--text-muted);
+        margin: 0 0 8px;
+      }
+      .pair-row { display: flex; gap: 6px; margin-bottom: 8px; }
+      input[type='text'] {
+        flex: 1;
+        min-width: 0;
+        padding: 6px 8px;
+        font-size: 13px;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        background: var(--bg);
+        color: var(--text);
+      }
+      input[type='text']:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 0;
+      }
+      button {
+        padding: 6px 10px;
+        font: inherit;
+        font-size: 13px;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        background: var(--bg);
+        color: var(--text);
+        cursor: pointer;
+      }
+      button:hover { background: var(--bg-elevated); }
+      button:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+      button.small { padding: 4px 8px; font-size: 12px; }
+
+      .empty {
+        font-size: 13px;
+        color: var(--text-muted);
+        padding: 8px 0;
+      }
+      .card {
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 8px 10px;
+        margin-bottom: 8px;
+        background: var(--bg);
+      }
+      .card-title {
+        font-size: 13px;
+        font-weight: 600;
+        word-break: break-all;
+      }
+      .card-msg {
+        font-size: 12px;
+        color: var(--text-muted);
+        margin-top: 4px;
+        word-break: break-word;
+      }
+      .card-actions {
+        display: flex;
+        gap: 6px;
+        margin-top: 8px;
+        flex-wrap: wrap;
+      }
+
+      .row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 4px 0;
+      }
+      .row-label {
+        font-size: 13px;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .row-label .scope { color: var(--text-muted); }
+      .row-label.denied { color: var(--warn); }
+
+      #message {
+        margin-top: 4px;
+        font-size: 12px;
+        color: var(--warn);
+        min-height: 16px;
+      }
+
+      .hidden { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <div class="state-bar" role="banner">
+      <div class="state-dot-row">
+        <span id="browserDot" class="state-dot disconnected" aria-hidden="true"></span>
+        <span class="state-label">Browser</span>
+        <span id="browserStatus" class="state-detail">Disconnected</span>
+      </div>
+      <div class="state-dot-row">
+        <span id="cloudDot" class="state-dot disconnected" aria-hidden="true"></span>
+        <span class="state-label">Cloud</span>
+        <span id="cloudStatus" class="state-detail">Disconnected</span>
+      </div>
+      <div class="uid" id="uid" title=""></div>
+      <div class="state-spacer"></div>
+      <div class="state-actions">
+        <label class="switch" title="Connect or disconnect the cloud bridge">
+          <input id="cloudSwitch" type="checkbox" aria-label="Cloud Connection" />
+          <span class="switch-track" aria-hidden="true"></span>
+          <span>Cloud</span>
+        </label>
+        <label class="switch" title="Takeover: reject agent commands while you drive">
+          <input id="takeoverSwitch" type="checkbox" aria-label="Human Takeover" />
+          <span class="switch-track" aria-hidden="true"></span>
+          <span>Takeover</span>
+        </label>
+        <a class="settings-link" id="settingsLink" href="#" role="button">Settings</a>
+      </div>
+    </div>
+
+    <div id="message" role="status"></div>
+
+    <div class="tab-strip" role="tablist" aria-label="Side panel sections">
+      <button class="tab" type="button" role="tab" id="tab-approvals" data-tab="approvals" aria-selected="true" aria-controls="panel-approvals" tabindex="0">
+        Approvals<span class="tab-badge hidden" id="approvalsBadge">0</span>
+      </button>
+      <button class="tab" type="button" role="tab" id="tab-origins" data-tab="origins" aria-selected="false" aria-controls="panel-origins" tabindex="-1">Origins</button>
+      <button class="tab" type="button" role="tab" id="tab-blocklist" data-tab="blocklist" aria-selected="false" aria-controls="panel-blocklist" tabindex="-1">Blocklist</button>
+      <button class="tab" type="button" role="tab" id="tab-downloads" data-tab="downloads" aria-selected="false" aria-controls="panel-downloads" tabindex="-1">Downloads</button>
+    </div>
+
+    <div class="panel-host">
+      <section id="panel-approvals" class="panel active" role="tabpanel" aria-labelledby="tab-approvals">
+        <h2>Pending approvals</h2>
+        <div id="denialsList"></div>
+
+        <h2 style="margin-top: 16px;">Paired state</h2>
+        <div id="pairingBlock">
+          <div class="card" id="pairInputCard" style="display: block;">
+            <div class="card-title">Pair with Local Proxy</div>
+            <div class="card-msg">Run <code>bridge pair</code> in a terminal to get a code.</div>
+            <div class="card-actions">
+              <input id="pairCode" type="text" placeholder="Pairing code" />
+              <button id="pairButton" type="button" class="small">Pair</button>
+            </div>
+            <div id="pairError" class="card-msg"></div>
+          </div>
+          <button id="rePairButton" type="button" class="small" style="display: inline-block;">Re-pair with local proxy…</button>
+        </div>
+      </section>
+
+      <section id="panel-origins" class="panel" role="tabpanel" aria-labelledby="tab-origins">
+        <h2>Origins</h2>
+        <div id="originsList"></div>
+      </section>
+
+      <section id="panel-blocklist" class="panel" role="tabpanel" aria-labelledby="tab-blocklist">
+        <h2>Blocklist</h2>
+        <div class="pair-row">
+          <input id="blockInput" type="text" placeholder="example.com" />
+          <button id="blockAdd" type="button" class="small">Add</button>
+        </div>
+        <div id="blocklist"></div>
+      </section>
+
+      <section id="panel-downloads" class="panel" role="tabpanel" aria-labelledby="tab-downloads">
+        <h2>Paused downloads</h2>
+        <div id="downloadsList"></div>
+      </section>
+    </div>
+
+    <script type="module" src="./sidepanel.ts"></script>
+  </body>
+</html>

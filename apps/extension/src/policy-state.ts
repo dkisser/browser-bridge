@@ -14,7 +14,7 @@ export interface PolicyState {
   // Origins the human approved for the agent, and ones they denied.
   origins: Record<string, 'always' | 'session'>;
   deniedOrigins: Record<string, 'always' | 'session'>;
-  // One-shot approvals granted from the popup (singleUse, expiring).
+  // One-shot approvals granted from the side panel (singleUse, expiring).
   grants: Grant[];
   // Human assist: while true, the browser is under user control and all
   // commands are rejected.
@@ -23,7 +23,7 @@ export interface PolicyState {
   agentTabs: number[];
   // Pairing token for the local-proxy WebSocket upgrade.
   pairingToken: string | null;
-  // Recent denials, surfaced as approval cards in the popup.
+  // Recent denials, surfaced as approval cards in the side panel.
   recentDenials: Denial[];
   // User blocklist entries on top of the built-in list.
   blockedOrigins: string[];

@@ -466,14 +466,14 @@ describe('humanDenialMessage', () => {
     }
   });
 
-  it('tells the agent a human must approve the origin in the extension popup', () => {
+  it('tells the agent a human must approve the origin in the side panel', () => {
     const message = humanDenialMessage({
       reason: 'origin_not_approved',
       command: 'navigate',
       origin: 'https://example.com',
     });
     expect(message).toContain('https://example.com');
-    expect(message).toContain('Browser Bridge extension popup');
+    expect(message).toContain('Browser Bridge side panel');
     expect(message).toContain('WebFetch');
   });
 });

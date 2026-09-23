@@ -39,6 +39,16 @@ export interface CommandPayload {
   params: Record<string, unknown>;
 }
 
+// Machine-readable reason for a content-script dispatch failure. Defined
+// here (rather than in the extension) so the MCP layer can branch on it
+// without importing extension code. Keep in sync with
+// `ContentScriptUnavailableReason` in `apps/extension/src/content-bridge.ts`.
+export type ContentScriptUnavailableReason =
+  | 'tab_not_found'
+  | 'restricted_page'
+  | 'injection_failed'
+  | 'no_listener';
+
 export interface ResponsePayload {
   status: 'ok' | 'error';
   data?: unknown;
@@ -48,6 +58,12 @@ export interface ResponsePayload {
   // when the extension's policy gate rejected the command; `error` carries
   // the machine-readable DenyReason for clients that only read strings.
   denied?: Denial;
+  // Structured content-script dispatch failure. Set when the SW tried to
+  // send a command to a content script and the underlying chrome.tabs API
+  // rejected for one of the reasons above. `error` / `message` carry the
+  // human-readable text; MCP tools should branch on `reason` for recovery
+  // hints (see `withRecoveryHint` in apps/websocket/src/mcp/command-client.ts).
+  reason?: ContentScriptUnavailableReason;
 }
 
 // Command result contracts. These are the single source of truth for the

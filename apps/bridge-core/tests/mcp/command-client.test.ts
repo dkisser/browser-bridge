@@ -2,7 +2,11 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import type { Envelope } from '@browser-bridge/shared';
 import { decode, encode } from '../../src/protocol';
 import type { Server } from 'bun';
-import { sendCommand, sendEvent } from '../../src/mcp/command-client';
+import {
+  sendCommand,
+  sendEvent,
+  withRecoveryHint,
+} from '../../src/mcp/command-client';
 
 describe('sendCommand', () => {
   let server: Server<undefined> | undefined;
@@ -139,5 +143,58 @@ describe('sendEvent', () => {
 
     expect(result.status).toBe('ok');
     expect(Array.isArray(result.data)).toBe(true);
+  });
+});
+
+describe('withRecoveryHint', () => {
+  it('appends the tab_list hint for the legacy "No tab with id: N" pattern', () => {
+    const out = withRecoveryHint({
+      status: 'error',
+      error: 'No tab with id: 5',
+    });
+    expect(out.error).toContain('Call tab_list');
+  });
+
+  it('does not duplicate the tab_list hint', () => {
+    const out = withRecoveryHint({
+      status: 'error',
+      error: 'No tab with id: 5. Call tab_list to discover valid tab ids.',
+    });
+    expect(out.error?.match(/tab_list/g)).toHaveLength(1);
+  });
+
+  it('appends a hint when the SW sent a structured reason', () => {
+    for (const reason of [
+      'tab_not_found',
+      'restricted_page',
+      'injection_failed',
+      'no_listener',
+    ] as const) {
+      const out = withRecoveryHint({
+        status: 'error',
+        error: 'some upstream message',
+        reason,
+      });
+      expect(out.error).toContain('some upstream message');
+      // Every reason maps to a non-empty hint.
+      expect((out.error?.length ?? 0) > 'some upstream message'.length).toBe(
+        true,
+      );
+    }
+  });
+
+  it('does not duplicate the hint when called twice', () => {
+    const once = withRecoveryHint({
+      status: 'error',
+      error: 'msg',
+      reason: 'restricted_page',
+    });
+    const twice = withRecoveryHint(once);
+    expect(twice.error).toBe(once.error);
+  });
+
+  it('passes status:ok payloads through unchanged', () => {
+    const out = withRecoveryHint({ status: 'ok', data: { ok: true } });
+    expect(out).toEqual({ status: 'ok', data: { ok: true } });
   });
 });
