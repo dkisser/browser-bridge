@@ -15,7 +15,7 @@ Browser Bridge is a personal/demo Bun + TypeScript monorepo. See `@README.md` fo
 
 Run these from the repository root:
 
-- `bun run dev:websocket` — start the WebSocket server in watch mode
+- `bun run dev:core` — start the WebSocket server in watch mode
 - `bun run dev:extension` — build the Chrome extension in watch mode
 - `bun run build:extension` — production build of the Chrome extension
 - `bun run cli` — run the CLI tool

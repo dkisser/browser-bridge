@@ -2,6 +2,12 @@
 # Browser Bridge CLI router. Browser commands are delegated to bridge-cmd;
 # service lifecycle lives under `bridge service`. Emitted at install time —
 # see install/install.sh write_artifacts() for substitution details.
+#
+# Bridge-core merge (ADR-0010): the pre-merge script supervised two processes
+# (`ws-server` + `local-proxy`). After the merge there is one process —
+# `bridge-core` — listening on three loopback ports (3001 control plane,
+# 3002 extension, 3003 MCP). The supervisor and start/stop logic are
+# rewritten to track a single child.
 set -euo pipefail
 
 BB_HOME="${BB_HOME:-$HOME/.browser-bridge}"
@@ -10,13 +16,16 @@ BRIDGE_VERSION="{{BRIDGE_VERSION}}"
 
 WS_PORT="${BRIDGE_WS_PORT:-3001}"
 WS_HOSTNAME="${BRIDGE_WS_HOSTNAME:-127.0.0.1}"
-LOCAL_PROXY_PORT="${BRIDGE_LOCAL_PROXY_PORT:-3002}"
-LOCAL_PROXY_HOSTNAME="${BRIDGE_LOCAL_HOSTNAME:-127.0.0.1}"
+LOCAL_PORT="${BRIDGE_LOCAL_PORT:-3002}"
+LOCAL_HOSTNAME="${BRIDGE_LOCAL_HOSTNAME:-127.0.0.1}"
+MCP_PORT="${BRIDGE_MCP_PORT:-3003}"
+MCP_HOSTNAME="${BRIDGE_MCP_HOSTNAME:-127.0.0.1}"
 LOG_DIR="${BB_HOME:-$HOME/.browser-bridge}/logs"
 RUN_DIR="${BB_HOME:-$HOME/.browser-bridge}/run"
 
 LAUNCHAGENT_LABEL="com.browser-bridge.bridge"
 STAGING_DIR="${BB_HOME:-$HOME/.browser-bridge}/launchagents"
+SERVICE_NAME="bridge-core"
 
 die() { printf 'Error: %s\n' "$*" >&2; exit 1; }
 info() { printf '%s\n' "$*"; }
@@ -26,13 +35,13 @@ print_service_help() {
 Usage: bridge service <command> [args]
 
 Commands:
-  up [--foreground]   Start ws-server and local-proxy (launchd-supervised on macOS)
-  down                Stop both services
-  restart             Restart services
+  up [--foreground]   Start bridge-core (launchd-supervised on macOS)
+  down                Stop bridge-core
+  restart             Restart bridge-core
   status              Service state + login auto-start state
-  logs [name]         Tail logs (ws-server | local-proxy)
-  enable              Start services at login (macOS LaunchAgent)
-  disable             Do not start services at login
+  logs                Tail logs (bridge-core)
+  enable              Start bridge-core at login (macOS LaunchAgent)
+  disable             Do not start bridge-core at login
   update [version]    Upgrade to a release (default: latest)
   doctor              Diagnose the install
   version             Print installed + latest version
@@ -88,8 +97,7 @@ cmd_service_version() {
 
 cmd_doctor() {
   local rc=0
-  [[ -x "$BB_HOME/bin/ws-server" ]]   && echo "[OK] ws-server binary present"   || { echo "[FAIL] ws-server binary missing"; rc=1; }
-  [[ -x "$BB_HOME/bin/local-proxy" ]] && echo "[OK] local-proxy binary present" || { echo "[FAIL] local-proxy binary missing"; rc=1; }
+  [[ -x "$BB_HOME/bin/bridge-core" ]] && echo "[OK] bridge-core binary present" || { echo "[FAIL] bridge-core binary missing"; rc=1; }
   [[ -x "$BB_HOME/bin/bridge-cmd" ]]  && echo "[OK] bridge-cmd binary present"  || { echo "[FAIL] bridge-cmd binary missing"; rc=1; }
   local ext_manifest="$BB_HOME/extension/manifest.json"
   local alt_manifest="$BB_EXTENSION_DIR/extension/manifest.json"
@@ -100,10 +108,10 @@ cmd_doctor() {
   else
     echo "[FAIL] extension/manifest.json missing or invalid"; rc=1
   fi
-  if service_state ws-server >/dev/null && service_state local-proxy >/dev/null; then
-    echo "[OK] both services running"
+  if service_state >/dev/null; then
+    echo "[OK] bridge-core running"
   else
-    echo "[WARN] one or more services not running (run 'bridge service up')"
+    echo "[WARN] bridge-core not running (run 'bridge service up')"
   fi
   return $rc
 }
@@ -124,20 +132,24 @@ except (OSError, socket.timeout):
 # ---- Unsupervised (Linux / fallback) orchestration via pidfiles ----
 
 start_service() {
-  local name="$1" binary="$2" port="$3" host="${4:-localhost}"
-  local logfile="$LOG_DIR/${name}.log" pidfile="$RUN_DIR/${name}.pid"
-  if [[ -f "$pidfile" ]] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
-    info "$name already running (pid $(cat "$pidfile"))"
+  if [[ -f "$RUN_DIR/${SERVICE_NAME}.pid" ]] && kill -0 "$(cat "$RUN_DIR/${SERVICE_NAME}.pid")" 2>/dev/null; then
+    info "$SERVICE_NAME already running (pid $(cat "$RUN_DIR/${SERVICE_NAME}.pid"))"
     return 0
   fi
-  if port_in_use "$port" "$host"; then
-    die "BB-E010: $name port $port is already in use"
+  if port_in_use "$WS_PORT" "$WS_HOSTNAME"; then
+    die "BB-E010: $SERVICE_NAME port $WS_PORT is already in use"
   fi
-  ( exec "$binary" >"$logfile" 2>&1 ) & pid=$!
+  mkdir -p "$LOG_DIR" "$RUN_DIR"
+  local logfile="$LOG_DIR/${SERVICE_NAME}.log" pidfile="$RUN_DIR/${SERVICE_NAME}.pid"
+  BRIDGE_WS_PORT="$WS_PORT" BRIDGE_WS_HOSTNAME="$WS_HOSTNAME" \
+  BRIDGE_LOCAL_PORT="$LOCAL_PORT" BRIDGE_LOCAL_HOSTNAME="$LOCAL_HOSTNAME" \
+  BRIDGE_MCP_PORT="$MCP_PORT" BRIDGE_MCP_HOSTNAME="$MCP_HOSTNAME" \
+  BRIDGE_API_KEYS="${BRIDGE_API_KEYS:-}" \
+    ( exec "$BB_HOME/bin/bridge-core" >"$logfile" 2>&1 ) & pid=$!
   disown
   echo "$pid" >"$pidfile"
   for _ in {1..50}; do
-    if ! port_in_use "$port" "$host"; then
+    if ! port_in_use "$WS_PORT" "$WS_HOSTNAME"; then
       sleep 0.1
       continue
     fi
@@ -145,26 +157,16 @@ start_service() {
   done
   kill "$(cat "$pidfile")" 2>/dev/null || true
   rm -f "$pidfile"
-  die "BB-E011: $name failed to bind port $port within 5s (see $logfile)"
-}
-
-legacy_up() {
-  [[ -x "$BB_HOME/bin/ws-server" ]] || die "BB-E002: install not run. Execute the install script first."
-  [[ -x "$BB_HOME/bin/local-proxy" ]] || die "BB-E002: install not run. Execute the install script first."
-  mkdir -p "$LOG_DIR" "$RUN_DIR"
-  BRIDGE_WS_PORT="$WS_PORT" BRIDGE_WS_HOSTNAME="$WS_HOSTNAME" start_service ws-server "$BB_HOME/bin/ws-server" "$WS_PORT" "$WS_HOSTNAME"
-  BRIDGE_LOCAL_PORT="$LOCAL_PROXY_PORT" BRIDGE_LOCAL_HOSTNAME="$LOCAL_PROXY_HOSTNAME" BRIDGE_LOCAL_PROXY_PORT="$LOCAL_PROXY_PORT" BRIDGE_WS_URL="ws://127.0.0.1:$WS_PORT" start_service local-proxy "$BB_HOME/bin/local-proxy" "$LOCAL_PROXY_PORT" "$LOCAL_PROXY_HOSTNAME"
-  info "bridge service up: ws-server=$(cat "$RUN_DIR/ws-server.pid"), local-proxy=$(cat "$RUN_DIR/local-proxy.pid")"
+  die "BB-E011: $SERVICE_NAME failed to bind port $WS_PORT within 5s (see $logfile)"
 }
 
 stop_service() {
-  local name="$1"
-  local pidfile="$RUN_DIR/${name}.pid"
-  [[ -f "$pidfile" ]] || { info "$name already stopped"; return 0; }
+  local pidfile="$RUN_DIR/${SERVICE_NAME}.pid"
+  [[ -f "$pidfile" ]] || { info "$SERVICE_NAME already stopped"; return 0; }
   local pid
   pid=$(cat "$pidfile")
   if ! pid_alive "$pid"; then
-    info "$name: pid $pid not running, cleaning up"
+    info "$SERVICE_NAME: pid $pid not running, cleaning up"
     rm -f "$pidfile"
     return 0
   fi
@@ -175,30 +177,23 @@ stop_service() {
   done
   if pid_alive "$pid"; then
     kill -KILL "$pid" 2>/dev/null || true
-    info "$name: sent SIGKILL after timeout"
+    info "$SERVICE_NAME: sent SIGKILL after timeout"
   fi
   rm -f "$pidfile"
-  info "$name stopped"
-}
-
-legacy_down() {
-  stop_service ws-server
-  stop_service local-proxy
+  info "$SERVICE_NAME stopped"
 }
 
 service_state() {
-  local name="$1"
-  local pidfile="$RUN_DIR/${name}.pid"
+  local pidfile="$RUN_DIR/${SERVICE_NAME}.pid"
   if [[ -f "$pidfile" ]] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
-    printf '%-13s running  (pid %s)\n' "$name:" "$(cat "$pidfile")"
+    printf '%-13s running  (pid %s)\n' "$SERVICE_NAME:" "$(cat "$pidfile")"
     return 0
   fi
-  printf '%-13s stopped\n' "$name:"
+  printf '%-13s stopped\n' "$SERVICE_NAME:"
   return 1
 }
 
 cmd_logs() {
-  local name="${1:-}"
   local pyscript="$BB_HOME/.bridge-logs.py"
   cat > "$pyscript" <<'PYEOF'
 import sys, subprocess, datetime, signal
@@ -220,11 +215,7 @@ try:
 except BrokenPipeError:
     cleanup(None, None)
 PYEOF
-  case "$name" in
-    ws-server|local-proxy) exec python3 -u "$pyscript" "$LOG_DIR/${name}.log" ;;
-    "")                    exec python3 -u "$pyscript" "$LOG_DIR/ws-server.log" "$LOG_DIR/local-proxy.log" ;;
-    *) die "BB-E102: unknown log target '$name' (use ws-server | local-proxy)" ;;
-  esac
+  exec python3 -u "$pyscript" "$LOG_DIR/bridge-core.log"
 }
 
 cmd_service_update() {
@@ -283,15 +274,18 @@ render_launchagent_plist() {
     -v bb_home="$BB_HOME" \
     -v ws_port="$WS_PORT" \
     -v ws_hostname="$WS_HOSTNAME" \
-    -v local_proxy_port="$LOCAL_PROXY_PORT" \
-    -v local_proxy_hostname="$LOCAL_PROXY_HOSTNAME" '
+    -v local_port="$LOCAL_PORT" \
+    -v local_hostname="$LOCAL_HOSTNAME" \
+    -v mcp_port="$MCP_PORT" \
+    -v mcp_hostname="$MCP_HOSTNAME" \
+    '
     function esc(s) {
       gsub(/&/, "\\&amp;", s)
       gsub(/</, "\\&lt;", s)
       gsub(/>/, "\\&gt;", s)
       return s
     }
-    { gsub(/{{BB_HOME}}/, esc(bb_home)); gsub(/{{WS_PORT}}/, esc(ws_port)); gsub(/{{WS_HOSTNAME}}/, esc(ws_hostname)); gsub(/{{LOCAL_PROXY_PORT}}/, esc(local_proxy_port)); gsub(/{{LOCAL_PROXY_HOSTNAME}}/, esc(local_proxy_hostname)); print }
+    { gsub(/{{BB_HOME}}/, esc(bb_home)); gsub(/{{WS_PORT}}/, esc(ws_port)); gsub(/{{WS_HOSTNAME}}/, esc(ws_hostname)); gsub(/{{LOCAL_PORT}}/, esc(local_port)); gsub(/{{LOCAL_HOSTNAME}}/, esc(local_hostname)); gsub(/{{MCP_PORT}}/, esc(mcp_port)); gsub(/{{MCP_HOSTNAME}}/, esc(mcp_hostname)); print }
   ' "$tmpl"
 }
 
@@ -323,10 +317,9 @@ service_disable() {
   info "Login auto-start disabled. Running services are not stopped ('bridge service down' stops them)."
 }
 
-# ---- Supervisor: one foreground process holding both services, so launchd
-# can supervise the group as a single KeepAlive'd job. Only the child that
-# died is restarted; local-proxy and the extension reconnect to a restarted
-# ws-server on their own.
+# ---- Supervisor: one foreground process holding bridge-core, so launchd can
+# supervise it as a single KeepAlive'd job. The extension reconnects to a
+# restarted bridge-core on its own (fixed 3s retry inside the extension).
 
 pid_alive() {
   local pid="$1" st
@@ -354,42 +347,34 @@ pid_is() {
 }
 
 supervisor_spawn() {
-  local name="$1" binary="$2" port="$3" host="${4:-localhost}"
-  local logfile="$LOG_DIR/${name}.log" pidfile="$RUN_DIR/${name}.pid"
+  local logfile="$LOG_DIR/${SERVICE_NAME}.log" pidfile="$RUN_DIR/${SERVICE_NAME}.pid"
   if [[ -f "$pidfile" ]] && pid_alive "$(cat "$pidfile")"; then
-    info "supervisor: $name already running (pid $(cat "$pidfile"))"
+    info "supervisor: $SERVICE_NAME already running (pid $(cat "$pidfile"))"
     return 0
   fi
-  if port_in_use "$port" "$host"; then
-    die "BB-E010: $name port $port is already in use"
+  if port_in_use "$WS_PORT" "$WS_HOSTNAME"; then
+    die "BB-E010: $SERVICE_NAME port $WS_PORT is already in use"
   fi
-  ( exec "$binary" >"$logfile" 2>&1 ) &
+  BRIDGE_WS_PORT="$WS_PORT" BRIDGE_WS_HOSTNAME="$WS_HOSTNAME" \
+  BRIDGE_LOCAL_PORT="$LOCAL_PORT" BRIDGE_LOCAL_HOSTNAME="$LOCAL_HOSTNAME" \
+  BRIDGE_MCP_PORT="$MCP_PORT" BRIDGE_MCP_HOSTNAME="$MCP_HOSTNAME" \
+  BRIDGE_API_KEYS="${BRIDGE_API_KEYS:-}" \
+    ( exec "$BB_HOME/bin/bridge-core" >"$logfile" 2>&1 ) &
   local pid=$!
   echo "$pid" >"$pidfile"
   for _ in {1..50}; do
     if ! pid_alive "$pid"; then
       rm -f "$pidfile"
-      die "BB-E011: $name exited before binding port $port (see $logfile)"
+      die "BB-E011: $SERVICE_NAME exited before binding port $WS_PORT (see $logfile)"
     fi
-    if port_in_use "$port" "$host"; then
+    if port_in_use "$WS_PORT" "$WS_HOSTNAME"; then
       return 0
     fi
     sleep 0.1
   done
   kill "$pid" 2>/dev/null || true
   rm -f "$pidfile"
-  die "BB-E011: $name failed to bind port $port within 5s (see $logfile)"
-}
-
-supervisor_start_ws() {
-  BRIDGE_WS_PORT="$WS_PORT" BRIDGE_WS_HOSTNAME="$WS_HOSTNAME" \
-    supervisor_spawn ws-server "$BB_HOME/bin/ws-server" "$WS_PORT" "$WS_HOSTNAME"
-}
-
-supervisor_start_proxy() {
-  BRIDGE_LOCAL_PORT="$LOCAL_PROXY_PORT" BRIDGE_LOCAL_HOSTNAME="$LOCAL_PROXY_HOSTNAME" \
-    BRIDGE_LOCAL_PROXY_PORT="$LOCAL_PROXY_PORT" BRIDGE_WS_URL="ws://127.0.0.1:$WS_PORT" \
-    supervisor_spawn local-proxy "$BB_HOME/bin/local-proxy" "$LOCAL_PROXY_PORT" "$LOCAL_PROXY_HOSTNAME"
+  die "BB-E011: $SERVICE_NAME failed to bind port $WS_PORT within 5s (see $logfile)"
 }
 
 # Classify one service for supervise(). Prints exactly one of:
@@ -397,25 +382,22 @@ supervisor_start_proxy() {
 #   free       — no live child of ours and the port is available
 #   foreign    — the port is held without a trustworthy bridge pidfile
 classify_service() {
-  local name="$1" port="$2" host="$3"
-  local pidfile="$RUN_DIR/${name}.pid" pid=""
+  local pidfile="$RUN_DIR/${SERVICE_NAME}.pid" pid=""
   if [[ -f "$pidfile" ]]; then pid=$(cat "$pidfile" 2>/dev/null || true); fi
   if [[ -n "$pid" ]] && pid_alive "$pid"; then
-    if pid_is "$pid" "$name"; then
+    if pid_is "$pid" "$SERVICE_NAME"; then
       printf 'ours %s\n' "$pid"
       return 0
     fi
-    if port_in_use "$port" "$host"; then
+    if port_in_use "$WS_PORT" "$WS_HOSTNAME"; then
       printf 'foreign\n'
       return 0
     fi
-    # Live pid that is not this service and holds no port: stale pidfile
-    # (pid reuse). Drop it and fall through to the port check.
     rm -f "$pidfile"
   else
     rm -f "$pidfile"
   fi
-  if port_in_use "$port" "$host"; then
+  if port_in_use "$WS_PORT" "$WS_HOSTNAME"; then
     printf 'foreign\n'
   else
     printf 'free\n'
@@ -434,25 +416,22 @@ supervisor_shutdown() {
   trap - TERM INT
   info "supervisor: shutting down"
   rm -f "$RUN_DIR/supervisor.pid"
-  stop_service ws-server || true
-  stop_service local-proxy || true
+  stop_service || true
   exit 0
 }
 
 supervisor_watch() {
   local restarts=0
-  local name pid pidfile dead
+  local pid pidfile dead
   while true; do
-    dead=""
-    for name in ws-server local-proxy; do
-      pidfile="$RUN_DIR/${name}.pid"
-      pid=""
-      if [[ -f "$pidfile" ]]; then pid=$(cat "$pidfile"); fi
-      if [[ -z "$pid" ]] || ! pid_alive "$pid"; then
-        dead="$name"
-        break
-      fi
-    done
+    pidfile="$RUN_DIR/${SERVICE_NAME}.pid"
+    pid=""
+    if [[ -f "$pidfile" ]]; then pid=$(cat "$pidfile"); fi
+    if [[ -z "$pid" ]] || ! pid_alive "$pid"; then
+      dead="1"
+    else
+      dead=""
+    fi
     if [[ -z "$dead" ]]; then
       restarts=0
       supervisor_tick
@@ -460,28 +439,21 @@ supervisor_watch() {
     fi
     restarts=$((restarts + 1))
     if (( restarts > 5 )); then
-      info "supervisor: $dead keeps dying; giving up so launchd can restart the group"
+      info "supervisor: $SERVICE_NAME keeps dying; giving up so launchd can restart the group"
       exit 1
     fi
-    info "supervisor: restarting $dead (attempt $restarts)"
-    rm -f "$RUN_DIR/${dead}.pid"
-    case "$dead" in
-      ws-server)   supervisor_start_ws ;;
-      local-proxy) supervisor_start_proxy ;;
-    esac
+    info "supervisor: restarting $SERVICE_NAME (attempt $restarts)"
+    rm -f "$RUN_DIR/${SERVICE_NAME}.pid"
+    supervisor_spawn
     supervisor_tick
   done
 }
 
 supervise() {
-  [[ -x "$BB_HOME/bin/ws-server" ]] || die "BB-E002: install not run. Execute the install script first."
-  [[ -x "$BB_HOME/bin/local-proxy" ]] || die "BB-E002: install not run. Execute the install script first."
+  [[ -x "$BB_HOME/bin/bridge-core" ]] || die "BB-E002: install not run. Execute the install script first."
   mkdir -p "$LOG_DIR" "$RUN_DIR"
 
   # Single-supervisor invariant: at most one supervisor may watch this RUN_DIR.
-  # The pidfile outlives a SIGKILLed supervisor, so a live holder means a
-  # second foreground supervisor would race the first to restart dead
-  # children; anything else here is stale and safe to drop.
   if [[ -f "$RUN_DIR/supervisor.pid" ]]; then
     local spid
     spid=$(cat "$RUN_DIR/supervisor.pid" 2>/dev/null || true)
@@ -491,49 +463,34 @@ supervise() {
     rm -f "$RUN_DIR/supervisor.pid"
   fi
 
-  # Reconcile desired state with reality, per service: adopt bridge children
-  # orphaned by a killed supervisor, start what is missing, and refuse to
-  # touch foreign port listeners (fail non-zero so launchd backs off instead
-  # of silently relaunching every ThrottleInterval).
-  local ws_state lp_state
-  ws_state=$(classify_service ws-server "$WS_PORT" "$WS_HOSTNAME")
-  lp_state=$(classify_service local-proxy "$LOCAL_PROXY_PORT" "$LOCAL_PROXY_HOSTNAME")
-  if [[ "$ws_state" == foreign || "$lp_state" == foreign ]]; then
-    die "BB-E010: port $WS_PORT or $LOCAL_PROXY_PORT is held by a process with no trustworthy bridge pidfile; not taking over (launchd will retry)"
+  local state
+  state=$(classify_service)
+  if [[ "$state" == foreign ]]; then
+    die "BB-E010: port $WS_PORT is held by a process with no trustworthy bridge pidfile; not taking over (launchd will retry)"
   fi
 
   echo $$ > "$RUN_DIR/supervisor.pid"
   trap 'supervisor_shutdown' TERM INT
-  if [[ "$ws_state" == ours* ]]; then
-    info "supervisor: adopting ws-server (pid ${ws_state#ours })"
+  if [[ "$state" == ours* ]]; then
+    info "supervisor: adopting $SERVICE_NAME (pid ${state#ours })"
   else
-    supervisor_start_ws
+    supervisor_spawn
   fi
-  if [[ "$lp_state" == ours* ]]; then
-    info "supervisor: adopting local-proxy (pid ${lp_state#ours })"
-  else
-    supervisor_start_proxy
-  fi
-  info "supervisor: ws-server=$(cat "$RUN_DIR/ws-server.pid"), local-proxy=$(cat "$RUN_DIR/local-proxy.pid")"
+  info "supervisor: $SERVICE_NAME=$(cat "$RUN_DIR/${SERVICE_NAME}.pid")"
   supervisor_watch
 }
 
 cmd_service_up() {
-  [[ -x "$BB_HOME/bin/ws-server" ]] || die "BB-E002: install not run. Execute the install script first."
-  [[ -x "$BB_HOME/bin/local-proxy" ]] || die "BB-E002: install not run. Execute the install script first."
+  [[ -x "$BB_HOME/bin/bridge-core" ]] || die "BB-E002: install not run. Execute the install script first."
   if [[ "${1:-}" == "--foreground" ]]; then
     supervise
     return
   fi
   if ! is_macos; then
-    legacy_up
+    start_service
     return
   fi
   if launchagent_loaded; then
-    # The label being loaded is not proof we are up: a job from a
-    # pre-supervision install (or a finished one) stays loaded with stale
-    # ProgramArguments after an upgrade, and launchd would keep running the
-    # old command. Only a live supervisor pidfile means we are supervised.
     local spid=""
     if [[ -f "$RUN_DIR/supervisor.pid" ]]; then spid=$(cat "$RUN_DIR/supervisor.pid" 2>/dev/null || true); fi
     if [[ -n "$spid" ]] && pid_is "$spid" 'service up --foreground'; then
@@ -543,14 +500,10 @@ cmd_service_up() {
     launchagent_bootout || true
     info "bridge service up: replaced stale LaunchAgent job (label ${LAUNCHAGENT_LABEL})"
   fi
-  # Ports held by processes recorded in our own pidfiles are adopted by the
-  # supervisor once launchd starts it; only genuinely foreign listeners
-  # (no trustworthy pidfile) are refused.
-  local ws_state lp_state
-  ws_state=$(classify_service ws-server "$WS_PORT" "$WS_HOSTNAME")
-  lp_state=$(classify_service local-proxy "$LOCAL_PROXY_PORT" "$LOCAL_PROXY_HOSTNAME")
-  if [[ "$ws_state" == foreign || "$lp_state" == foreign ]]; then
-    die "BB-E010: port $WS_PORT or $LOCAL_PROXY_PORT is occupied by something other than a supervised bridge instance (check 'bridge service status'). Free the port and retry."
+  local state
+  state=$(classify_service)
+  if [[ "$state" == foreign ]]; then
+    die "BB-E010: port $WS_PORT is occupied by something other than a supervised bridge instance (check 'bridge service status'). Free the port and retry."
   fi
   write_launchagent_plists
   local plist
@@ -576,15 +529,10 @@ cmd_service_down() {
     else
       info "supervisor not loaded"
     fi
-    # Sweep unsupervised strays (legacy/manual pairs, or children orphaned by
-    # a SIGKILLed supervisor). Quiet when there is nothing to clean up. The
-    # stale supervisor.pid from a SIGKILLed supervisor dies with the sweep.
-    if [[ -f "$RUN_DIR/ws-server.pid" ]]; then stop_service ws-server; fi
-    if [[ -f "$RUN_DIR/local-proxy.pid" ]]; then stop_service local-proxy; fi
+    if [[ -f "$RUN_DIR/${SERVICE_NAME}.pid" ]]; then stop_service; fi
     rm -f "$RUN_DIR/supervisor.pid"
   else
-    stop_service ws-server
-    stop_service local-proxy
+    stop_service
   fi
 }
 
@@ -595,8 +543,7 @@ cmd_service_restart() {
 
 cmd_service_status() {
   local rc=0
-  service_state ws-server || rc=1
-  service_state local-proxy || rc=1
+  service_state || rc=1
   if is_macos; then
     if service_enabled; then
       if launchagent_loaded; then

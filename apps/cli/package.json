@@ -11,7 +11,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@browser-bridge/websocket": "workspace:*",
+    "@browser-bridge/bridge-core": "workspace:*",
     "@browser-bridge/shared": "workspace:*",
     "commander": "^12.0.0"
   },

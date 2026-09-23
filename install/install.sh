@@ -252,12 +252,21 @@ download_runtime() {
 
   local extracted="$BB_HOME/browser-bridge-macos-${arch}-${version}"
   [[ -d "$extracted/bin" ]] || die "BB-E032: tarball missing bin/ directory"
-  [[ -x "$extracted/bin/ws-server" ]] || die "BB-E032: tarball missing ws-server binary"
-  [[ -x "$extracted/bin/local-proxy" ]] || die "BB-E032: tarball missing local-proxy binary"
+  # Bridge-core merge (ADR-0010): only two binaries ship now.
+  [[ -x "$extracted/bin/bridge-core" ]] || die "BB-E032: tarball missing bridge-core binary"
   [[ -x "$extracted/bin/bridge-cmd" ]] || die "BB-E032: tarball missing bridge-cmd binary"
 
+  # Migration: when upgrading from a pre-merge install, the old ws-server
+  # and local-proxy binaries are still in $BB_HOME/bin/ and the old
+  # ~/.browser-bridge/config.json points at the pre-merge processes. Drop
+  # them and force-reinitialize the config so the next bridge-core start
+  # produces a fresh browserId, fresh pairing hash, and the user is
+  # prompted to re-pair the extension. See ADR-0010.
+  rm -f "$BB_HOME/bin/ws-server" "$BB_HOME/bin/local-proxy" 2>/dev/null || true
+  rm -f "$BB_HOME/config.json" 2>/dev/null || true
+
   mkdir -p "$BB_HOME/bin"
-  mv "$extracted/bin/ws-server" "$extracted/bin/local-proxy" "$extracted/bin/bridge-cmd" "$BB_HOME/bin/"
+  mv "$extracted/bin/bridge-core" "$extracted/bin/bridge-cmd" "$BB_HOME/bin/"
   rm -rf "$extracted"
   trap - RETURN
 }

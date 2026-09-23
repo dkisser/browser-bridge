@@ -32,7 +32,7 @@ To pin a version: `BB_VERSION=v1.2.3 curl ... | bash`.
 4. Extracts the extension into `~/.browser-bridge/extension/` and exposes it through a symlink at `~/Browser-Bridge/extension/` for easy Chrome loading.
 5. Detects the macOS architecture (arm64 or x64).
 6. Downloads the matching runtime tarball (`browser-bridge-macos-{arch}-{version}.tar.gz`) and its `.sha256`; aborts on mismatch.
-7. Extracts the three binaries (`ws-server`, `local-proxy`, `bridge-cmd`) into `~/.browser-bridge/bin/`.
+7. Extracts the two binaries (`bridge-core`, `bridge-cmd`) into `~/.browser-bridge/bin/`. On upgrade from a pre-merge install, force-reinitializes `~/.browser-bridge/config.json` (new browserId + cleared pairing hash) so the next extension reconnect is forced through pairing.
 8. Writes `~/.browser-bridge/bin/bridge` (templated from `install/bridge.sh.tmpl`) and symlinks it into `~/.local/bin/bridge`.
 9. Writes the resolved version to `~/.browser-bridge/version`.
 10. Stops any already-running bridge services, then starts them again after installation.
@@ -44,7 +44,7 @@ To pin a version: `BB_VERSION=v1.2.3 curl ... | bash`.
 
 | Command | Purpose |
 |---|---|
-| `bridge service up` | Start ws-server and local-proxy (launchd-supervised on macOS). |
+| `bridge service up` | Start bridge-core (launchd-supervised on macOS). |
 | `bridge service down` | Stop both. |
 | `bridge service restart` | down then up. |
 | `bridge service status` | Show service state + login auto-start state. |
@@ -78,7 +78,7 @@ Run `bridge --help` for the full command list.
 | `BB-E000` | Bash < 4 or missing | Upgrade bash. |
 | `BB-E001` | Prerequisite missing | Install `curl`, `unzip`, `shasum`, or `python3`. |
 | `BB-E002` | `bridge` invoked without install | Run the install script. |
-| `BB-E010` | Port already in use | `lsof -i :3001` (ws-server) or `lsof -i :3002` (local-proxy), kill the conflict. |
+| `BB-E010` | Port already in use | `lsof -i :3001` (control plane) or `lsof -i :3002` (extension bridge), kill the conflict. |
 | `BB-E011` | Service failed to bind port | Check `~/.browser-bridge/logs/`. |
 | `BB-E020` | Extension zip SHA-256 mismatch | Re-run; check network/proxy. |
 | `BB-E021` | Download failed (HTTP error) | Check network, retry. |
@@ -91,7 +91,7 @@ Run `bridge --help` for the full command list.
 | `BB-E031` | CHANGELOG missing entry for release | Add an entry, re-tag. |
 | `BB-E100` | Subcommand stub (during dev) | Implementation pending. |
 | `BB-E101` | Unknown subcommand | Run `bridge` for help. |
-| `BB-E102` | Unknown log target | Use `ws-server` or `local-proxy`. |
+| `BB-E102` | Unknown log target | Use `bridge-core`. |
 | `BB-E103` | Cannot locate installer (update) | Re-run the install script manually. |
 | `BB-E304` | `launchctl bootout` failed while stopping services | Check `launchctl list` for `com.browser-bridge.bridge`; retry `bridge service down`. |
 | `BB-E305` | Lifecycle command moved under `bridge service` | Re-run as `bridge service <command>`. |
@@ -122,8 +122,8 @@ bun test install/tests/release-workflow.test.ts
 ## Manual Smoke Test
 
 ```bash
-# After install, bridge services are already running:
-bridge service status  # both services running
+# After install, bridge-core is already running:
+bridge service status  # bridge-core running
 bridge service doctor  # all OK
 # In Chrome:
 #   1. Open chrome://extensions/

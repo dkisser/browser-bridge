@@ -5,7 +5,7 @@ Browser Bridge exposes an MCP server over Streamable HTTP so agents can control 
 ## Start the server
 
 ```bash
-bun run dev:websocket
+bun run dev:core
 ```
 
 The MCP endpoint is available at `http://localhost:3003/mcp`.
