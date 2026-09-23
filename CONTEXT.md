@@ -37,7 +37,7 @@ The bridge-core's outbound WebSocket client to the Chrome extension. The directi
 _Avoid_: Local Proxy, extension socket, browser socket
 
 **Pairing**:
-A one-time enrollment handshake between the extension and the control plane: a short-lived code (5 min TTL) is exchanged for a long-lived bearer token, kept in the extension's `chrome.storage` and stored only as a SHA-256 hash on the control-plane side. The token does not expire; revoking it means removing `extensionTokenHash` from `~/.browser-bridge/config.json`, which makes the next extension reconnect fail with 403 and walks the user through the popup-driven re-pairing flow.
+A one-time enrollment handshake between the extension and the control plane: a short-lived code (5 min TTL) is exchanged for a long-lived bearer token, kept in the extension's `chrome.storage` and stored only as a SHA-256 hash on the control-plane side. The token does not expire; revoking it means removing `extensionTokenHash` from `~/.browser-bridge/config.json`, which makes the next extension reconnect fail with 403 and walks the user through the side-panel-driven re-pairing flow.
 _Avoid_: auth, authentication, login
 
 **Login auto-start**:

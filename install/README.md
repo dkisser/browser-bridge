@@ -78,7 +78,7 @@ Run `bridge --help` for the full command list.
 | `BB-E000` | Bash < 4 or missing | Upgrade bash. |
 | `BB-E001` | Prerequisite missing | Install `curl`, `unzip`, `shasum`, or `python3`. |
 | `BB-E002` | `bridge` invoked without install | Run the install script. |
-| `BB-E010` | Port already in use | `lsof -i :3001` (control plane) or `lsof -i :3002` (extension bridge), kill the conflict. |
+| `BB-E010` | Port already in use | `lsof -i :3001` (control plane), kill the conflicting process. |
 | `BB-E011` | Service failed to bind port | Check `~/.browser-bridge/logs/`. |
 | `BB-E020` | Extension zip SHA-256 mismatch | Re-run; check network/proxy. |
 | `BB-E021` | Download failed (HTTP error) | Check network, retry. |

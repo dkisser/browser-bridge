@@ -72,7 +72,7 @@ bridge --browser <browser-id> tab:new https://github.com
 bridge --browser <browser-id> --tab <tab-id> wait:navigation
 ```
 
-That’s it. The command travels from CLI → WebSocket server → local proxy → Chrome extension → browser.
+That’s it. The command travels from CLI → bridge-core → Chrome extension → browser.
 
 ### 3. Use it from any agent
 
@@ -142,7 +142,7 @@ For the full analysis — why full-page dumps fail, how virtual lists distort th
 
 ## 🖥️ Use via CLI
 
-The `bridge` CLI controls a connected Chrome instance through the WebSocket server.
+The `bridge` CLI controls a connected Chrome instance through the bridge-core control plane.
 
 ### Global options
 
@@ -154,7 +154,7 @@ bridge --browser <browser-id> [options] <command>
 |---|---|---|
 | `--browser <id>` | Target browser instance (required for most commands) | — |
 | `--tab <id>` | Target tab id (all page-level commands require this) | `0` |
-| `--server <url>` | WebSocket server URL | `ws://localhost:3001` |
+| `--server <url>` | Control plane URL | `ws://localhost:3001` |
 | `--timeout <ms>` | Command timeout | `10000` |
 | `--json` | Output structured JSON instead of human-readable text | — |
 
