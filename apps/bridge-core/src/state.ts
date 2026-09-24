@@ -9,9 +9,22 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { BrowserStatus } from '@browser-bridge/shared/types';
 
-const CONFIG_DIR = join(homedir(), '.browser-bridge');
-const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
+const DEFAULT_CONFIG_DIR = join(homedir(), '.browser-bridge');
 const BUFFER_TIMEOUT_MS = 5000;
+
+/**
+ * Resolve the state directory the same way install.sh and bridge.sh do, so a
+ * custom install prefix keeps binaries and state together. Resolved per call
+ * rather than frozen at import time: the installer and the test suite both set
+ * BB_HOME for a process that may already have loaded this module.
+ */
+function configDir(): string {
+  return process.env.BB_HOME || DEFAULT_CONFIG_DIR;
+}
+
+function configFile(): string {
+  return join(configDir(), 'config.json');
+}
 
 interface BridgeConfig {
   browserId: string;
@@ -92,12 +105,13 @@ export class StateManager {
   }
 
   private loadConfig(): BridgeConfig {
+    const file = configFile();
     try {
-      if (existsSync(CONFIG_FILE)) {
-        const data = readFileSync(CONFIG_FILE, 'utf-8');
+      if (existsSync(file)) {
+        const data = readFileSync(file, 'utf-8');
         // Tighten permissions on config files written by older versions:
         // the file holds the extension token hash.
-        chmodSync(CONFIG_FILE, 0o600);
+        chmodSync(file, 0o600);
         // Destructure only known fields so pre-cleanup config files
         // (which may still carry apiToken / serverUrl from the pre-merge
         // ws-server + local-proxy design) do not silently re-serialize
@@ -129,10 +143,11 @@ export class StateManager {
   }
 
   private saveConfigSync(config: BridgeConfig): void {
-    mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
-    writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), {
+    mkdirSync(configDir(), { recursive: true, mode: 0o700 });
+    const file = configFile();
+    writeFileSync(file, JSON.stringify(config, null, 2), {
       mode: 0o600,
     });
-    chmodSync(CONFIG_FILE, 0o600);
+    chmodSync(file, 0o600);
   }
 }

@@ -257,13 +257,17 @@ download_runtime() {
   [[ -x "$extracted/bin/bridge-cmd" ]] || die "BB-E032: tarball missing bridge-cmd binary"
 
   # Migration: when upgrading from a pre-merge install, the old ws-server
-  # and local-proxy binaries are still in $BB_HOME/bin/ and the old
-  # ~/.browser-bridge/config.json points at the pre-merge processes. Drop
-  # them and force-reinitialize the config so the next bridge-core start
-  # produces a fresh browserId, fresh pairing hash, and the user is
-  # prompted to re-pair the extension. See ADR-0010.
+  # and local-proxy binaries are still in $BB_HOME/bin/ and the old config
+  # points at the pre-merge processes. Drop them and force-reinitialize the
+  # config so the next bridge-core start produces a fresh browserId, fresh
+  # pairing hash, and the user is prompted to re-pair the extension. See
+  # ADR-0010.
   rm -f "$BB_HOME/bin/ws-server" "$BB_HOME/bin/local-proxy" 2>/dev/null || true
-  rm -f "$BB_HOME/config.json" 2>/dev/null || true
+  # bridge-core resolves its config dir from BB_HOME, falling back to
+  # ~/.browser-bridge. Remove both: the current location, and the default
+  # location a pre-merge build always used (which is a different path when
+  # BB_HOME is a custom prefix, so the re-pair would otherwise not happen).
+  rm -f "$BB_HOME/config.json" "$HOME/.browser-bridge/config.json" 2>/dev/null || true
 
   mkdir -p "$BB_HOME/bin"
   mv "$extracted/bin/bridge-core" "$extracted/bin/bridge-cmd" "$BB_HOME/bin/"

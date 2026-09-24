@@ -160,6 +160,7 @@ start_service() {
   mkdir -p "$LOG_DIR" "$RUN_DIR"
   local logfile="$LOG_DIR/${SERVICE_NAME}.log" pidfile="$RUN_DIR/${SERVICE_NAME}.pid"
   BRIDGE_API_KEYS="${BRIDGE_API_KEYS:-}"
+  env BB_HOME="$BB_HOME" \
       BRIDGE_WS_PORT="$WS_PORT" BRIDGE_WS_HOSTNAME="$WS_HOSTNAME" \
       BRIDGE_LOCAL_PORT="$LOCAL_PORT" BRIDGE_LOCAL_HOSTNAME="$LOCAL_HOSTNAME" \
       BRIDGE_MCP_PORT="$MCP_PORT" BRIDGE_MCP_HOSTNAME="$MCP_HOSTNAME" \
@@ -383,6 +384,10 @@ supervisor_spawn() {
     die "BB-E010: $SERVICE_NAME port $HELD_PORT is already in use"
   fi
   BRIDGE_API_KEYS="${BRIDGE_API_KEYS:-}"
+  # BB_HOME is passed on so StateManager resolves its config from the same
+  # prefix install.sh used; launchd already sets it for the supervisor, this
+  # is the hop that was missing.
+  env BB_HOME="$BB_HOME" \
       BRIDGE_WS_PORT="$WS_PORT" BRIDGE_WS_HOSTNAME="$WS_HOSTNAME" \
       BRIDGE_LOCAL_PORT="$LOCAL_PORT" BRIDGE_LOCAL_HOSTNAME="$LOCAL_HOSTNAME" \
       BRIDGE_MCP_PORT="$MCP_PORT" BRIDGE_MCP_HOSTNAME="$MCP_HOSTNAME" \
