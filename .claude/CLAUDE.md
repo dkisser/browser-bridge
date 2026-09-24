@@ -36,9 +36,11 @@ Per-package scripts also exist under `apps/<name>/` and `packages/shared/`.
 
 `apps/extension/vite.config.ts` uses a custom `closeBundle` plugin:
 
-- It flattens `dist/src/popup.html` to `dist/popup.html` and rewrites `../` asset paths to `./`.
+- It flattens `sidepanel.html`, `settings.html` and `offscreen.html` from `dist/src/` to `dist/` and rewrites `../` asset paths to `./`.
 - It copies `manifest.json` into `dist/` manually.
 - It copies the centralized logo (`docs/assets/logo.png`) to `dist/icon.png` so the Chrome extension package has a single source of truth for the project logo.
+
+`apps/extension/vite.content.config.ts` is a second, separate build for `src/content.ts` only. It emits `content.js` as an **IIFE** because Chrome's `content_scripts` has no `type: "module"` knob — an ESM bundle is rejected with "Cannot use import statement outside a module" as soon as it is injected. The two configs cannot be merged for this reason, so `dev` runs both watchers concurrently.
 
 When adding new entry points or HTML assets, verify the output paths in `dist/` and update the plugin if the flat layout changes.
 
