@@ -551,46 +551,38 @@ EOF
 
   bash "$BRIDGE_TMPL" service up --foreground >"$BB_TEST_TMP/supervisor.log" 2>&1 &
   SUP_PID=$!
+  # Gate on the supervisor's own startup-complete line, not on the pidfile or
+  # the bound port. supervisor_spawn writes the pidfile and bridge-core binds
+  # the port *before* the handshake finishes; supervisor_spawn then confirms
+  # the bind with port_in_use (a fresh python3 probe per poll) and only prints
+  # this line once it has returned. Killing bridge-core inside that window
+  # makes the handshake see a dead child, so the supervisor dies BB-E011
+  # instead of entering its watch loop and restarting — the restart under test
+  # then never happens.
   local waited=0
   while [[ $waited -lt 50 ]]; do
-    [[ -f "$BB_HOME/run/bridge-core.pid" ]] && break
+    grep -q "supervisor: bridge-core=" "$BB_TEST_TMP/supervisor.log" && break
     sleep 0.1
     waited=$((waited + 1))
   done
+  grep -q "supervisor: bridge-core=" "$BB_TEST_TMP/supervisor.log"
   [[ -f "$BB_HOME/run/bridge-core.pid" ]]
-
-  # Wait for bridge-core to actually bind port 3001 before killing it.
-  # The supervisor writes the pidfile before the port is bound; killing
-  # bridge-core between pidfile-write and port-bind trips the supervisor's
-  # BB-E011 startup-failure path instead of its watch-loop restart path.
-  waited=0
-  while [[ $waited -lt 50 ]]; do
-    if python3 -c "import socket, sys
-try:
-    s = socket.create_connection(('127.0.0.1', 3001), timeout=0.1)
-    s.close()
-    sys.exit(0)
-except (OSError, socket.timeout):
-    sys.exit(1)" 2>/dev/null; then
-      break
-    fi
-    sleep 0.1
-    waited=$((waited + 1))
-  done
 
   local old_pid new_pid=""
   old_pid=$(cat "$BB_HOME/run/bridge-core.pid")
   kill "$old_pid"
 
+  # supervisor_watch does `rm -f pidfile` then supervisor_spawn does
+  # `echo "$pid" > pidfile`. The window between the two is real, so a
+  # bare `cat` here can lose the race and abort the test with ENOENT.
+  # Read defensively and let the loop retry until the pidfile holds a
+  # pid that differs from the one we killed.
   waited=0
   while [[ $waited -lt 50 ]]; do
-    if [[ -f "$BB_HOME/run/bridge-core.pid" ]]; then
-      new_pid=$(cat "$BB_HOME/run/bridge-core.pid")
-      if [[ -n "$new_pid" && "$new_pid" != "$old_pid" ]]; then
-        break
-      fi
+    new_pid=$(cat "$BB_HOME/run/bridge-core.pid" 2>/dev/null || true)
+    if [[ -n "$new_pid" && "$new_pid" != "$old_pid" ]]; then
+      break
     fi
-    new_pid=""
     sleep 0.1
     waited=$((waited + 1))
   done
