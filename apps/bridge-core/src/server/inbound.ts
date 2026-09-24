@@ -139,7 +139,14 @@ export class InboundServer {
               const browserId = envelope.browserId;
               const status = registry.getStatus(browserId);
 
-              if (!status || status === 'offline') {
+              // Reject only browsers the registry has never seen. Reachability
+              // of a *known* browser is the router's call: it accepts online
+              // and idle_wait (buffering for a fast reconnect) and answers
+              // browser_offline / cannot_buffer itself. Rejecting 'offline'
+              // here as well would short-circuit that buffer, because
+              // handleBrowserDisconnect marks the registry offline while state
+              // is still idle_wait — so the 5s tolerance never applied.
+              if (!status) {
                 ws.send(
                   encode(
                     'response',

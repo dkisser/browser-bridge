@@ -26,10 +26,7 @@ export class Router {
    * of being broadcast to all open CLI connections (which is what the old
    * ws-server did — kept as a fallback for tests / mismatched ids).
    */
-  private readonly inboundById = new Map<
-    string,
-    ServerWebSocket<unknown>
-  >();
+  private readonly inboundById = new Map<string, ServerWebSocket<unknown>>();
 
   constructor(
     private readonly state: StateManager,
@@ -163,11 +160,16 @@ export class Router {
 
   /** Extension WS upgrade succeeded — extension is up. */
   handleBrowserConnect(): void {
+    // Read the buffer *before* flipping status. StateManager's status setter
+    // clears any buffered command and cancels its timeout as soon as the
+    // status leaves idle_wait, so reading afterwards always yields null and
+    // the command is silently dropped — neither forwarded nor answered, with
+    // the caller left to time out on its own.
+    const buffered = this.state.getBufferedCommand();
+
     this.state.status = 'online';
     this.registry.setStatus(this.state.browserId, 'online');
 
-    // Drain the buffered command (if any) immediately.
-    const buffered = this.state.getBufferedCommand();
     if (buffered) {
       this.browser.sendToExtension(buffered);
     }
