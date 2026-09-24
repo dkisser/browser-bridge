@@ -4,6 +4,11 @@ All notable changes to Browser Bridge are documented here. The format follows [K
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-24
+
+### Changed
+- Bumped the Chrome extension's `manifest.json` version to `0.1.0` so the published extension zip carries a meaningful first-version tag (previously `0.0.4`). Runtime binaries and CLI are unchanged from v0.3.0.
+
 ## [0.3.0] - 2026-09-24
 
 ### Added
