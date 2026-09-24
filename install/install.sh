@@ -112,15 +112,13 @@ write_artifacts() {
 print_next_steps() {
   local version="$1" skills_note="" autostart_note=""
   if [[ "${NO_SKILLS:-}" != "true" ]] && [[ "${WITH_SKILLS:-}" == "true" ]]; then
-    skills_note="\n  Installed skills are available the next time you start Claude Code.\n"
+    skills_note=$'  Installed skills are available the next time you start Claude Code.\n'
   fi
   if [[ "$(uname -s)" == "Darwin" ]] && [[ "${AUTOSTART:-true}" == "true" ]]; then
-    autostart_note="\n  Login auto-start is enabled; bridge services will start automatically when you log in.\n"
+    autostart_note=$'  Login auto-start is enabled; bridge services will start automatically when you log in.\n'
   fi
+  printf '\nBrowser Bridge %s installed.\n%s%s' "$version" "$skills_note" "$autostart_note"
   cat <<EOF
-
-Browser Bridge ${version} installed.${skills_note}${autostart_note}
-
 Next steps:
   1. Ensure ~/.local/bin is on your PATH:
        export PATH="\$HOME/.local/bin:\$PATH"

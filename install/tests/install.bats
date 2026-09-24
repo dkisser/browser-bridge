@@ -223,6 +223,24 @@ TPL
   [[ "$output" == *"Bridge services are already running"* ]]
 }
 
+@test "print_next_steps emits real newlines for autostart/skills notes (not literal backslash-n)" {
+  bash_path=$(find_modern_bash)
+  run "$bash_path" -c "
+    set -euo pipefail
+    source <(sed -n '/^print_next_steps()/,/^}/p' '$INSTALL_SH')
+    BB_HOME='$BB_HOME'
+    BB_EXTENSION_DIR='$BB_EXTENSION_DIR'
+    AUTOSTART=true WITH_SKILLS=true print_next_steps v9.9.9
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"\\n"* ]]
+  [[ "$output" == *"Login auto-start is enabled"* ]]
+  [[ "$output" == *"Installed skills are available"* ]]
+  # Skills note must be on its own line, not glued to the previous one.
+  [[ "$output" == *$'\n  Installed skills are available the next time you start Claude Code.\n'* ]]
+  [[ "$output" == *$'\n  Login auto-start is enabled; bridge services will start automatically when you log in.\n'* ]]
+}
+
 # ---------------------------------------------------------------------------
 # Task 12: end-to-end install against mock release server
 # ---------------------------------------------------------------------------
