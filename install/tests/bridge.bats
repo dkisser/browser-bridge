@@ -91,6 +91,29 @@ setup_up() {
   [[ "$output" == *"3003"* ]]
 }
 
+@test "bridge service up (macOS) refuses a foreign holder and does not bootstrap launchd" {
+  make_fake_binaries
+  cp "$BB_TEST_ROOT/install/launchagent.plist.tmpl" "$BB_HOME/launchagent.plist.tmpl"
+  make_fake_uname Darwin
+  make_fake_launchctl
+  make_fake_id 501
+  mkdir -p "$BB_HOME/run"
+  # Only 3002 is held, so this also covers classify_service reporting the port
+  # it found: a bare `== foreign` match never fires and the command would fall
+  # through to bootstrap launchd, which then restarts a supervisor that dies
+  # BB-E010 on every launch.
+  python3 -c "import socket, time; s=socket.socket(); s.bind(('127.0.0.1',3002)); s.listen(); time.sleep(30)" &
+  P1=$!
+  sleep 0.3
+
+  run bash "$BRIDGE_TMPL" service up
+  kill "$P1" 2>/dev/null || true
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"BB-E010"* ]]
+  [[ "$output" == *"3002"* ]]
+  [[ ! -f "$BB_TEST_TMP/launchctl_calls.txt" ]] || ! grep -q bootstrap "$BB_TEST_TMP/launchctl_calls.txt"
+}
+
 @test "supervisor reports BB-E010 when a non-control-plane port is held" {
   make_fake_binaries
   mkdir -p "$BB_HOME/run"

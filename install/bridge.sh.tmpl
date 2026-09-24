@@ -169,11 +169,13 @@ start_service() {
   pid=$!
   disown
   echo "$pid" >"$pidfile"
-  # Liveness proxy only: bridge-core binds 3001 first and exits if any bind
-  # fails, so the control plane coming up means the child is healthy. Probing
-  # all three here would triple the per-iteration cost (each probe forks a
-  # python3) for no extra signal. Conflicts are caught by the pre-flight
-  # service_port_in_use above.
+  # Liveness proxy only. bridge-core binds 3002, then 3001, then 3003, and
+  # exits if any bind fails, so the control plane answering means the child
+  # got that far. Probing the other two would add nothing: a port probe only
+  # reports "something is listening", so a foreign holder on 3002/3003 reads
+  # as healthy either way. Conflicts are caught by the pre-flight
+  # service_port_in_use above, which is the check that can attribute a port to
+  # the wrong process.
   for _ in {1..50}; do
     if ! port_in_use "$WS_PORT" "$WS_HOSTNAME"; then
       sleep 0.1
@@ -540,8 +542,13 @@ cmd_service_up() {
   fi
   local state
   state=$(classify_service)
-  if [[ "$state" == foreign ]]; then
-    die "BB-E010: port $WS_PORT is occupied by something other than a supervised bridge instance (check 'bridge service status'). Free the port and retry."
+  # classify_service reports the port it found held ("foreign <port>"), so the
+  # match has to be a prefix — a bare `== foreign` never fires and launchd then
+  # restarts a supervisor that dies BB-E010 on every start.
+  if [[ "$state" == foreign* ]]; then
+    local held="${state#foreign }"
+    [[ -n "$held" ]] || held="$WS_PORT"
+    die "BB-E010: port $held is occupied by something other than a supervised bridge instance (check 'bridge service status'). Free the port and retry."
   fi
   write_launchagent_plists
   local plist
