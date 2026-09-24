@@ -329,8 +329,10 @@ pid_alive() {
   if [[ -z "$st" ]]; then
     # ps can come up empty for processes owned by other users (visibility);
     # kill -0 still tells us the pid exists, so don't report those as dead.
-    kill -0 "$pid" 2>/dev/null
-    return
+    if ! kill -0 "$pid" 2>/dev/null; then
+      return 1
+    fi
+    return 0
   fi
   if [[ "$st" == "Z" ]]; then
     wait "$pid" 2>/dev/null || true
