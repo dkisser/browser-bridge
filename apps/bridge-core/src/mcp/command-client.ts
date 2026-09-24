@@ -137,10 +137,7 @@ export function withRecoveryHint(payload: ResponsePayload): ResponsePayload {
 
   // 1. Structured reason from the SW (preferred — exact classification).
   if (payload.reason && CONTENT_SCRIPT_RECOVERY[payload.reason]) {
-    const hint = CONTENT_SCRIPT_RECOVERY[payload.reason];
-    if (typeof payload.error === 'string' && !payload.error.endsWith(hint)) {
-      return { ...payload, error: `${payload.error}${hint}` };
-    }
+    return appendHint(payload, CONTENT_SCRIPT_RECOVERY[payload.reason]);
   }
 
   // 2. Legacy fallback: pattern-match the Chrome error string for tabs
@@ -150,7 +147,26 @@ export function withRecoveryHint(payload: ResponsePayload): ResponsePayload {
     NO_TAB_ID_PATTERN.test(payload.error) &&
     !payload.error.includes('tab_list')
   ) {
-    return { ...payload, error: `${payload.error}${TAB_LIST_HINT}` };
+    return appendHint(payload, TAB_LIST_HINT);
+  }
+  return payload;
+}
+
+/**
+ * Append `hint` to whichever field the consumer will surface.
+ *
+ * `commandErrorMessage` returns `message ?? error`, and the SW sets both for
+ * content-script failures (`error: reason`, `message: <detail>`), so
+ * appending to `error` alone leaves the hint invisible to the agent.
+ */
+function appendHint(payload: ResponsePayload, hint: string): ResponsePayload {
+  if (typeof payload.message === 'string') {
+    if (payload.message.endsWith(hint)) return payload;
+    return { ...payload, message: `${payload.message}${hint}` };
+  }
+  if (typeof payload.error === 'string') {
+    if (payload.error.endsWith(hint)) return payload;
+    return { ...payload, error: `${payload.error}${hint}` };
   }
   return payload;
 }

@@ -3,6 +3,7 @@ import type { Envelope } from '@browser-bridge/shared';
 import { decode, encode } from '../../src/protocol';
 import type { Server } from 'bun';
 import {
+  commandErrorMessage,
   sendCommand,
   sendEvent,
   withRecoveryHint,
@@ -191,6 +192,35 @@ describe('withRecoveryHint', () => {
     });
     const twice = withRecoveryHint(once);
     expect(twice.error).toBe(once.error);
+  });
+
+  it('lands the hint where the consumer reads it when the SW sent a message', () => {
+    // The SW reports content-script failures as
+    // { error: reason, message: <detail>, reason } — see background.ts. The
+    // consumer is commandErrorMessage, which returns `message ?? error`, so a
+    // hint appended to `error` alone is never surfaced to the agent.
+    const out = withRecoveryHint({
+      status: 'error',
+      error: 'no_listener',
+      message: 'content script did not register a listener',
+      reason: 'no_listener',
+    });
+
+    expect(out.message).toContain('Reload the page or retry');
+    expect(commandErrorMessage(out, 'fallback')).toContain(
+      'Reload the page or retry',
+    );
+  });
+
+  it('does not duplicate the hint on message when called twice', () => {
+    const once = withRecoveryHint({
+      status: 'error',
+      error: 'no_listener',
+      message: 'detail',
+      reason: 'no_listener',
+    });
+    const twice = withRecoveryHint(once);
+    expect(twice.message).toBe(once.message);
   });
 
   it('passes status:ok payloads through unchanged', () => {
