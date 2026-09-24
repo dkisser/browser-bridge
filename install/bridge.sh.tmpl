@@ -129,6 +129,24 @@ except (OSError, socket.timeout):
 " 2>/dev/null
 }
 
+# bridge-core binds all three loopback ports (3001 control plane, 3002
+# extension, 3003 MCP) and exits if any single bind fails. Conflict checks
+# therefore have to cover the whole set: probing only the control plane lets a
+# stale holder on 3002/3003 through to a bind failure that surfaces as a
+# misleading BB-E011 on port 3001. Sets HELD_PORT to the port that is taken.
+HELD_PORT=""
+service_port_in_use() {
+  local p
+  for p in "$WS_PORT" "$LOCAL_PORT" "$MCP_PORT"; do
+    if port_in_use "$p" 127.0.0.1; then
+      HELD_PORT="$p"
+      return 0
+    fi
+  done
+  HELD_PORT=""
+  return 1
+}
+
 # ---- Unsupervised (Linux / fallback) orchestration via pidfiles ----
 
 start_service() {
@@ -136,13 +154,13 @@ start_service() {
     info "$SERVICE_NAME already running (pid $(cat "$RUN_DIR/${SERVICE_NAME}.pid"))"
     return 0
   fi
-  if port_in_use "$WS_PORT" "$WS_HOSTNAME"; then
-    die "BB-E010: $SERVICE_NAME port $WS_PORT is already in use"
+  if service_port_in_use; then
+    die "BB-E010: $SERVICE_NAME port $HELD_PORT is already in use"
   fi
   mkdir -p "$LOG_DIR" "$RUN_DIR"
   local logfile="$LOG_DIR/${SERVICE_NAME}.log" pidfile="$RUN_DIR/${SERVICE_NAME}.pid"
   BRIDGE_API_KEYS="${BRIDGE_API_KEYS:-}"
-  env BRIDGE_WS_PORT="$WS_PORT" BRIDGE_WS_HOSTNAME="$WS_HOSTNAME" \
+      BRIDGE_WS_PORT="$WS_PORT" BRIDGE_WS_HOSTNAME="$WS_HOSTNAME" \
       BRIDGE_LOCAL_PORT="$LOCAL_PORT" BRIDGE_LOCAL_HOSTNAME="$LOCAL_HOSTNAME" \
       BRIDGE_MCP_PORT="$MCP_PORT" BRIDGE_MCP_HOSTNAME="$MCP_HOSTNAME" \
       BRIDGE_API_KEYS="$BRIDGE_API_KEYS" \
@@ -150,6 +168,11 @@ start_service() {
   pid=$!
   disown
   echo "$pid" >"$pidfile"
+  # Liveness proxy only: bridge-core binds 3001 first and exits if any bind
+  # fails, so the control plane coming up means the child is healthy. Probing
+  # all three here would triple the per-iteration cost (each probe forks a
+  # python3) for no extra signal. Conflicts are caught by the pre-flight
+  # service_port_in_use above.
   for _ in {1..50}; do
     if ! port_in_use "$WS_PORT" "$WS_HOSTNAME"; then
       sleep 0.1
@@ -356,17 +379,20 @@ supervisor_spawn() {
     info "supervisor: $SERVICE_NAME already running (pid $(cat "$pidfile"))"
     return 0
   fi
-  if port_in_use "$WS_PORT" "$WS_HOSTNAME"; then
-    die "BB-E010: $SERVICE_NAME port $WS_PORT is already in use"
+  if service_port_in_use; then
+    die "BB-E010: $SERVICE_NAME port $HELD_PORT is already in use"
   fi
   BRIDGE_API_KEYS="${BRIDGE_API_KEYS:-}"
-  env BRIDGE_WS_PORT="$WS_PORT" BRIDGE_WS_HOSTNAME="$WS_HOSTNAME" \
+      BRIDGE_WS_PORT="$WS_PORT" BRIDGE_WS_HOSTNAME="$WS_HOSTNAME" \
       BRIDGE_LOCAL_PORT="$LOCAL_PORT" BRIDGE_LOCAL_HOSTNAME="$LOCAL_HOSTNAME" \
       BRIDGE_MCP_PORT="$MCP_PORT" BRIDGE_MCP_HOSTNAME="$MCP_HOSTNAME" \
       BRIDGE_API_KEYS="$BRIDGE_API_KEYS" \
       "$BB_HOME/bin/bridge-core" >"$logfile" 2>&1 &
   local pid=$!
   echo "$pid" >"$pidfile"
+  # Same liveness proxy as start_service: the control plane binding is enough
+  # to call the child up. Conflicts across all three ports were already ruled
+  # out by the pre-flight check above.
   for _ in {1..50}; do
     if ! pid_alive "$pid"; then
       rm -f "$pidfile"
@@ -394,16 +420,16 @@ classify_service() {
       printf 'ours %s\n' "$pid"
       return 0
     fi
-    if port_in_use "$WS_PORT" "$WS_HOSTNAME"; then
-      printf 'foreign\n'
+    if service_port_in_use; then
+      printf 'foreign %s\n' "$HELD_PORT"
       return 0
     fi
     rm -f "$pidfile"
   else
     rm -f "$pidfile"
   fi
-  if port_in_use "$WS_PORT" "$WS_HOSTNAME"; then
-    printf 'foreign\n'
+  if service_port_in_use; then
+    printf 'foreign %s\n' "$HELD_PORT"
   else
     printf 'free\n'
   fi
@@ -470,8 +496,10 @@ supervise() {
 
   local state
   state=$(classify_service)
-  if [[ "$state" == foreign ]]; then
-    die "BB-E010: port $WS_PORT is held by a process with no trustworthy bridge pidfile; not taking over (launchd will retry)"
+  if [[ "$state" == foreign* ]]; then
+    local held="${state#foreign }"
+    [[ -n "$held" ]] || held="$WS_PORT"
+    die "BB-E010: port $held is held by a process with no trustworthy bridge pidfile; not taking over (launchd will retry)"
   fi
 
   echo $$ > "$RUN_DIR/supervisor.pid"

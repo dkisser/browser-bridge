@@ -64,6 +64,47 @@ setup_up() {
   [[ "$output" == *"BB-E010"* ]]
 }
 
+@test "bridge service up fails with BB-E010 when the extension port is taken" {
+  setup_up
+  # bridge-core binds 3001, 3002 and 3003 and exits if any one bind fails, so a
+  # conflict on a non-control-plane port must be reported up front rather than
+  # surfacing later as a misleading BB-E011 about port 3001.
+  python3 -c "import socket, time; s=socket.socket(); s.bind(('127.0.0.1',3002)); s.listen(); time.sleep(30)" &
+  SOCAT_PID=$!
+  sleep 0.3
+  run bash "$BRIDGE_TMPL" service up
+  kill "$SOCAT_PID" 2>/dev/null || true
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"BB-E010"* ]]
+  [[ "$output" == *"3002"* ]]
+}
+
+@test "bridge service up fails with BB-E010 when the MCP port is taken" {
+  setup_up
+  python3 -c "import socket, time; s=socket.socket(); s.bind(('127.0.0.1',3003)); s.listen(); time.sleep(30)" &
+  SOCAT_PID=$!
+  sleep 0.3
+  run bash "$BRIDGE_TMPL" service up
+  kill "$SOCAT_PID" 2>/dev/null || true
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"BB-E010"* ]]
+  [[ "$output" == *"3003"* ]]
+}
+
+@test "supervisor reports BB-E010 when a non-control-plane port is held" {
+  make_fake_binaries
+  mkdir -p "$BB_HOME/run"
+  python3 -c "import socket, time; s=socket.socket(); s.bind(('127.0.0.1',3003)); s.listen(); time.sleep(30)" &
+  P1=$!
+  sleep 0.3
+
+  run bash "$BRIDGE_TMPL" service up --foreground
+  kill "$P1" 2>/dev/null || true
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"BB-E010"* ]]
+  [[ "$output" == *"3003"* ]]
+}
+
 @test "moved lifecycle commands point at 'bridge service' (BB-E305)" {
   make_fake_uname Linux
   run bash "$BRIDGE_TMPL" up
