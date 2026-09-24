@@ -4,6 +4,8 @@ All notable changes to Browser Bridge are documented here. The format follows [K
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-24
+
 ### Added
 - Pairing-based channel authentication: `bridge pair` prints a short-lived code; entering it in the extension popup issues a token (only its SHA-256 hash is stored on disk). The local proxy refuses unpaired WebSocket connections, and its HTTP API rejects non-extension web origins (CORS restricted to `chrome-extension://`).
 - Extension-side policy gate (design in `docs/adr/0006`-`0009`): commands are denied immediately with machine-readable reasons (`human_assist_active`, `origin_not_approved`, `origin_denied`, `origin_blocked`, `action_out_of_scope`, `approval_required`) and surfaced as approval cards in the extension popup. Agents act silently only inside their working scope — agent-opened tabs plus human-approved origins; browser system pages and the built-in blocklist (including the Chrome Web Store) are hard-denied with no approval path.
