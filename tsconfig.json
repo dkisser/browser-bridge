@@ -5,14 +5,12 @@
   },
   "include": [
     "packages/shared/src/**/*",
-    "apps/websocket/src/**/*",
+    "apps/bridge-core/src/**/*",
     "apps/cli/src/**/*",
     "apps/extension/src/**/*",
     "apps/extension/vite.config.ts",
-    "apps/local-proxy/src/**/*",
-    "apps/websocket/tests/**/*",
+    "apps/bridge-core/tests/**/*",
     "apps/cli/tests/**/*",
-    "apps/local-proxy/tests/**/*",
     "packages/shared/tests/**/*"
   ]
 }

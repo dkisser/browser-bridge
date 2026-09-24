@@ -173,8 +173,7 @@ SCRIPT
   BB_HOME="$BB_TEST_TMP/bb-home2" run "$bash_path" "$BB_TEST_TMP/test_rt.sh"
   stop_mock_http
   [ "$status" -eq 0 ]
-  [[ "$output" == *"ws-server"* ]]
-  [[ "$output" == *"local-proxy"* ]]
+  [[ "$output" == *"bridge-core"* ]]
   [[ "$output" == *"bridge-cmd"* ]]
 }
 
@@ -261,8 +260,8 @@ SCRIPT
   [ "$status" -eq 0 ]
   [[ -f "$BB_TEST_TMP/bb-home/version" ]]
   [[ -f "$BB_TEST_TMP/bb-home/bin/bridge" ]]
-  [[ -x "$BB_TEST_TMP/bb-home/bin/ws-server" ]]
-  [[ -x "$BB_TEST_TMP/bb-home/bin/local-proxy" ]]
+  [[ -x "$BB_TEST_TMP/bb-home/bin/bridge-core" ]]
+  [[ -x "$BB_TEST_TMP/bb-home/bin/bridge-core" ]]
   [[ -x "$BB_TEST_TMP/bb-home/bin/bridge-cmd" ]]
   [[ -L "$HOME/.local/bin/bridge" ]]
 }
@@ -506,8 +505,8 @@ SCRIPT
   [[ -f "$BB_TEST_TMP/bb-home-sc/version" ]]
   [[ "$(cat "$BB_TEST_TMP/bb-home-sc/version")" == "v9.9.9" ]]
   [[ -x "$BB_TEST_TMP/bb-home-sc/bin/bridge" ]]
-  [[ -x "$BB_TEST_TMP/bb-home-sc/bin/ws-server" ]]
-  [[ -x "$BB_TEST_TMP/bb-home-sc/bin/local-proxy" ]]
+  [[ -x "$BB_TEST_TMP/bb-home-sc/bin/bridge-core" ]]
+  [[ -x "$BB_TEST_TMP/bb-home-sc/bin/bridge-core" ]]
   [[ -x "$BB_TEST_TMP/bb-home-sc/bin/bridge-cmd" ]]
 }
 
@@ -844,7 +843,7 @@ SCRIPT
 
   [ "$status" -eq 0 ]
   [[ "$output" != *"already installed and up to date"* ]]
-  [[ -x "$BB_TEST_TMP/bb-home/bin/ws-server" ]]
+  [[ -x "$BB_TEST_TMP/bb-home/bin/bridge-core" ]]
 }
 
 @test "install.sh auto-starts bridge services after install" {
@@ -877,8 +876,8 @@ SCRIPT
   stop_mock_http
 
   [ "$status" -eq 0 ]
-  [[ -f "$BB_TEST_TMP/bb-home/run/ws-server.pid" ]]
-  [[ -f "$BB_TEST_TMP/bb-home/run/local-proxy.pid" ]]
+  [[ -f "$BB_TEST_TMP/bb-home/run/bridge-core.pid" ]]
+  [[ -f "$BB_TEST_TMP/bb-home/run/bridge-core.pid" ]]
 }
 
 @test "install.sh stops existing bridge before update and starts again after" {
@@ -900,11 +899,9 @@ SCRIPT
   rm "$BB_TEST_TMP/bb-home/bin/bridge.bak"
   chmod +x "$BB_TEST_TMP/bb-home/bin/bridge"
   echo "v0.0.1" > "$BB_TEST_TMP/bb-home/version"
-  ( trap "" TERM; sleep 60 ) & echo $! > "$BB_TEST_TMP/bb-home/run/ws-server.pid"
-  ( trap "" TERM; sleep 60 ) & echo $! > "$BB_TEST_TMP/bb-home/run/local-proxy.pid"
-  local old_ws_pid old_lp_pid
-  old_ws_pid=$(cat "$BB_TEST_TMP/bb-home/run/ws-server.pid")
-  old_lp_pid=$(cat "$BB_TEST_TMP/bb-home/run/local-proxy.pid")
+  ( trap "" TERM; sleep 60 ) & echo $! > "$BB_TEST_TMP/bb-home/run/bridge-core.pid"
+  local old_pid
+  old_pid=$(cat "$BB_TEST_TMP/bb-home/run/bridge-core.pid")
 
   make_fake_uname Linux
   start_mock_http 18770
@@ -924,15 +921,13 @@ SCRIPT
   stop_mock_http
 
   [ "$status" -eq 0 ]
-  # Old fake services should have been stopped.
-  ! kill -0 "$old_ws_pid" 2>/dev/null
-  ! kill -0 "$old_lp_pid" 2>/dev/null
-  # New services should be running.
-  [[ -f "$BB_TEST_TMP/bb-home/run/ws-server.pid" ]]
-  [[ -f "$BB_TEST_TMP/bb-home/run/local-proxy.pid" ]]
-  local new_ws_pid
-  new_ws_pid=$(cat "$BB_TEST_TMP/bb-home/run/ws-server.pid")
-  [ "$new_ws_pid" != "$old_ws_pid" ]
+  # Old fake bridge-core should have been stopped.
+  ! kill -0 "$old_pid" 2>/dev/null
+  # New bridge-core should be running.
+  [[ -f "$BB_TEST_TMP/bb-home/run/bridge-core.pid" ]]
+  local new_pid
+  new_pid=$(cat "$BB_TEST_TMP/bb-home/run/bridge-core.pid")
+  [ "$new_pid" != "$old_pid" ]
 }
 
 @test "install.sh succeeds when auto-start fails due to port conflict" {
@@ -947,7 +942,7 @@ SCRIPT
   cp "$tarball_path" "$BB_TEST_TMP/www/$tarball_name"
   cp "${tarball_path}.sha256" "$BB_TEST_TMP/www/${tarball_name}.sha256"
 
-  # Occupy the ws-server port so bridge up fails.
+  # Occupy the control plane port so bridge up fails.
   python3 -c "import socket; s=socket.socket(); s.bind(('127.0.0.1',3001)); s.listen(); import time; time.sleep(60)" &
   PORT_HOLDER_PID=$!
   sleep 0.3

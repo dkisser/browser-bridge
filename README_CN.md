@@ -43,7 +43,7 @@
 ## ✨ 功能特性
 
 - 🤖 **Agent 就绪的接口** —— 一个 bridge 协议，可通过 CLI、Claude Code skill 或自定义集成来消费。
-- 🔒 **本地会话，云端控制** —— 复用你已登录的浏览器，无需云端浏览器或同步 Cookie。
+- 🔒 **本地会话，本地控制** —— 复用你已登录的浏览器，无需云端浏览器或同步 Cookie。
 - 🔗 **MCP server** —— Streamable HTTP MCP server，向 Claude Desktop、Cursor 等 MCP 客户端暴露浏览器控制工具。
 - 🎯 **省 token 的读取** —— 观测先行的 snapshot、定向容器读取与硬上限，把页面噪声挡在 Agent 的上下文之外。
 
@@ -203,7 +203,7 @@ bridge --browser <browser-id> --tab 12345 wait:navigation
 
 ## 🤖 通过 MCP 使用
 
-Browser Bridge 在 WebSocket 服务端之外，还同时暴露了一个 [Streamable HTTP MCP server](docs/mcp-setup.md)。启动 `bridge service up`（或 `bun run dev:websocket`）后，在任何支持 Streamable HTTP 的 MCP 客户端中添加 `http://localhost:3003/mcp` 即可。
+Browser Bridge 在 `bridge-core` 进程内同时暴露了一个 [Streamable HTTP MCP server](docs/mcp-setup.md)（默认端口 3003）。启动 `bridge service up`（或 `bun run dev:core`）后，在任何支持 Streamable HTTP 的 MCP 客户端中添加 `http://localhost:3003/mcp` 即可。
 
 ### 启动 MCP server
 
@@ -244,24 +244,19 @@ MCP 端点地址为 `http://localhost:3003/mcp`。
 ## 🏗️ 架构
 
 ```
-┌─────────────┐      ┌─────────────────┐      ┌─────────────────┐      ┌─────────────────┐
-│  CLI / MCP   │ ───▶ │  WebSocket      │ ───▶ │  Local Proxy    │ ───▶ │  Chrome         │
-│             │      │  Server         │      │  (本机)         │      │  Extension      │
-└─────────────┘      └─────────────────┘      └─────────────────┘      └─────────────────┘
-                                                                              │
-                                                                              ▼
-                                                                       ┌─────────────┐
-                                                                       │   Chrome    │
-                                                                       │  (浏览器)   │
-                                                                       └─────────────┘
+┌─────────────┐                              ┌─────────────────┐
+│  CLI / MCP   │ ───▶  bridge-core  ────▶  │  Chrome         │
+│             │       （单进程：               │  Extension      │
+└─────────────┘       3001 控制平面，          └─────────────────┘
+                     3002 扩展，
+                     3003 MCP）
 ```
 
 | 层级 | 组件 | 职责 |
 |------|------|------|
-| 云端 / 共享 | 接入适配器（Inbound adapters） | 面向 Agent 的入口：`bridge` CLI 和 MCP server。两者都是无状态的协议转换器，把请求翻译到 WebSocket 协议上——见 `CONTEXT.md`。 |
-| 云端 / 共享 | WebSocket Server | 将命令路由到对应的本地代理。 |
-| 本地 | Local Proxy | 从本机维持与服务端的长连接。 |
-| 本地 | Chrome Extension | 接收消息并执行浏览器操作。 |
+| 接入适配器 | CLI / MCP | 面向 Agent 的入口，都连接到 bridge-core，见 `CONTEXT.md`。 |
+| 控制平面 | bridge-core | 单进程监听 3001（WebSocket）/ 3002（扩展）/ 3003（MCP）三个回环端口。 |
+| 浏览器 | Chrome Extension | 接收消息并执行浏览器操作。 |
 
 完整架构图见 [`docs/architecture-diagram.html`](./docs/architecture-diagram.html)。
 
@@ -275,18 +270,15 @@ MCP 端点地址为 `http://localhost:3003/mcp`。
 # 1. 安装依赖
 bun install
 
-# 2. 启动 WebSocket 服务端
-bun run dev:websocket
+# 2. 启动 bridge-core（CLI/WebSocket/MCP 控制平面 + 扩展桥接）
+bun run dev:core
 
-# 3. 另一个终端启动本地代理
-bun run dev:local-proxy
-
-# 4. 第三个终端构建扩展
+# 3. 另一个终端构建扩展
 bun run dev:extension
 
-# 5. 在 Chrome 中加载 apps/extension/dist/ 作为解压扩展
+# 4. 在 Chrome 中加载 apps/extension/dist/ 作为解压扩展
 
-# 6. 运行 CLI
+# 5. 运行 CLI
 bun run cli
 ```
 
@@ -297,10 +289,9 @@ bun run cli
 ```
 Browser-Bridge/
 ├── apps/
+│   ├── bridge-core/    # 控制平面：CLI/MCP/extension 三端口单进程
 │   ├── cli/            # CLI 入口（bridge 协议消费者之一）
-│   ├── extension/      # Chrome 扩展（Manifest V3，Vite）
-│   ├── local-proxy/    # 本地 WebSocket 代理
-│   └── websocket/      # WebSocket 服务端、客户端和协议
+│   └── extension/      # Chrome 扩展（Manifest V3，Vite）
 ├── packages/
 │   └── shared/         # 共享常量与工具
 ├── install/            # 一键安装脚本
@@ -324,7 +315,7 @@ Browser-Bridge/
 
 Browser Bridge 驱动的是你日常已登录的浏览器，因此安全策略在动作的执行点——扩展内——强制执行，而不是在网络边界。
 
-- **配对通道**：`bridge pair` 生成短时效配对码，在扩展弹窗中输入后换取 token，用于扩展与本地代理之间 WebSocket 的相互认证（磁盘上只保存 token 的 SHA-256 哈希）。未配对的连接会被拒绝；网页无法调用代理的 HTTP API——CORS 仅允许 `chrome-extension://` 来源。
+- **配对通道**：`bridge pair` 生成短时效配对码，在扩展弹窗中输入后换取 token，用于扩展与 bridge-core（3002）WebSocket 的相互认证（磁盘上只保存 token 的 SHA-256 哈希）。未配对的连接会被拒绝；网页无法调用 bridge-core 的 HTTP API——CORS 仅允许 `chrome-extension://` 来源。
 - **仅监听回环**：本地代理、WebSocket 服务端和 MCP 端点都绑定 `127.0.0.1`；代理以出向方式连接服务端。非本地部署时 WebSocket 服务端支持 API key 认证（`BRIDGE_API_KEYS`）。
 - **工作域策略**（见 `docs/adr/0006`-`0009`）：agent 只在其工作域内静默执行——它自己打开的标签页加上人批准的源。越界命令会立即以机器可读的原因码被拒绝（`origin_not_approved`、`approval_required` 等），并在扩展弹窗中弹出审批卡片；在弹窗中批准后重试即可。
 - **硬拒绝**：浏览器系统页（`chrome://`、`chrome-extension://`、`file:`、`javascript:` 等）和内置黑名单（含 Chrome 网上应用店）一律拒绝且不可批准，agent 无法借此修改浏览器配置。

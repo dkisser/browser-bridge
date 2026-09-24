@@ -106,34 +106,38 @@ EOF
 }
 
 # Create fake runtime binaries under $BB_HOME/bin for bridge.bats tests.
-# ws-server/local-proxy are direct python scripts (not bash wrappers) so the
-# process argv carries the service name — the supervisor's adoption check
-# (pid_is) matches on the command line.
+# After the bridge-core merge (ADR-0010) there is one runtime binary:
+# bridge-core. The fake binds all three ports (3001 control plane,
+# 3002 extension, 3003 MCP) on loopback so the supervisor's port_in_use
+# check sees them.
 make_fake_binaries() {
   mkdir -p "$BB_HOME/bin"
-  cat > "$BB_HOME/bin/ws-server" <<'EOF'
+  cat > "$BB_HOME/bin/bridge-core" <<'EOF'
 #!/usr/bin/env python3
-import os, socket, time
-port = int(os.environ.get("BRIDGE_WS_PORT", "3001"))
-s = socket.socket()
-s.bind(("", port))
-s.listen()
-time.sleep(9999)
-EOF
-  cat > "$BB_HOME/bin/local-proxy" <<'EOF'
-#!/usr/bin/env python3
-import os, socket, time
-port = int(os.environ.get("BRIDGE_LOCAL_PORT") or os.environ.get("BRIDGE_LOCAL_PROXY_PORT") or "3002")
-s = socket.socket()
-s.bind(("", port))
-s.listen()
-time.sleep(9999)
+import os, socket, time, sys, traceback
+try:
+    socks = []
+    for port in (
+        int(os.environ.get("BRIDGE_WS_PORT", "3001")),
+        int(os.environ.get("BRIDGE_LOCAL_PORT") or os.environ.get("BRIDGE_LOCAL_PROXY_PORT") or "3002"),
+        int(os.environ.get("BRIDGE_MCP_PORT", "3003")),
+    ):
+        s = socket.socket()
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind(("127.0.0.1", port))
+        s.listen()
+        socks.append(s)
+except Exception:
+    traceback.print_exc()
+    sys.exit(1)
+while True:
+    time.sleep(60)
 EOF
   cat > "$BB_HOME/bin/bridge-cmd" <<'EOF'
 #!/usr/bin/env bash
 echo "fake-bridge-cmd: $*"
 EOF
-  chmod +x "$BB_HOME/bin/ws-server" "$BB_HOME/bin/local-proxy" "$BB_HOME/bin/bridge-cmd"
+  chmod +x "$BB_HOME/bin/bridge-core" "$BB_HOME/bin/bridge-cmd"
 }
 
 # Create a fake runtime tarball for install.bats tests.
@@ -144,15 +148,23 @@ make_fake_runtime_tarball() {
   local stage="$BB_TEST_TMP/${name}"
   mkdir -p "$stage/bin"
 
-  cat > "$stage/bin/ws-server" <<'EOF'
+  cat > "$stage/bin/bridge-core" <<'EOF'
 #!/usr/bin/env bash
-port="${BRIDGE_WS_PORT:-3001}"
-exec python3 -c "import socket, time; s=socket.socket(); s.bind(('', int('$port'))); s.listen(); time.sleep(9999)"
-EOF
-  cat > "$stage/bin/local-proxy" <<'EOF'
-#!/usr/bin/env bash
-port="${BRIDGE_LOCAL_PORT:-${BRIDGE_LOCAL_PROXY_PORT:-3002}}"
-exec python3 -c "import socket, time; s=socket.socket(); s.bind(('', int('$port'))); s.listen(); time.sleep(9999)"
+ws_port="${BRIDGE_WS_PORT:-3001}"
+local_port="${BRIDGE_LOCAL_PORT:-${BRIDGE_LOCAL_PROXY_PORT:-3002}}"
+mcp_port="${BRIDGE_MCP_PORT:-3003}"
+exec python3 -c "
+import socket, time
+socks = []
+for port in (int('$ws_port'), int('$local_port'), int('$mcp_port')):
+    s = socket.socket()
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind(('127.0.0.1', port))
+    s.listen()
+    socks.append(s)
+while True:
+    time.sleep(60)
+"
 EOF
   cat > "$stage/bin/bridge-cmd" <<'EOF'
 #!/usr/bin/env bash
@@ -193,7 +205,7 @@ helpers_teardown() {
   # Kill anything still running from the test.
   pkill -P $$ 2>/dev/null || true
   # Also clean up any listeners the orchestrator may have left on default ports.
-  for port in 3001 3002; do
+  for port in 3001 3002 3003; do
     for pid in $(lsof -t -i ":$port" 2>/dev/null); do
       kill "$pid" 2>/dev/null || true
     done

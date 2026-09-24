@@ -1,0 +1,28 @@
+{
+  "name": "@browser-bridge/bridge-core",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Browser Bridge control plane: bridges CLI/MCP commands to a local Chrome extension on a single machine",
+  "exports": {
+    "./protocol": "./src/protocol/index.ts",
+    "./client": "./src/client.ts"
+  },
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@browser-bridge/shared": "workspace:*",
+    "@valibot/to-json-schema": "^1.0.0",
+    "arktype": "^2.1.20",
+    "effect": "^3.16.0",
+    "fastmcp": "^3.35.0",
+    "sury": "^10.0.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.4.0"
+  }
+}

@@ -13,4 +13,4 @@
 
 3. 配对 token 生命周期：当前为无到期/吊销的长期 bearer token（存储于 extension `chrome.storage` 与本地 `config.json` hash）。评估增加到期时间、显式吊销（popup 内）与通道绑定。
 4. 敏感字段识别仍是启发式：自定义控件（无 `type`/`autocomplete`/`name` 特征的密码框）可能漏检。执行点二次复核已覆盖 TOCTOU，但无法识别从未声明敏感属性的控件。
-5. extension 策略门（command → gate → consume）的端到端编排测试：现有单测覆盖 shared policy 与 local-proxy，缺 chrome.\* 编排层的并发消费与 recheck 拒绝路径测试。
+5. extension 策略门（command → gate → consume）的端到端编排测试：现有单测覆盖 shared policy 与 bridge-core 内部 dispatch，缺 chrome.\* 编排层的并发消费与 recheck 拒绝路径测试。

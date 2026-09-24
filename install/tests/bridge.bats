@@ -27,7 +27,7 @@ load helpers
   echo '{"manifest_version":3}' > "$BB_HOME/extension/manifest.json"
   run env -u BB_HOME bash "$BRIDGE_TMPL" service doctor
   [ "$status" -eq 0 ]
-  [[ "$output" == *"[OK] ws-server binary present"* ]]
+  [[ "$output" == *"[OK] bridge-core binary present"* ]]
 }
 
 setup_up() {
@@ -36,14 +36,12 @@ setup_up() {
   mkdir -p "$BB_HOME/logs" "$BB_HOME/run"
 }
 
-@test "bridge service up writes PID files for both services (Linux path)" {
+@test "bridge service up writes bridge-core pidfile and log (Linux path)" {
   setup_up
   run bash "$BRIDGE_TMPL" service up
   [ "$status" -eq 0 ]
-  [[ -f "$BB_HOME/run/ws-server.pid" ]]
-  [[ -f "$BB_HOME/run/local-proxy.pid" ]]
-  [[ -f "$BB_HOME/logs/ws-server.log" ]]
-  [[ -f "$BB_HOME/logs/local-proxy.log" ]]
+  [[ -f "$BB_HOME/run/bridge-core.pid" ]]
+  [[ -f "$BB_HOME/logs/bridge-core.log" ]]
 }
 
 @test "bridge service up fails with BB-E002 when binaries missing" {
@@ -54,9 +52,9 @@ setup_up() {
   [[ "$output" == *"BB-E002"* ]]
 }
 
-@test "bridge service up fails with BB-E010 when ws-server port is taken" {
+@test "bridge service up fails with BB-E010 when control plane port is taken" {
   setup_up
-  # Occupy the ws-server port.
+  # Occupy the control plane port (3001).
   python3 -c "import socket; s=socket.socket(); s.bind(('127.0.0.1',3001)); s.listen(); import time; time.sleep(30)" &
   SOCAT_PID=$!
   sleep 0.3
@@ -64,6 +62,70 @@ setup_up() {
   kill "$SOCAT_PID" 2>/dev/null || true
   [ "$status" -ne 0 ]
   [[ "$output" == *"BB-E010"* ]]
+}
+
+@test "bridge service up fails with BB-E010 when the extension port is taken" {
+  setup_up
+  # bridge-core binds 3001, 3002 and 3003 and exits if any one bind fails, so a
+  # conflict on a non-control-plane port must be reported up front rather than
+  # surfacing later as a misleading BB-E011 about port 3001.
+  python3 -c "import socket, time; s=socket.socket(); s.bind(('127.0.0.1',3002)); s.listen(); time.sleep(30)" &
+  SOCAT_PID=$!
+  sleep 0.3
+  run bash "$BRIDGE_TMPL" service up
+  kill "$SOCAT_PID" 2>/dev/null || true
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"BB-E010"* ]]
+  [[ "$output" == *"3002"* ]]
+}
+
+@test "bridge service up fails with BB-E010 when the MCP port is taken" {
+  setup_up
+  python3 -c "import socket, time; s=socket.socket(); s.bind(('127.0.0.1',3003)); s.listen(); time.sleep(30)" &
+  SOCAT_PID=$!
+  sleep 0.3
+  run bash "$BRIDGE_TMPL" service up
+  kill "$SOCAT_PID" 2>/dev/null || true
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"BB-E010"* ]]
+  [[ "$output" == *"3003"* ]]
+}
+
+@test "bridge service up (macOS) refuses a foreign holder and does not bootstrap launchd" {
+  make_fake_binaries
+  cp "$BB_TEST_ROOT/install/launchagent.plist.tmpl" "$BB_HOME/launchagent.plist.tmpl"
+  make_fake_uname Darwin
+  make_fake_launchctl
+  make_fake_id 501
+  mkdir -p "$BB_HOME/run"
+  # Only 3002 is held, so this also covers classify_service reporting the port
+  # it found: a bare `== foreign` match never fires and the command would fall
+  # through to bootstrap launchd, which then restarts a supervisor that dies
+  # BB-E010 on every launch.
+  python3 -c "import socket, time; s=socket.socket(); s.bind(('127.0.0.1',3002)); s.listen(); time.sleep(30)" &
+  P1=$!
+  sleep 0.3
+
+  run bash "$BRIDGE_TMPL" service up
+  kill "$P1" 2>/dev/null || true
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"BB-E010"* ]]
+  [[ "$output" == *"3002"* ]]
+  [[ ! -f "$BB_TEST_TMP/launchctl_calls.txt" ]] || ! grep -q bootstrap "$BB_TEST_TMP/launchctl_calls.txt"
+}
+
+@test "supervisor reports BB-E010 when a non-control-plane port is held" {
+  make_fake_binaries
+  mkdir -p "$BB_HOME/run"
+  python3 -c "import socket, time; s=socket.socket(); s.bind(('127.0.0.1',3003)); s.listen(); time.sleep(30)" &
+  P1=$!
+  sleep 0.3
+
+  run bash "$BRIDGE_TMPL" service up --foreground
+  kill "$P1" 2>/dev/null || true
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"BB-E010"* ]]
+  [[ "$output" == *"3003"* ]]
 }
 
 @test "moved lifecycle commands point at 'bridge service' (BB-E305)" {
@@ -81,16 +143,16 @@ setup_up() {
   sleeper() { trap "exit 0" TERM; sleep 60; }
   sleeper &
   SLEEP_PID=$!
-  echo "$SLEEP_PID" > "$BB_HOME/run/ws-server.pid"
+  echo "$SLEEP_PID" > "$BB_HOME/run/bridge-core.pid"
   run bash "$BRIDGE_TMPL" service down
   [ "$status" -eq 0 ]
-  [[ ! -f "$BB_HOME/run/ws-server.pid" ]]
+  [[ ! -f "$BB_HOME/run/bridge-core.pid" ]]
   ! kill -0 "$SLEEP_PID" 2>/dev/null
 }
 
 @test "bridge service down with no PID file is a no-op (exit 0)" {
   make_fake_uname Linux
-  rm -f "$BB_HOME/run/ws-server.pid" "$BB_HOME/run/local-proxy.pid"
+  rm -f "$BB_HOME/run/bridge-core.pid"
   run bash "$BRIDGE_TMPL" service down
   [ "$status" -eq 0 ]
   [[ "$output" == *"already stopped"* ]]
@@ -102,52 +164,47 @@ setup_up() {
   # Spawn a sleeper that ignores SIGTERM.
   ( trap "" TERM; sleep 60 ) &
   ZOMBIE_PID=$!
-  echo "$ZOMBIE_PID" > "$BB_HOME/run/local-proxy.pid"
+  echo "$ZOMBIE_PID" > "$BB_HOME/run/bridge-core.pid"
   run bash "$BRIDGE_TMPL" service down
   [ "$status" -eq 0 ]
-  [[ ! -f "$BB_HOME/run/local-proxy.pid" ]]
+  [[ ! -f "$BB_HOME/run/bridge-core.pid" ]]
   ! kill -0 "$ZOMBIE_PID" 2>/dev/null
 }
 
-@test "bridge service status exits 0 when both services running" {
+@test "bridge service status exits 0 when bridge-core is running" {
   make_fake_uname Linux
   mkdir -p "$BB_HOME/run"
-  ( trap "" TERM; sleep 30 ) & echo $! > "$BB_HOME/run/ws-server.pid"
-  ( trap "" TERM; sleep 30 ) & echo $! > "$BB_HOME/run/local-proxy.pid"
+  ( trap "" TERM; sleep 30 ) & echo $! > "$BB_HOME/run/bridge-core.pid"
   run bash "$BRIDGE_TMPL" service status
   [ "$status" -eq 0 ]
-  [[ "$output" == *"ws-server:    running"* ]]
-  [[ "$output" == *"local-proxy:  running"* ]]
+  [[ "$output" == *"bridge-core:  running"* ]]
 }
 
-@test "bridge service status exits 1 when a service is down" {
+@test "bridge service status exits 1 when bridge-core is down" {
   make_fake_uname Linux
   mkdir -p "$BB_HOME/run"
-  echo "99999" > "$BB_HOME/run/ws-server.pid"
-  echo "99998" > "$BB_HOME/run/local-proxy.pid"
+  echo "99999" > "$BB_HOME/run/bridge-core.pid"
   run bash "$BRIDGE_TMPL" service status
   [ "$status" -eq 1 ]
-  [[ "$output" == *"ws-server:    stopped"* ]]
+  [[ "$output" == *"bridge-core:  stopped"* ]]
 }
 
 @test "bridge service restart runs down then up" {
   setup_up
-  echo "99999" > "$BB_HOME/run/ws-server.pid"
+  echo "99999" > "$BB_HOME/run/bridge-core.pid"
   run bash "$BRIDGE_TMPL" service restart
   [ "$status" -eq 0 ]
   # The fake PID 99999 is gone; new PIDs are written.
-  [[ "$(cat "$BB_HOME/run/ws-server.pid")" != "99999" ]]
+  [[ "$(cat "$BB_HOME/run/bridge-core.pid")" != "99999" ]]
 }
 
-@test "bridge service logs without name tails both logs (smoke test that files exist)" {
+@test "bridge service logs tails bridge-core.log (smoke test that file exists)" {
   make_fake_uname Linux
   mkdir -p "$BB_HOME/logs"
-  echo "ws log" > "$BB_HOME/logs/ws-server.log"
-  echo "lp log" > "$BB_HOME/logs/local-proxy.log"
-  # We can't easily test tail -f in bats; instead confirm the files are referenced.
+  echo "fake log line" > "$BB_HOME/logs/bridge-core.log"
+  # We can't easily test tail -f in bats; instead confirm the file is referenced.
   run bash -c "BB_HOME='$BB_HOME' bash '$BRIDGE_TMPL' service logs 2>&1 & sleep 0.2; pkill -P \$\$ ; wait"
-  [ -f "$BB_HOME/logs/ws-server.log" ]
-  [ -f "$BB_HOME/logs/local-proxy.log" ]
+  [ -f "$BB_HOME/logs/bridge-core.log" ]
 }
 
 @test "bridge service prints service help when called without a subcommand" {
@@ -173,8 +230,8 @@ setup_up() {
   echo '{"manifest_version":3}' > "$BB_HOME/extension/manifest.json"
   run bash "$BRIDGE_TMPL" service doctor
   [ "$status" -eq 0 ]
-  [[ "$output" == *"[OK] ws-server binary present"* ]]
-  [[ "$output" == *"[OK] local-proxy binary present"* ]]
+  [[ "$output" == *"[OK] bridge-core binary present"* ]]
+  [[ "$output" == *"[OK] bridge-core binary present"* ]]
   [[ "$output" == *"[OK] bridge-cmd binary present"* ]]
   [[ "$output" == *"[OK] extension/manifest.json valid"* ]]
 }
@@ -183,7 +240,7 @@ setup_up() {
   rm -rf "$BB_HOME/bin"
   run bash "$BRIDGE_TMPL" service doctor
   [ "$status" -ne 0 ]
-  [[ "$output" == *"[FAIL] ws-server binary missing"* ]]
+  [[ "$output" == *"[FAIL] bridge-core binary missing"* ]]
 }
 
 @test "bridge service version prints installed and latest release" {
@@ -279,7 +336,9 @@ EOF
   [[ -f "$HOME/Library/LaunchAgents/com.browser-bridge.bridge.plist" ]]
   grep -q 'com.browser-bridge.bridge' "$HOME/Library/LaunchAgents/com.browser-bridge.bridge.plist"
   grep -q "${BB_HOME}" "$HOME/Library/LaunchAgents/com.browser-bridge.bridge.plist"
-  grep -q 'ws://127.0.0.1:3001' "$HOME/Library/LaunchAgents/com.browser-bridge.bridge.plist"
+  # Bridge-core merge: control plane URL is now BRIDGE_WS_PORT env var,
+  # not a literal ws:// URL in the plist.
+  grep -q '<key>BRIDGE_WS_PORT</key>' "$HOME/Library/LaunchAgents/com.browser-bridge.bridge.plist"
   grep -q '<true/>' "$HOME/Library/LaunchAgents/com.browser-bridge.bridge.plist"
   grep -q 'bootstrap' "$BB_TEST_TMP/launchctl_calls.txt"
 }
@@ -375,7 +434,7 @@ EOF
   run bash "$BRIDGE_TMPL" service enable
   [ "$status" -eq 0 ]
   [[ -f "$HOME/Library/LaunchAgents/com.browser-bridge.bridge.plist" ]]
-  [[ ! -f "$BB_HOME/run/ws-server.pid" ]]
+  [[ ! -f "$BB_HOME/run/bridge-core.pid" ]]
 }
 
 @test "bridge service disable removes LaunchAgents and staging plists" {
@@ -481,23 +540,20 @@ EOF
   grep -q "bootstrap gui/501" "$BB_TEST_TMP/launchctl_calls.txt"
 }
 
-@test "bridge service up adopts running pidfile-owned services instead of failing BB-E010" {
+@test "bridge service up adopts a running pidfile-owned bridge-core instead of failing BB-E010" {
   make_fake_binaries
   cp "$BB_TEST_ROOT/install/launchagent.plist.tmpl" "$BB_HOME/launchagent.plist.tmpl"
   mkdir -p "$BB_HOME/run"
-  BRIDGE_WS_PORT=3001 "$BB_HOME/bin/ws-server" &
+  "$BB_HOME/bin/bridge-core" &
   WS_PID=$!
-  BRIDGE_LOCAL_PORT=3002 "$BB_HOME/bin/local-proxy" &
-  LP_PID=$!
   sleep 0.5
-  echo "$WS_PID" > "$BB_HOME/run/ws-server.pid"
-  echo "$LP_PID" > "$BB_HOME/run/local-proxy.pid"
+  echo "$WS_PID" > "$BB_HOME/run/bridge-core.pid"
   make_fake_uname Darwin
   make_fake_launchctl
   make_fake_id 501
 
   run bash "$BRIDGE_TMPL" service up
-  kill "$WS_PID" "$LP_PID" 2>/dev/null || true
+  kill "$WS_PID" 2>/dev/null || true
   [ "$status" -eq 0 ]
   [[ "$output" != *"BB-E010"* ]]
   grep -q "bootstrap gui/501" "$BB_TEST_TMP/launchctl_calls.txt"
@@ -553,58 +609,66 @@ EOF
   grep -q "bootout user/501/com.browser-bridge.bridge" "$BB_TEST_TMP/launchctl_calls.txt"
 }
 
-@test "supervisor restarts a crashed child and shuts down cleanly" {
+@test "supervisor restarts a crashed bridge-core and shuts down cleanly" {
   make_fake_binaries
   mkdir -p "$BB_HOME/logs" "$BB_HOME/run"
 
   bash "$BRIDGE_TMPL" service up --foreground >"$BB_TEST_TMP/supervisor.log" 2>&1 &
   SUP_PID=$!
+  # Gate on the supervisor's own startup-complete line, not on the pidfile or
+  # the bound port. supervisor_spawn writes the pidfile and bridge-core binds
+  # the port *before* the handshake finishes; supervisor_spawn then confirms
+  # the bind with port_in_use (a fresh python3 probe per poll) and only prints
+  # this line once it has returned. Killing bridge-core inside that window
+  # makes the handshake see a dead child, so the supervisor dies BB-E011
+  # instead of entering its watch loop and restarting — the restart under test
+  # then never happens.
   local waited=0
   while [[ $waited -lt 50 ]]; do
-    [[ -f "$BB_HOME/run/ws-server.pid" && -f "$BB_HOME/run/local-proxy.pid" ]] && break
+    grep -q "supervisor: bridge-core=" "$BB_TEST_TMP/supervisor.log" && break
     sleep 0.1
     waited=$((waited + 1))
   done
-  [[ -f "$BB_HOME/run/ws-server.pid" ]]
+  grep -q "supervisor: bridge-core=" "$BB_TEST_TMP/supervisor.log"
+  [[ -f "$BB_HOME/run/bridge-core.pid" ]]
 
-  local old_ws new_ws=""
-  old_ws=$(cat "$BB_HOME/run/ws-server.pid")
-  kill "$old_ws"
+  local old_pid new_pid=""
+  old_pid=$(cat "$BB_HOME/run/bridge-core.pid")
+  kill "$old_pid"
 
+  # supervisor_watch does `rm -f pidfile` then supervisor_spawn does
+  # `echo "$pid" > pidfile`. The window between the two is real, so a
+  # bare `cat` here can lose the race and abort the test with ENOENT.
+  # Read defensively and let the loop retry until the pidfile holds a
+  # pid that differs from the one we killed.
   waited=0
   while [[ $waited -lt 50 ]]; do
-    if [[ -f "$BB_HOME/run/ws-server.pid" ]]; then
-      new_ws=$(cat "$BB_HOME/run/ws-server.pid")
-      if [[ -n "$new_ws" && "$new_ws" != "$old_ws" ]]; then
-        break
-      fi
+    new_pid=$(cat "$BB_HOME/run/bridge-core.pid" 2>/dev/null || true)
+    if [[ -n "$new_pid" && "$new_pid" != "$old_pid" ]]; then
+      break
     fi
-    new_ws=""
     sleep 0.1
     waited=$((waited + 1))
   done
-  [[ -n "$new_ws" ]]
-  [ "$new_ws" != "$old_ws" ]
-  grep -q "restarting ws-server" "$BB_TEST_TMP/supervisor.log"
+  [[ -n "$new_pid" ]]
+  [ "$new_pid" != "$old_pid" ]
+  grep -q "restarting bridge-core" "$BB_TEST_TMP/supervisor.log"
 
   kill -TERM "$SUP_PID"
   wait "$SUP_PID" 2>/dev/null || true
-  ! kill -0 "$new_ws" 2>/dev/null
-  [[ ! -f "$BB_HOME/run/ws-server.pid" ]]
-  [[ ! -f "$BB_HOME/run/local-proxy.pid" ]]
+  ! kill -0 "$new_pid" 2>/dev/null
+  [[ ! -f "$BB_HOME/run/bridge-core.pid" ]]
 }
 
-@test "supervisor adopts an orphaned recorded pair and keeps watching it" {
+@test "supervisor adopts an orphaned bridge-core and keeps watching it" {
   make_fake_binaries
   mkdir -p "$BB_HOME/run"
-  # Orphan pair: services running with pidfiles, but the supervisor that
-  # started them is gone (SIGKILLed). A stale supervisor.pid with a dead pid
+  # Orphan: bridge-core running with pidfile, but the supervisor that
+  # started it is gone (SIGKILLed). A stale supervisor.pid with a dead pid
   # simulates the relaunch-after-SIGKILL state.
-  "$BB_HOME/bin/ws-server" & echo $! > "$BB_HOME/run/ws-server.pid"
-  "$BB_HOME/bin/local-proxy" & echo $! > "$BB_HOME/run/local-proxy.pid"
-  local orphan_ws orphan_lp
-  orphan_ws=$(cat "$BB_HOME/run/ws-server.pid")
-  orphan_lp=$(cat "$BB_HOME/run/local-proxy.pid")
+  "$BB_HOME/bin/bridge-core" & echo $! > "$BB_HOME/run/bridge-core.pid"
+  local orphan_pid
+  orphan_pid=$(cat "$BB_HOME/run/bridge-core.pid")
   sleep 0.05 & local dead_pid=$!
   wait "$dead_pid" 2>/dev/null || true
   echo "$dead_pid" > "$BB_HOME/run/supervisor.pid"
@@ -613,62 +677,31 @@ EOF
   SUP_PID=$!
   local waited=0
   while [[ $waited -lt 50 ]]; do
-    if grep -q "adopting ws-server" "$BB_TEST_TMP/supervisor.log" \
-      && grep -q "adopting local-proxy" "$BB_TEST_TMP/supervisor.log"; then
-      break
-    fi
+    grep -q "adopting bridge-core" "$BB_TEST_TMP/supervisor.log" && break
     sleep 0.1
     waited=$((waited + 1))
   done
-  # Adoption, not takeover: same children keep running, supervisor watches.
-  grep -q "adopting ws-server" "$BB_TEST_TMP/supervisor.log"
-  grep -q "adopting local-proxy" "$BB_TEST_TMP/supervisor.log"
-  [[ "$(cat "$BB_HOME/run/ws-server.pid")" == "$orphan_ws" ]]
-  [[ "$(cat "$BB_HOME/run/local-proxy.pid")" == "$orphan_lp" ]]
+  # Adoption, not takeover: same child keeps running, supervisor watches.
+  grep -q "adopting bridge-core" "$BB_TEST_TMP/supervisor.log"
+  [[ "$(cat "$BB_HOME/run/bridge-core.pid")" == "$orphan_pid" ]]
 
-  # The adoption is real supervision: kill an adopted child, it gets restarted.
-  kill "$orphan_ws"
+  # The adoption is real supervision: kill the adopted child, it gets restarted.
+  kill "$orphan_pid"
   waited=0
   while [[ $waited -lt 50 ]]; do
-    if [[ -f "$BB_HOME/run/ws-server.pid" && "$(cat "$BB_HOME/run/ws-server.pid")" != "$orphan_ws" ]]; then
+    if [[ -f "$BB_HOME/run/bridge-core.pid" && "$(cat "$BB_HOME/run/bridge-core.pid")" != "$orphan_pid" ]]; then
       break
     fi
     sleep 0.1
     waited=$((waited + 1))
   done
-  [[ "$(cat "$BB_HOME/run/ws-server.pid")" != "$orphan_ws" ]]
-  grep -q "restarting ws-server" "$BB_TEST_TMP/supervisor.log"
+  [[ "$(cat "$BB_HOME/run/bridge-core.pid")" != "$orphan_pid" ]]
+  grep -q "restarting bridge-core" "$BB_TEST_TMP/supervisor.log"
 
   kill -TERM "$SUP_PID"
   wait "$SUP_PID" 2>/dev/null || true
-  ! kill -0 "$orphan_lp" 2>/dev/null
+  ! kill -0 "$orphan_pid" 2>/dev/null
   [[ ! -f "$BB_HOME/run/supervisor.pid" ]]
-}
-
-@test "supervisor adopts a half-orphaned pair and starts the missing child" {
-  make_fake_binaries
-  mkdir -p "$BB_HOME/run"
-  "$BB_HOME/bin/ws-server" & echo $! > "$BB_HOME/run/ws-server.pid"
-  local orphan_ws
-  orphan_ws=$(cat "$BB_HOME/run/ws-server.pid")
-
-  bash "$BRIDGE_TMPL" service up --foreground >"$BB_TEST_TMP/supervisor.log" 2>&1 &
-  SUP_PID=$!
-  local waited=0
-  while [[ $waited -lt 50 ]]; do
-    if [[ -f "$BB_HOME/run/local-proxy.pid" ]] && grep -q "adopting ws-server" "$BB_TEST_TMP/supervisor.log"; then
-      break
-    fi
-    sleep 0.1
-    waited=$((waited + 1))
-  done
-  [[ -f "$BB_HOME/run/local-proxy.pid" ]]
-  [[ "$(cat "$BB_HOME/run/ws-server.pid")" == "$orphan_ws" ]]
-  kill -0 "$(cat "$BB_HOME/run/local-proxy.pid")" 2>/dev/null
-
-  kill -TERM "$SUP_PID"
-  wait "$SUP_PID" 2>/dev/null || true
-  ! kill -0 "$orphan_ws" 2>/dev/null
 }
 
 @test "supervisor refuses to start while another live supervisor holds the pidfile (BB-E307)" {
@@ -698,7 +731,7 @@ EOF
   python3 -c "import socket, time; s=socket.socket(); s.bind(('127.0.0.1',3001)); s.listen(); time.sleep(30)" &
   P1=$!
   sleep 0.3
-  echo "$P1" > "$BB_HOME/run/ws-server.pid"
+  echo "$P1" > "$BB_HOME/run/bridge-core.pid"
 
   run bash "$BRIDGE_TMPL" service up --foreground
   kill "$P1" 2>/dev/null || true

@@ -25,8 +25,20 @@ _Avoid_: locator, xpath, element id
 ### System shape
 
 **Inbound adapter**:
-The stateless entry point through which external callers drive Browser Bridge. The CLI and the MCP server are the two inbound adapters; both translate caller requests onto the WebSocket protocol and hold no browser state.
+The stateless entry point through which external callers drive Browser Bridge. The CLI and the MCP server are the two inbound adapters; both translate caller requests onto the WebSocket protocol and hold no browser state. The CLI is a separate process reaching bridge-core over the WebSocket protocol; the MCP server is an HTTP endpoint inside bridge-core itself — both ultimately end up as browser-bound commands.
 _Avoid_: access layer, frontend, gateway, entry point
+
+**Control plane**:
+The bridge-core process that accepts external commands on the local machine and dispatches them to the browser connection. Replaces the previously separate "WebSocket Server" and "Local Proxy" roles; today both responsibilities live in one binary on the loopback port (3001 for the WebSocket adapter).
+_Avoid_: ws-server, WebSocket Server, routing layer
+
+**Browser connection**:
+The bridge-core's outbound WebSocket client to the Chrome extension. The direction is fixed: the extension cannot host a server (browser host-permission limits), so bridge-core always dials out to it on a loopback port. One Browser connection per registered browserId.
+_Avoid_: Local Proxy, extension socket, browser socket
+
+**Pairing**:
+A one-time enrollment handshake between the extension and the control plane: a short-lived code (5 min TTL) is exchanged for a long-lived bearer token, kept in the extension's `chrome.storage` and stored only as a SHA-256 hash on the control-plane side. The token does not expire; revoking it means removing `extensionTokenHash` from `~/.browser-bridge/config.json`, which makes the next extension reconnect fail with 403 and walks the user through the side-panel-driven re-pairing flow.
+_Avoid_: auth, authentication, login
 
 **Login auto-start**:
 Starting bridge services automatically at macOS login via a per-user LaunchAgent — login-scoped and per-user, never a boot-time system daemon.
@@ -57,7 +69,7 @@ The browser-managed right-side panel of the extension, opened by clicking the ex
 _Avoid_: popup, drawer, side drawer, sidebar
 
 **State bar**:
-The top strip of the side panel, always visible. Shows Browser / Cloud connection dots, the browser UID, and the Cloud / Takeover switches.
+The top strip of the side panel, always visible. Shows the Browser connection dot, the browser UID, the Takeover switch, and a link to settings.
 _Avoid_: header, toolbar
 
 **Side panel tab**:

@@ -45,7 +45,7 @@
 ## ✨ Features
 
 - 🤖 **Agent-ready interface** — one bridge protocol, consumed via CLI, Claude Code skill, or custom integration.
-- 🔒 **Local session, cloud control** — reuse your logged-in browser; no cloud browser or cookie sync needed.
+- 🔒 **Local session, local control** — reuse your logged-in browser; no cloud browser or cookie sync needed.
 - 🔗 **MCP server** — Streamable HTTP MCP server exposes browser tools to Claude Desktop, Cursor, and other MCP clients.
 - 🎯 **Token-efficient reads** — observe-first snapshots, targeted container reads, and hard output caps keep page noise out of your agent's context window.
 
@@ -72,7 +72,7 @@ bridge --browser <browser-id> tab:new https://github.com
 bridge --browser <browser-id> --tab <tab-id> wait:navigation
 ```
 
-That’s it. The command travels from CLI → WebSocket server → local proxy → Chrome extension → browser.
+That’s it. The command travels from CLI → bridge-core → Chrome extension → browser.
 
 ### 3. Use it from any agent
 
@@ -142,7 +142,7 @@ For the full analysis — why full-page dumps fail, how virtual lists distort th
 
 ## 🖥️ Use via CLI
 
-The `bridge` CLI controls a connected Chrome instance through the WebSocket server.
+The `bridge` CLI controls a connected Chrome instance through the bridge-core control plane.
 
 ### Global options
 
@@ -154,7 +154,7 @@ bridge --browser <browser-id> [options] <command>
 |---|---|---|
 | `--browser <id>` | Target browser instance (required for most commands) | — |
 | `--tab <id>` | Target tab id (all page-level commands require this) | `0` |
-| `--server <url>` | WebSocket server URL | `ws://localhost:3001` |
+| `--server <url>` | Control plane URL | `ws://localhost:3001` |
 | `--timeout <ms>` | Command timeout | `10000` |
 | `--json` | Output structured JSON instead of human-readable text | — |
 
@@ -205,7 +205,7 @@ See `bridge --help` for the full command list.
 
 ## 🤖 Use via MCP
 
-Browser Bridge exposes a [Streamable HTTP MCP server](docs/mcp-setup.md) alongside the WebSocket server. Once `bridge service up` (or `bun run dev:websocket`) is running, add `http://localhost:3003/mcp` to any MCP client that supports Streamable HTTP.
+Browser Bridge exposes a [Streamable HTTP MCP server](docs/mcp-setup.md) inside `bridge-core` (3003 by default). Once `bridge service up` (or `bun run dev:core`) is running, add `http://localhost:3003/mcp` to any MCP client that supports Streamable HTTP.
 
 ### Start the MCP server
 
@@ -246,24 +246,19 @@ Where to put this block depends on your client:
 ## 🏗️ Architecture
 
 ```
-┌─────────────┐      ┌─────────────────┐      ┌─────────────────┐      ┌─────────────────┐
-│  CLI / MCP   │ ───▶ │  WebSocket      │ ───▶ │  Local Proxy    │ ───▶ │  Chrome         │
-│             │      │  Server         │      │  (your machine) │      │  Extension      │
-└─────────────┘      └─────────────────┘      └─────────────────┘      └─────────────────┘
-                                                                              │
-                                                                              ▼
-                                                                       ┌─────────────┐
-                                                                       │   Chrome    │
-                                                                       │  (browser)  │
-                                                                       └─────────────┘
+┌─────────────┐                                   ┌─────────────────┐
+│  CLI / MCP   │ ───▶  bridge-core  (single ────▶  │  Chrome         │
+│             │         process: WebSocket          │  Extension      │
+└─────────────┘         control plane on           └─────────────────┘
+                        3001, MCP on 3003,
+                        extension bridge on 3002)
 ```
 
 | Layer | Component | Role |
 |-------|-----------|------|
-| Cloud / shared | Inbound adapters | Agent-facing entry points: the `bridge` CLI and the MCP server. Both are stateless translators onto the WebSocket protocol — see `CONTEXT.md`. |
-| Cloud / shared | WebSocket Server | Routes commands to the right local proxy. |
-| Local | Local Proxy | Maintains the outbound connection from your machine. |
-| Local | Chrome Extension | Receives messages and executes browser actions. |
+| Inbound adapters | CLI / MCP | Agent-facing entry points — see `CONTEXT.md`. Both connect to bridge-core. |
+| Control plane | bridge-core | Routes commands to the extension. Listens on 3001 (WebSocket), 3002 (extension), 3003 (MCP) — three loopback ports in one process. |
+| Browser | Chrome Extension | Receives messages and executes browser actions. |
 
 See [`docs/architecture-diagram.html`](./docs/architecture-diagram.html) for the full diagram.
 
@@ -277,18 +272,15 @@ See [`docs/architecture-diagram.html`](./docs/architecture-diagram.html) for the
 # 1. Install dependencies
 bun install
 
-# 2. Start the WebSocket server
-bun run dev:websocket
+# 2. Start bridge-core (CLI/WebSocket/MCP control plane + extension bridge)
+bun run dev:core
 
-# 3. In another terminal, start the local proxy
-bun run dev:local-proxy
-
-# 4. In a third terminal, build the extension
+# 3. In another terminal, build the extension
 bun run dev:extension
 
-# 5. Load apps/extension/dist/ as an unpacked extension in Chrome
+# 4. Load apps/extension/dist/ as an unpacked extension in Chrome
 
-# 6. Run the CLI
+# 5. Run the CLI
 bun run cli
 ```
 
@@ -299,10 +291,9 @@ bun run cli
 ```
 Browser-Bridge/
 ├── apps/
+│   ├── bridge-core/    # Control plane: CLI/MCP/extension in one process
 │   ├── cli/            # CLI entrypoint (one bridge protocol consumer)
-│   ├── extension/      # Chrome Extension (Manifest V3, Vite)
-│   ├── local-proxy/    # Local WebSocket proxy
-│   └── websocket/      # WebSocket server, client, and protocol
+│   └── extension/      # Chrome Extension (Manifest V3, Vite)
 ├── packages/
 │   └── shared/         # Shared constants and utilities
 ├── install/            # One-line installer scripts
@@ -326,9 +317,9 @@ Browser-Bridge/
 
 Browser Bridge drives your everyday, logged-in browser, so safety is enforced where actions execute — in the extension — not at the network edge.
 
-- **Paired channel**: `bridge pair` prints a short-lived pairing code; entering it in the Browser Bridge side panel issues a token that authenticates the extension ↔ local-proxy WebSocket (only the token's SHA-256 hash is stored on disk). Unpaired connections are refused, and web pages cannot call the proxy's HTTP API — CORS is restricted to `chrome-extension://` origins.
-- **Loopback only**: the local proxy, WebSocket server, and MCP endpoint bind to `127.0.0.1`; the proxy connects outbound to the server. For non-local deployments the WebSocket server supports API-key auth (`BRIDGE_API_KEYS`).
-- **Single-user, single-machine**: the threat model is one human, one browser, one machine. The WebSocket server does not yet isolate commands/responses between users sharing one server (responses are fanned out to every connected CLI, and command routing keys on the browser ID only) — do not expose it to multiple users until that lands (tracked in `TODO.md`). The default auth provider is a no-op placeholder intended only for loopback.
+- **Paired channel**: `bridge pair` prints a short-lived pairing code; entering it in the Browser Bridge side panel issues a token that authenticates the extension ↔ bridge-core WebSocket on 3002 (only the token's SHA-256 hash is stored on disk). Unpaired connections are refused, and web pages cannot call the bridge-core HTTP API — CORS is restricted to `chrome-extension://` origins.
+- **Loopback only**: bridge-core binds all three loopback ports (3001 control plane / 3002 extension / 3003 MCP) to `127.0.0.1`. For non-local deployments the WebSocket control plane supports API-key auth (`BRIDGE_API_KEYS`).
+- **Single-user, single-machine**: the threat model is one human, one browser, one machine. The control plane does not yet isolate commands/responses between users sharing one server (responses are fanned out to every connected CLI, and command routing keys on the browser ID only) — do not expose it to multiple users until that lands (tracked in `TODO.md`). The default auth provider is a no-op placeholder intended only for loopback.
 - **Working-scope policy** (see `docs/adr/0006`-`0009`): agents act silently only inside their working scope — tabs they opened plus origins a human approved. Crossing it denies the command immediately with a machine-readable reason (`origin_not_approved`, `approval_required`, …) and shows an approval card in the side panel; approve there, then retry.
 - **Hard denials**: browser system pages (`chrome://`, `chrome-extension://`, `file:`, `javascript:`, …) and the built-in blocklist (including the Chrome Web Store) are rejected with no approval path, so an agent cannot reconfigure the browser.
 - **Human assist**: a takeover switch in the side panel rejects every agent command until you release it.

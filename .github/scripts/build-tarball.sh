@@ -16,7 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 mkdir -p "$STAGE/$NAME/bin"
-cp "dist/ws-server" "dist/local-proxy" "dist/bridge-cmd" "$STAGE/$NAME/bin/"
+cp "dist/bridge-core" "dist/bridge-cmd" "$STAGE/$NAME/bin/"
 
 OUT_DIR="${OUT_DIR:-.}"
 OUT_DIR="$(cd "$OUT_DIR" && pwd)"

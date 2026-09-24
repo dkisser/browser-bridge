@@ -78,7 +78,7 @@
       .state-spacer { flex: 1 1 auto; }
       .state-actions { display: flex; align-items: center; gap: 10px; }
 
-      /* Toggle switch (reused for Cloud / Takeover) */
+      /* Toggle switch (reused for Takeover) */
       .switch {
         position: relative;
         display: inline-flex;
@@ -289,19 +289,9 @@
         <span class="state-label">Browser</span>
         <span id="browserStatus" class="state-detail">Disconnected</span>
       </div>
-      <div class="state-dot-row">
-        <span id="cloudDot" class="state-dot disconnected" aria-hidden="true"></span>
-        <span class="state-label">Cloud</span>
-        <span id="cloudStatus" class="state-detail">Disconnected</span>
-      </div>
       <div class="uid" id="uid" title=""></div>
       <div class="state-spacer"></div>
       <div class="state-actions">
-        <label class="switch" title="Connect or disconnect the cloud bridge">
-          <input id="cloudSwitch" type="checkbox" aria-label="Cloud Connection" />
-          <span class="switch-track" aria-hidden="true"></span>
-          <span>Cloud</span>
-        </label>
         <label class="switch" title="Takeover: reject agent commands while you drive">
           <input id="takeoverSwitch" type="checkbox" aria-label="Human Takeover" />
           <span class="switch-track" aria-hidden="true"></span>
@@ -330,7 +320,7 @@
         <h2 style="margin-top: 16px;">Paired state</h2>
         <div id="pairingBlock">
           <div class="card" id="pairInputCard" style="display: block;">
-            <div class="card-title">Pair with Local Proxy</div>
+            <div class="card-title">Pair with bridge-core</div>
             <div class="card-msg">Run <code>bridge pair</code> in a terminal to get a code.</div>
             <div class="card-actions">
               <input id="pairCode" type="text" placeholder="Pairing code" />
@@ -338,7 +328,7 @@
             </div>
             <div id="pairError" class="card-msg"></div>
           </div>
-          <button id="rePairButton" type="button" class="small" style="display: inline-block;">Re-pair with local proxy…</button>
+          <button id="rePairButton" type="button" class="small" style="display: inline-block;">Re-pair with bridge-core…</button>
         </div>
       </section>
 

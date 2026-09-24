@@ -21,10 +21,7 @@ const GRANT_TTL_MS = 5 * 60 * 1000;
 interface StatusResponse {
   success: boolean;
   data?: {
-    connected: boolean;
     browserId: string;
-    serverUrl: string;
-    manualDisconnect: boolean;
     paired: boolean;
   };
   error?: string;
@@ -51,10 +48,7 @@ function getElement<T extends HTMLElement>(id: string): T {
 
 const browserDot = getElement<HTMLSpanElement>('browserDot');
 const browserStatusLabel = getElement<HTMLSpanElement>('browserStatus');
-const cloudDot = getElement<HTMLSpanElement>('cloudDot');
-const cloudStatusLabel = getElement<HTMLSpanElement>('cloudStatus');
 const uidEl = getElement<HTMLDivElement>('uid');
-const cloudSwitch = getElement<HTMLInputElement>('cloudSwitch');
 const takeoverSwitch = getElement<HTMLInputElement>('takeoverSwitch');
 const messageEl = getElement<HTMLDivElement>('message');
 const settingsLink = getElement<HTMLAnchorElement>('settingsLink');
@@ -86,6 +80,10 @@ const panels: Record<SidePanelTab, HTMLElement> = {
 let messagePersistent = false;
 
 function setMessage(text: string, persistent = true): void {
+  // Don't overwrite a persistent user-action error with a transient
+  // poll-failure message; that pair of writes clears the persistent
+  // message and leaves the user with no feedback on their last action.
+  if (messagePersistent && !persistent) return;
   messageEl.textContent = text;
   messagePersistent = persistent;
 }
@@ -109,20 +107,7 @@ async function fetchStatus(): Promise<StatusResponse> {
     const response = await fetch(`${API_BASE}/api/status`);
     return (await response.json()) as StatusResponse;
   } catch {
-    return { success: false, error: 'Local proxy unreachable' };
-  }
-}
-
-async function setCloudConnection(connect: boolean): Promise<void> {
-  const endpoint = connect ? '/api/connect' : '/api/disconnect';
-  try {
-    const response = await fetch(`${API_BASE}${endpoint}`, { method: 'POST' });
-    const result = (await response.json()) as StatusResponse;
-    if (!result.success) {
-      setMessage(result.error ?? 'Request failed', false);
-    }
-  } catch {
-    setMessage('Local proxy unreachable', false);
+    return { success: false, error: 'Bridge unreachable' };
   }
 }
 
@@ -147,39 +132,16 @@ async function refreshConnection(): Promise<void> {
     result.data &&
     typeof result.data.browserId === 'string'
   ) {
-    cloudSwitch.checked = result.data.connected;
-    setConnectionDot(cloudDot, cloudStatusLabel, result.data.connected);
     uidEl.textContent = result.data.browserId;
     uidEl.title = result.data.browserId;
-    // Don't re-enable the switch while a user-initiated POST is in flight
-    // either — that race would let the user double-click or fight the
-    // optimistic state. Transient connection diagnostics from a previous
-    // failed POST get cleared on this successful poll; persistent messages
-    // (from user-initiated actions) are kept.
+    // Transient connection diagnostics from a previous failed poll get
+    // cleared on this successful poll; persistent messages (from
+    // user-initiated actions) are kept.
     clearTransientMessage();
-    cloudSwitch.disabled = cloudSwitchInFlight;
   } else {
-    // Failure path: the cloud dot is red, and the switch's checked state
-    // must reflect reality, not the optimistic click that triggered this.
-    cloudSwitch.checked = false;
-    setConnectionDot(cloudDot, cloudStatusLabel, false);
     setMessage(result.error ?? 'Unknown error', false);
-    cloudSwitch.disabled = true;
   }
 }
-
-let cloudSwitchInFlight = false;
-
-cloudSwitch.addEventListener('change', () => {
-  cloudSwitch.disabled = true;
-  cloudSwitchInFlight = true;
-  // Optimistically reflect the click in the dot, then sync checked-state on
-  // failure inside refreshConnection (which sets checked=false).
-  void setCloudConnection(cloudSwitch.checked).finally(() => {
-    cloudSwitchInFlight = false;
-    void refreshConnection();
-  });
-});
 
 takeoverSwitch.addEventListener('change', () => {
   const desired = takeoverSwitch.checked;
@@ -290,7 +252,7 @@ async function confirmPairing(code: string): Promise<void> {
       pairError.textContent = `Pairing failed: ${result.error ?? 'unknown'}${attempts}`;
     }
   } catch {
-    pairError.textContent = 'Local proxy unreachable';
+    pairError.textContent = 'Bridge unreachable';
   }
 }
 

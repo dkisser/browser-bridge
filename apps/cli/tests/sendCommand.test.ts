@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import type { CommandType } from '@browser-bridge/shared/types';
-import { decode, encode } from '@browser-bridge/websocket/protocol';
+import { decode, encode } from '@browser-bridge/bridge-core/protocol';
 import type { Server } from 'bun';
 import { sendCommand } from '../src/commands/sendCommand';
 
