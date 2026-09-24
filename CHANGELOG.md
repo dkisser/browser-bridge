@@ -4,6 +4,11 @@ All notable changes to Browser Bridge are documented here. The format follows [K
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-09-24
+
+### Fixed
+- `install.sh print_next_steps` now emits real newlines for the auto-start and skills notes. The strings contained literal `\n`, which a `cat <<EOF` heredoc passes through verbatim, so the post-install message read `Browser Bridge vX.Y.Z installed.\n  Login auto-start is enabled...` on a single line. Switched to `$'...'` so the embedded `\n` becomes an actual newline and the `Browser Bridge … installed.` line is printed via `printf`. Backed by a new BATS assertion that the output contains no literal `\n` and that each note sits on its own line.
+
 ## [0.3.1] - 2026-09-24
 
 ### Changed
