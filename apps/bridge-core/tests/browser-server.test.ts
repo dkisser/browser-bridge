@@ -1,10 +1,4 @@
-import {
-  afterAll,
-  beforeAll,
-  describe,
-  expect,
-  it,
-} from 'bun:test';
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { BrowserServer } from '../src/browser-server';
 import { PairingManager } from '../src/pairing';
 
@@ -12,13 +6,40 @@ describe('BrowserServer HTTP API', () => {
   let server: BrowserServer;
   const port = 13002;
   let tokenHash: string | undefined;
+  const routerCalls: string[] = [];
   let routerRef = {
     browserId: 'b-test',
-    handleBrowserConnect: () => undefined,
-    handleBrowserDisconnect: () => undefined,
+    handleBrowserConnect: () => {
+      routerCalls.push('connect');
+    },
+    handleBrowserDisconnect: () => {
+      routerCalls.push('disconnect');
+    },
     handleBrowserResponse: () => undefined,
     handleBrowserEvent: () => undefined,
   };
+
+  /** Pair a fresh token so the upgrade gate lets a socket through. */
+  async function pairToken(): Promise<string> {
+    const start = await fetch(`http://localhost:${port}/api/pair/start`, {
+      method: 'POST',
+    });
+    const { code } = (await start.json()).data;
+    const confirm = await fetch(`http://localhost:${port}/api/pair/confirm`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code }),
+    });
+    return (await confirm.json()).data.token;
+  }
+
+  function openSocket(token: string): Promise<WebSocket> {
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(`ws://localhost:${port}/`, [token]);
+      ws.addEventListener('open', () => resolve(ws));
+      ws.addEventListener('error', () => reject(new Error('upgrade failed')));
+    });
+  }
 
   beforeAll(() => {
     tokenHash = undefined;
@@ -30,9 +51,10 @@ describe('BrowserServer HTTP API', () => {
     );
     server = new BrowserServer({
       port,
-      getRouter: () => routerRef as unknown as ReturnType<
-        () => InstanceType<typeof import('../src/router').Router>
-      >,
+      getRouter: () =>
+        routerRef as unknown as ReturnType<
+          () => InstanceType<typeof import('../src/router').Router>
+        >,
       pairing,
     });
     server.start();
@@ -246,6 +268,34 @@ describe('BrowserServer HTTP API', () => {
       expect(stale.opened).toBe(false);
       const fresh = await tryWs(`ws://localhost:${port}/`, [token2]);
       expect(fresh.opened).toBe(true);
+    });
+  });
+
+  describe('extension socket replacement', () => {
+    it('ignores the close of a superseded socket when its replacement is live', async () => {
+      // The extension closes its stale socket and reconnects immediately
+      // (offscreen.ts connect_ws), and a close is delivered asynchronously, so
+      // the replacement's open can be processed first. A close handler that
+      // clears unconditionally blanks the live connection and reports the
+      // browser offline while the extension believes it is connected — after
+      // which every command buffers for 5s and dies as a sw_timeout.
+      const token = await pairToken();
+      routerCalls.length = 0;
+
+      const stale = await openSocket(token);
+      const live = await openSocket(token);
+      expect(server.hasExtension()).toBe(true);
+
+      stale.close();
+      await Bun.sleep(200);
+      expect(routerCalls).toEqual(['connect', 'connect']);
+      expect(server.hasExtension()).toBe(true);
+
+      // The tracked socket closing for real still reports the disconnect.
+      live.close();
+      await Bun.sleep(200);
+      expect(routerCalls).toEqual(['connect', 'connect', 'disconnect']);
+      expect(server.hasExtension()).toBe(false);
     });
   });
 });

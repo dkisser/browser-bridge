@@ -164,7 +164,16 @@ export class BrowserServer {
             console.error('[browser] invalid message from Extension');
           }
         },
-        close() {
+        close(ws) {
+          // Only the socket we are currently tracking may report a disconnect.
+          // The extension closes its stale socket and reconnects immediately
+          // (offscreen.ts: connect_ws closes `stale` then calls connect()), and
+          // a close is delivered asynchronously — so the replacement socket's
+          // open can be processed first. Clearing unconditionally would blank
+          // the live connection, mark the browser offline, and leave commands
+          // buffering for 5s into a sw_timeout while the extension sits there
+          // believing it is connected.
+          if (self.extensionWs !== ws) return;
           console.log('[browser] Extension disconnected');
           self.extensionWs = null;
           getRouter().handleBrowserDisconnect();
@@ -212,10 +221,12 @@ export class BrowserServer {
   }
 
   sendEventToExtension(envelope: Envelope): boolean {
-    return this.sendToExtension(encode(envelope.type, envelope.payload, {
-      id: envelope.id,
-      browserId: envelope.browserId,
-    }));
+    return this.sendToExtension(
+      encode(envelope.type, envelope.payload, {
+        id: envelope.id,
+        browserId: envelope.browserId,
+      }),
+    );
   }
 
   stop(): void {
