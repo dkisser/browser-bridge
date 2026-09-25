@@ -33,7 +33,7 @@ The bridge-core process that accepts external commands on the local machine and 
 _Avoid_: ws-server, WebSocket Server, routing layer
 
 **Browser connection**:
-The bridge-core's outbound WebSocket client to the Chrome extension. The direction is fixed: the extension cannot host a server (browser host-permission limits), so bridge-core always dials out to it on a loopback port. One Browser connection per registered browserId.
+The WebSocket link between the Chrome extension and bridge-core's browser-facing server (loopback port 3002). The direction is fixed: the extension cannot host a server (browser host-permission limits), so the extension always dials out to bridge-core, never the reverse. One Browser connection per registered browserId.
 _Avoid_: Local Proxy, extension socket, browser socket
 
 **Pairing**:

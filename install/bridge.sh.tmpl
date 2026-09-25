@@ -3,7 +3,7 @@
 # service lifecycle lives under `bridge service`. Emitted at install time —
 # see install/install.sh write_artifacts() for substitution details.
 #
-# Bridge-core merge (ADR-0010): the pre-merge script supervised two processes
+# Bridge-core merge (ADR-0011): the pre-merge script supervised two processes
 # (`ws-server` + `local-proxy`). After the merge there is one process —
 # `bridge-core` — listening on three loopback ports (3001 control plane,
 # 3002 extension, 3003 MCP). The supervisor and start/stop logic are

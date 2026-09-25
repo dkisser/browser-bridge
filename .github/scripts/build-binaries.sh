@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Compile runtime binaries for a single macOS architecture.
-# After the bridge-core merge (ADR-0010) only two binaries ship:
+# After the bridge-core merge (ADR-0011) only two binaries ship:
 # `bridge-core` (control plane + MCP + extension bridge) and `bridge-cmd`
 # (stateless CLI). The pre-merge trio `ws-server` + `local-proxy` +
 # `bridge-cmd` is replaced by these two.

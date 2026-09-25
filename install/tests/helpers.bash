@@ -106,7 +106,7 @@ EOF
 }
 
 # Create fake runtime binaries under $BB_HOME/bin for bridge.bats tests.
-# After the bridge-core merge (ADR-0010) there is one runtime binary:
+# After the bridge-core merge (ADR-0011) there is one runtime binary:
 # bridge-core. The fake binds all three ports (3001 control plane,
 # 3002 extension, 3003 MCP) on loopback so the supervisor's port_in_use
 # check sees them.
