@@ -9,7 +9,6 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@browser-bridge/bridge-core": "workspace:*",
     "@browser-bridge/shared": "workspace:*"
   },
   "devDependencies": {

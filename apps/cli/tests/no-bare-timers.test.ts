@@ -3,7 +3,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 const SRC_DIR = join(import.meta.dir, '../src');
-const EXCLUDED_FILES = new Set(['managedClient.ts']);
+const EXCLUDED_FILES = new Set(['managedClient.ts', 'client.ts']);
 
 function walkTsFiles(dir: string): string[] {
   const result: string[] = [];

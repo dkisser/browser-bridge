@@ -4,7 +4,7 @@ import type {
   CommandType,
   Envelope,
 } from '@browser-bridge/shared/types';
-import { createClient } from '@browser-bridge/bridge-core/client';
+import { createClient } from './client';
 
 export class ManagedClient implements Disposable {
   private client: ReturnType<typeof createClient>;

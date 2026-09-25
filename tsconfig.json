@@ -5,11 +5,9 @@
   },
   "include": [
     "packages/shared/src/**/*",
-    "apps/bridge-core/src/**/*",
     "apps/cli/src/**/*",
     "apps/extension/src/**/*",
     "apps/extension/vite.config.ts",
-    "apps/bridge-core/tests/**/*",
     "apps/cli/tests/**/*",
     "packages/shared/tests/**/*"
   ]

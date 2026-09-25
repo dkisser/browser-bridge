@@ -8,7 +8,7 @@
     "packages/*"
   ],
   "scripts": {
-    "dev:core": "bun --cwd apps/bridge-core dev",
+    "dev:core": "go -C apps/bridge-core run ./cmd/bridge-core",
     "dev:extension": "bun --cwd apps/extension dev",
     "build:extension": "bun --cwd apps/extension build",
     "build:cli": "bun build --compile apps/cli/src/index.ts --outfile dist/bridge",
