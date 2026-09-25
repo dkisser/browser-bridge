@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"testing"
@@ -78,6 +79,21 @@ func startApp(t *testing.T, mutate func(*app.Config)) {
 		resp.Body.Close()
 		return resp.StatusCode == http.StatusOK
 	})
+	// /api/status only proves the browser server is up; the inbound and MCP
+	// listeners start later in app.Run. A TCP dial is enough to prove LISTEN
+	// without disturbing either protocol.
+	waitFor(t, "inbound WS listener", func() bool { return tcpUp(inboundPort) })
+	waitFor(t, "MCP HTTP listener", func() bool { return tcpUp(mcpPort) })
+}
+
+// tcpUp reports whether something accepts TCP connections on the port.
+func tcpUp(port int) bool {
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", fmt.Sprint(port)), 100*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
 }
 
 // waitFor polls cond until it holds, without fixed sleeps.
@@ -266,6 +282,61 @@ func (fx *fakeExtension) servePageinfo() error {
 func runPageinfoServer(fx *fakeExtension) <-chan error {
 	done := make(chan error, 1)
 	go func() { done <- fx.servePageinfo() }()
+	return done
+}
+
+// serveCommand reads one command envelope, asserts the command name and the
+// given params subset, and replies with respondPayload (a raw ResponsePayload
+// JSON). Like servePageinfo it reports errors on a channel-friendly return.
+func (fx *fakeExtension) serveCommand(wantCommand string, wantParams map[string]any, respondPayload string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, data, err := fx.conn.Read(ctx)
+	if err != nil {
+		return fmt.Errorf("extension read: %w", err)
+	}
+	cmd, err := protocol.Decode(string(data))
+	if err != nil {
+		return fmt.Errorf("extension decode %q: %w", data, err)
+	}
+	if cmd.Type != protocol.TypeCommand {
+		return fmt.Errorf("extension got %s, want command", cmd.Type)
+	}
+	var payload struct {
+		Command string         `json:"command"`
+		Params  map[string]any `json:"params"`
+	}
+	if err := json.Unmarshal(cmd.Payload, &payload); err != nil {
+		return fmt.Errorf("command payload %s: %w", cmd.Payload, err)
+	}
+	if payload.Command != wantCommand {
+		return fmt.Errorf("command = %q, want %q", payload.Command, wantCommand)
+	}
+	for key, want := range wantParams {
+		if got, ok := payload.Params[key]; !ok || fmt.Sprint(got) != fmt.Sprint(want) {
+			return fmt.Errorf("params[%q] = %v, want %v (params %s)", key, got, want, cmd.Payload)
+		}
+	}
+	resp, err := json.Marshal(protocol.Envelope{
+		ID:        cmd.ID,
+		Type:      protocol.TypeResponse,
+		BrowserID: fx.browserID,
+		Payload:   json.RawMessage(respondPayload),
+		Timestamp: time.Now().UnixMilli(),
+	})
+	if err != nil {
+		return fmt.Errorf("marshal response: %w", err)
+	}
+	if err := fx.conn.Write(ctx, websocket.MessageText, resp); err != nil {
+		return fmt.Errorf("extension write: %w", err)
+	}
+	return nil
+}
+
+// runCommandServer serves one command in the background.
+func runCommandServer(fx *fakeExtension, wantCommand string, wantParams map[string]any, respondPayload string) <-chan error {
+	done := make(chan error, 1)
+	go func() { done <- fx.serveCommand(wantCommand, wantParams, respondPayload) }()
 	return done
 }
 
@@ -761,5 +832,70 @@ func TestInboundContract(t *testing.T) {
 	}
 	if listPayload.Data == nil {
 		t.Fatalf("list_browsers data = null, want []: %s", resp.Payload)
+	}
+}
+
+// TestMCPSetBrowserThenClick drives set_browser, list_browsers and click over
+// the MCP endpoint against a paired fake extension, covering the session-pin
+// wiring and the command round trip end to end.
+func TestMCPSetBrowserThenClick(t *testing.T) {
+	startApp(t, nil)
+	fx := pairAndConnect(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	client := mcp.NewClient(&mcp.Implementation{Name: "e2e", Version: "0.0.0"}, nil)
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: mcpURL()}, nil)
+	if err != nil {
+		t.Fatalf("mcp connect: %v", err)
+	}
+	defer session.Close()
+
+	// list_browsers shows the paired fake extension.
+	listResult, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "list_browsers", Arguments: map[string]any{}})
+	if err != nil {
+		t.Fatalf("list_browsers: %v", err)
+	}
+	listText := listResult.Content[0].(*mcp.TextContent).Text
+	if want := fmt.Sprintf("- %s (online)", fx.browserID); listText != want {
+		t.Fatalf("list_browsers = %q, want %q", listText, want)
+	}
+
+	// set_browser pins this session to the fake extension's browserId.
+	setResult, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "set_browser",
+		Arguments: map[string]any{"browserId": fx.browserID},
+	})
+	if err != nil {
+		t.Fatalf("set_browser: %v", err)
+	}
+	setText := setResult.Content[0].(*mcp.TextContent).Text
+	if want := fmt.Sprintf("Browser set to %q for this session.", fx.browserID); setText != want {
+		t.Fatalf("set_browser = %q, want %q", setText, want)
+	}
+
+	// click routes through the extension and falls back to the tool's own
+	// success text when the response carries no message.
+	served := runCommandServer(fx, "click", map[string]any{"selector": "#btn"}, `{"status":"ok"}`)
+	clickResult, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "click",
+		Arguments: map[string]any{"selector": "#btn", "tab_id": 3},
+	})
+	if err != nil {
+		t.Fatalf("click: %v", err)
+	}
+	if clickResult.IsError {
+		t.Fatalf("click returned an error: %+v", clickResult.Content)
+	}
+	if text := clickResult.Content[0].(*mcp.TextContent).Text; text != "Clicked #btn" {
+		t.Fatalf("click = %q, want %q", text, "Clicked #btn")
+	}
+	select {
+	case err := <-served:
+		if err != nil {
+			t.Fatalf("extension serve click: %v", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("extension never served the click command")
 	}
 }

@@ -1,8 +1,7 @@
-// Package mcpserver is the Go port of src/mcp/server.ts, scoped to the
-// pageinfo tool for the Phase 1 spike. Where the TS server dials the inbound
-// WebSocket as a client, the Go port dispatches commands to the router
-// in-process (allowed by the spike brief); the inbound WebSocket behavior on
-// 3001 is preserved for real CLI clients.
+// Package mcpserver is the Go port of src/mcp/server.ts. Where the TS server
+// dials the inbound WebSocket as a client, the Go port dispatches commands to
+// the router in-process (allowed by the spike brief); the inbound WebSocket
+// behavior on 3001 is preserved for real CLI clients.
 package mcpserver
 
 import (
@@ -49,6 +48,7 @@ type Server struct {
 	hostname       string
 	router         CommandRouter
 	registry       BrowserLister
+	sessions       *sessionStore
 	defaultTimeout time.Duration
 	version        string
 	logger         *log.Logger
@@ -63,6 +63,7 @@ func New(opts Options) *Server {
 		hostname:       opts.Hostname,
 		router:         opts.Router,
 		registry:       opts.Registry,
+		sessions:       newSessionStore(),
 		defaultTimeout: opts.DefaultTimeout,
 		version:        semverVersion(opts.Version),
 		logger:         opts.Logger,
@@ -80,10 +81,16 @@ func semverVersion(version string) string {
 	return "0.0.0"
 }
 
-func (s *Server) Start(ctx context.Context) error {
+// buildServer assembles the mcp.Server with every tool registered. It is a
+// separate method so tests can mount the same server over httptest.
+func (s *Server) buildServer() *mcp.Server {
 	mcpServer := mcp.NewServer(&mcp.Implementation{Name: ServerName, Version: s.version}, nil)
 	s.registerTools(mcpServer)
+	return mcpServer
+}
 
+func (s *Server) Start(ctx context.Context) error {
+	mcpServer := s.buildServer()
 	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
 		return mcpServer
 	}, nil)
