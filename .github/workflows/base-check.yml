@@ -27,10 +27,44 @@ jobs:
       - name: Run unit/integration tests
         run: bun run test
 
+  go:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/bridge-core
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27'
+          cache-dependency-path: apps/bridge-core/go.sum
+
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "not gofmt-clean:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Run tests
+        run: go test -race ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.13.2
+          working-directory: apps/bridge-core
+
       - name: Verify binaries compile
         run: |
-          mkdir -p dist
-          bun build --compile apps/bridge-core/src/index.ts --outfile dist/bridge-core --target=bun-linux-x64
-          bun build --compile apps/cli/src/index.ts --outfile dist/bridge-cmd --target=bun-linux-x64
-          test -x dist/bridge-core
-          test -x dist/bridge-cmd
+          mkdir -p ../../dist
+          CGO_ENABLED=0 go build -o ../../dist/bridge-core ./cmd/bridge-core
+          CGO_ENABLED=0 go build -o ../../dist/bridge ./cmd/bridge
+          test -x ../../dist/bridge-core
+          test -x ../../dist/bridge

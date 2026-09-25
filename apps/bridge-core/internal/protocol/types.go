@@ -21,6 +21,15 @@ type BrowserConnection struct {
 	LastSeen  int64         `json:"lastSeen"`
 }
 
+// CommandPayload mirrors CommandPayload in packages/shared/src/types.ts.
+// Params is always sent (TS defaults it to {}), so callers must pass a
+// non-nil map — a nil map would encode as null.
+type CommandPayload struct {
+	Command string         `json:"command"`
+	TabID   int            `json:"tabId"`
+	Params  map[string]any `json:"params"`
+}
+
 // ResponsePayload mirrors ResponsePayload in packages/shared/src/types.ts.
 // The control plane only ever constructs status/error/message itself; data
 // and reason pass through from the extension. Field order matches the TS

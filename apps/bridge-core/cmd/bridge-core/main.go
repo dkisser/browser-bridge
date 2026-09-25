@@ -79,6 +79,7 @@ func configFromEnv() (app.Config, error) {
 	if raw := os.Getenv("BRIDGE_MCP_TIMEOUT_MS"); raw != "" {
 		ms, err := strconv.Atoi(raw)
 		if err != nil {
+			//nolint:staticcheck // ST1005: message mirrors src/index.ts.
 			return cfg, fmt.Errorf("Invalid BRIDGE_MCP_TIMEOUT_MS: %s", raw)
 		}
 		cfg.MCPTimeout = time.Duration(ms) * time.Millisecond
@@ -98,6 +99,7 @@ func parsePort(name string) (int, error) {
 	}
 	port, err := strconv.Atoi(raw)
 	if err != nil {
+		//nolint:staticcheck // ST1005: message mirrors src/index.ts.
 		return 0, fmt.Errorf("Invalid %s: %s", name, raw)
 	}
 	return port, nil

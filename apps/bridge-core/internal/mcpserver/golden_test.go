@@ -28,8 +28,8 @@ func TestToolsListMatchesTSFixture(t *testing.T) {
 		t.Fatalf("read fixture: %v", err)
 	}
 	var fixture []goldenTool
-	if err := json.Unmarshal(data, &fixture); err != nil {
-		t.Fatalf("parse fixture: %v", err)
+	if uerr := json.Unmarshal(data, &fixture); uerr != nil {
+		t.Fatalf("parse fixture: %v", uerr)
 	}
 	if len(fixture) != 22 {
 		t.Fatalf("fixture has %d tools, want 22", len(fixture))

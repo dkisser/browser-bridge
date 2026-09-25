@@ -289,8 +289,7 @@ bun run cli
 ```
 Browser-Bridge/
 ├── apps/
-│   ├── bridge-core/    # 控制平面：CLI/MCP/extension 三端口单进程
-│   ├── cli/            # CLI 入口（bridge 协议消费者之一）
+│   ├── bridge-core/    # 控制平面与 CLI（Go）：cmd/bridge-core + cmd/bridge
 │   └── extension/      # Chrome 扩展（Manifest V3，Vite）
 ├── packages/
 │   └── shared/         # 共享常量与工具

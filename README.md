@@ -291,8 +291,7 @@ bun run cli
 ```
 Browser-Bridge/
 ├── apps/
-│   ├── bridge-core/    # Control plane: CLI/MCP/extension in one process
-│   ├── cli/            # CLI entrypoint (one bridge protocol consumer)
+│   ├── bridge-core/    # Control plane + CLI (Go): cmd/bridge-core + cmd/bridge
 │   └── extension/      # Chrome Extension (Manifest V3, Vite)
 ├── packages/
 │   └── shared/         # Shared constants and utilities

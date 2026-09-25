@@ -76,7 +76,7 @@ func startApp(t *testing.T, mutate func(*app.Config)) {
 		if err != nil {
 			return false
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return resp.StatusCode == http.StatusOK
 	})
 	// /api/status only proves the browser server is up; the inbound and MCP
@@ -92,7 +92,7 @@ func tcpUp(port int) bool {
 	if err != nil {
 		return false
 	}
-	conn.Close()
+	_ = conn.Close()
 	return true
 }
 
@@ -184,7 +184,7 @@ func pairAndConnect(t *testing.T) *fakeExtension {
 	if err != nil {
 		t.Fatalf("extension dial: %v", err)
 	}
-	t.Cleanup(func() { conn.Close(websocket.StatusNormalClosure, "") })
+	t.Cleanup(func() { _ = conn.Close(websocket.StatusNormalClosure, "") })
 	fx.conn = conn
 	if got := conn.Subprotocol(); got != fx.token {
 		t.Fatalf("negotiated subprotocol = %q, want the pairing token", got)
@@ -256,8 +256,8 @@ func (fx *fakeExtension) servePageinfo() error {
 		Command string `json:"command"`
 		TabID   int    `json:"tabId"`
 	}
-	if err := json.Unmarshal(cmd.Payload, &payload); err != nil {
-		return fmt.Errorf("command payload %s: %w", cmd.Payload, err)
+	if uerr := json.Unmarshal(cmd.Payload, &payload); uerr != nil {
+		return fmt.Errorf("command payload %s: %w", cmd.Payload, uerr)
 	}
 	if payload.Command != "pageinfo" || payload.TabID != 1 {
 		return fmt.Errorf("command payload = %s, want pageinfo tabId 1", cmd.Payload)
@@ -306,8 +306,8 @@ func (fx *fakeExtension) serveCommand(wantCommand string, wantParams map[string]
 		Command string         `json:"command"`
 		Params  map[string]any `json:"params"`
 	}
-	if err := json.Unmarshal(cmd.Payload, &payload); err != nil {
-		return fmt.Errorf("command payload %s: %w", cmd.Payload, err)
+	if uerr := json.Unmarshal(cmd.Payload, &payload); uerr != nil {
+		return fmt.Errorf("command payload %s: %w", cmd.Payload, uerr)
 	}
 	if payload.Command != wantCommand {
 		return fmt.Errorf("command = %q, want %q", payload.Command, wantCommand)
@@ -377,7 +377,7 @@ func connectCLI(t *testing.T) *fakeCLI {
 	if err != nil {
 		t.Fatalf("cli dial: %v", err)
 	}
-	t.Cleanup(func() { conn.Close(websocket.StatusNormalClosure, "") })
+	t.Cleanup(func() { _ = conn.Close(websocket.StatusNormalClosure, "") })
 	cli := &fakeCLI{t: t, conn: conn}
 
 	greeting := cli.read(t)
@@ -402,6 +402,7 @@ func (cli *fakeCLI) read(t *testing.T) protocol.Envelope {
 	return env
 }
 
+//nolint:unparam // every caller sends pageinfo today; kept for future commands
 func (cli *fakeCLI) sendCommand(t *testing.T, id, browserID, command string, tabID int) {
 	t.Helper()
 	env := protocol.Envelope{
@@ -426,7 +427,7 @@ func (cli *fakeCLI) sendCommand(t *testing.T, id, browserID, command string, tab
 
 func decodeBody(t *testing.T, resp *http.Response, into *apiEnvelope) {
 	t.Helper()
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("read body: %v", err)
@@ -503,7 +504,7 @@ func TestBufferedCommandFlushesOnReconnect(t *testing.T) {
 			return false
 		}
 		var body apiEnvelope
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 			return false
 		}
@@ -550,7 +551,7 @@ func TestBufferedCommandExpiresIntoSWTimeout(t *testing.T) {
 			return false
 		}
 		var body apiEnvelope
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 			return false
 		}
@@ -589,7 +590,7 @@ func TestMCPPageinfo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mcp connect: %v", err)
 	}
-	defer session.Close()
+	defer func() { _ = session.Close() }()
 
 	tools, err := session.ListTools(ctx, nil)
 	if err != nil {
@@ -661,7 +662,7 @@ func TestMCPPageinfoNoBrowser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mcp connect: %v", err)
 	}
-	defer session.Close()
+	defer func() { _ = session.Close() }()
 
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{
 		Name:      "pageinfo",
@@ -698,7 +699,7 @@ func TestPairingHTTPContract(t *testing.T) {
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("web origin status = %d, want 403", resp.StatusCode)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	// Extension origins get reflected CORS headers; preflight answers 204.
 	ext := "chrome-extension://abcdefghijklmnopqrstuvwxyz"
@@ -708,7 +709,7 @@ func TestPairingHTTPContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("preflight status = %d, want 204", resp.StatusCode)
 	}
@@ -721,7 +722,7 @@ func TestPairingHTTPContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
@@ -742,7 +743,7 @@ func TestPairingHTTPContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer confirmResp.Body.Close()
+	defer func() { _ = confirmResp.Body.Close() }()
 	if confirmResp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("confirm status = %d, want 401", confirmResp.StatusCode)
 	}
@@ -849,14 +850,18 @@ func TestMCPSetBrowserThenClick(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mcp connect: %v", err)
 	}
-	defer session.Close()
+	defer func() { _ = session.Close() }()
 
 	// list_browsers shows the paired fake extension.
 	listResult, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "list_browsers", Arguments: map[string]any{}})
 	if err != nil {
 		t.Fatalf("list_browsers: %v", err)
 	}
-	listText := listResult.Content[0].(*mcp.TextContent).Text
+	listContent, ok := listResult.Content[0].(*mcp.TextContent)
+	if !ok {
+		t.Fatalf("list_browsers content[0] = %T, want text", listResult.Content[0])
+	}
+	listText := listContent.Text
 	if want := fmt.Sprintf("- %s (online)", fx.browserID); listText != want {
 		t.Fatalf("list_browsers = %q, want %q", listText, want)
 	}
@@ -869,7 +874,11 @@ func TestMCPSetBrowserThenClick(t *testing.T) {
 	if err != nil {
 		t.Fatalf("set_browser: %v", err)
 	}
-	setText := setResult.Content[0].(*mcp.TextContent).Text
+	setContent, ok := setResult.Content[0].(*mcp.TextContent)
+	if !ok {
+		t.Fatalf("set_browser content[0] = %T, want text", setResult.Content[0])
+	}
+	setText := setContent.Text
 	if want := fmt.Sprintf("Browser set to %q for this session.", fx.browserID); setText != want {
 		t.Fatalf("set_browser = %q, want %q", setText, want)
 	}
@@ -887,7 +896,11 @@ func TestMCPSetBrowserThenClick(t *testing.T) {
 	if clickResult.IsError {
 		t.Fatalf("click returned an error: %+v", clickResult.Content)
 	}
-	if text := clickResult.Content[0].(*mcp.TextContent).Text; text != "Clicked #btn" {
+	clickContent, ok := clickResult.Content[0].(*mcp.TextContent)
+	if !ok {
+		t.Fatalf("click content[0] = %T, want text", clickResult.Content[0])
+	}
+	if text := clickContent.Text; text != "Clicked #btn" {
 		t.Fatalf("click = %q, want %q", text, "Clicked #btn")
 	}
 	select {
