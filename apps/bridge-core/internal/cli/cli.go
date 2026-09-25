@@ -1,16 +1,23 @@
 // Package cli implements the bridge command line — the Go port of the
-// deleted apps/cli (commander.js), per ADR-0012 phase 2b. Command names,
-// flag semantics, output formats, error texts, and the exit-1-on-failure
-// contract follow apps/cli/src/index.ts.
+// deleted apps/cli (commander.js), per ADR-0012 phase 2b, plus the
+// `bridge service` lifecycle tree ported from install/bridge.sh.tmpl
+// (phase 3). Command names, flag semantics, output formats, error texts,
+// and the exit-1-on-failure contract follow their predecessors.
 package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/spf13/cobra"
+
+	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/service"
 )
 
 // Default flag values: the ports come from packages/shared/src/constants.ts
@@ -35,19 +42,22 @@ type globals struct {
 	timeout int
 }
 
-// New builds the bridge command tree.
-func New() *cobra.Command {
+// New builds the bridge command tree. version is the binary version
+// (link-time -X main.version=..., "dev" for local builds) reported by
+// `bridge --version`.
+func New(version string) *cobra.Command {
 	g := &globals{}
 	root := &cobra.Command{
 		Use:   "bridge",
 		Short: "Browser Bridge CLI",
-		// The TS CLI reports 0.0.1 (commander .version(), never bumped).
-		Version:       "0.0.1",
+		// The bash router printed "bridge <version>"; keep that shape.
+		Version:       version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		// The TS CLI has no completion command.
 		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
 	}
+	root.SetVersionTemplate("bridge {{.Version}}\n")
 	root.PersistentFlags().StringVar(&g.server, "server", defaultServer, "WS Server URL")
 	root.PersistentFlags().StringVar(&g.browser, "browser", "", "Target browser instance")
 	root.PersistentFlags().IntVar(&g.tab, "tab", 0, "Target tab id")
@@ -60,6 +70,9 @@ func New() *cobra.Command {
 	root.AddCommand(newWaitNavigationCommand(g))
 	root.AddCommand(newBrowserListCommand(g))
 	root.AddCommand(newPairCommand())
+	root.AddCommand(newServiceCommand(g))
+	root.AddCommand(newAutostartCommand(g))
+	registerMovedVerbs(root, g)
 	// Reserved for future distributed-mode support; the TS stub errors out
 	// the same way.
 	root.AddCommand(&cobra.Command{
@@ -74,13 +87,21 @@ func New() *cobra.Command {
 	return root
 }
 
-// Execute runs the CLI and returns the process exit code.
-func Execute() int {
-	root := New()
-	if err := root.Execute(); err != nil {
-		if !errors.Is(err, ErrReported) {
-			// Flag-parse and unknown-command errors land here; command
-			// failures are already formatted by fail().
+// Execute runs the CLI and returns the process exit code. SIGINT/SIGTERM
+// cancel the command context so `service up --foreground` and `service logs`
+// shut down cleanly (the bash supervisor's trap).
+func Execute(version string) int {
+	root := New(version)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := root.ExecuteContext(ctx); err != nil {
+		switch {
+		case errors.Is(err, ErrReported):
+			// Command failures are already formatted by fail().
+		case errors.Is(err, service.ErrSilent):
+			// status/doctor findings were the output; exit 1 silently.
+		default:
+			// Flag-parse and unknown-command errors land here.
 			fmt.Fprintln(root.ErrOrStderr(), "Error:", err)
 		}
 		return 1

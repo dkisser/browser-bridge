@@ -21,7 +21,7 @@ import (
 // runCLI executes the root command with args and captures both streams.
 func runCLI(t *testing.T, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
-	root := New()
+	root := New("test")
 	var outBuf, errBuf bytes.Buffer
 	root.SetOut(&outBuf)
 	root.SetErr(&errBuf)

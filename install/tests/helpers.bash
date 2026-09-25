@@ -19,59 +19,63 @@ export BB_HOME="$HOME/.browser-bridge"
 # Set BB_EXTENSION_DIR explicitly so tests use the fake HOME tree.
 export BB_EXTENSION_DIR="$HOME/Browser-Bridge"
 
+# Dedicated test ports. NEVER use the production defaults (3001-3003) here:
+# teardown sweeps listeners on these ports, and the developer machine runs a
+# real bridge-core on 3001-3003 that must survive the test suite.
+export BRIDGE_WS_PORT="${BRIDGE_WS_PORT:-3311}"
+export BRIDGE_LOCAL_PORT="${BRIDGE_LOCAL_PORT:-3312}"
+export BRIDGE_MCP_PORT="${BRIDGE_MCP_PORT:-3313}"
+
 # Path to the script under test.
 INSTALL_SH="$BB_TEST_ROOT/install/install.sh"
-BRIDGE_TMPL="$BB_TEST_ROOT/install/bridge.sh.tmpl"
-LAUNCHAGENT_TMPL="$BB_TEST_ROOT/install/launchagent.plist.tmpl"
 
-# Allow direct install.sh tests to find templates without fetching from the network.
-export BRIDGE_TEMPLATE_PATH="$BRIDGE_TMPL"
-export LAUNCHAGENT_TEMPLATE_PATH="$LAUNCHAGENT_TMPL"
-
-# Stub PATH so "bun" can be a controlled fake when needed.
-make_fake_bun() {
-  mkdir -p "$BB_TEST_TMP/bin"
-  cat > "$BB_TEST_TMP/bin/bun" <<'EOF'
-#!/usr/bin/env bash
-# Fake bun for tests. Honors BB_FAKE_BUN_BEHAVIOR env var.
-if [[ "$1" == "run" && "$2" == "build:cli" ]]; then
-  mkdir -p dist
-  printf '#!/usr/bin/env bash\necho "fake-bridge-cmd"\n' > dist/bridge
-  chmod +x dist/bridge
-  exit 0
-fi
-case "${BB_FAKE_BUN_BEHAVIOR:-ok}" in
-  ok)
-    port="${BRIDGE_WS_PORT:-${BRIDGE_LOCAL_PROXY_PORT:-${BRIDGE_LOCAL_PORT:-}}}"
-    if [[ -n "$port" ]]; then
-      # Simulate a real service by binding the expected port.
-      exec python3 -c "import socket, time; s=socket.socket(); s.bind(('', int('$port'))); s.listen(); time.sleep(9999)"
-    fi
-    echo "fake-bun: $*"
-    exit 0
-    ;;
-  fail)      echo "fake-bun: $*"; exit 1 ;;
-  hang)      sleep 999 ;;
-esac
-EOF
-  chmod +x "$BB_TEST_TMP/bin/bun"
-  export PATH="$BB_TEST_TMP/bin:$PATH"
-}
-
-# Create a fake launchctl for cross-platform auto-start tests.
+# Create a fake launchctl that emulates the parts of launchd the tests rely
+# on: it records every call, reports the supervisor as loaded while its
+# pidfile process is alive, `bootstrap` actually starts the plist's
+# ProgramArguments (so the Go binary's macOS code path runs end-to-end), and
+# `bootout` stops the supervisor again.
 make_fake_launchctl() {
   mkdir -p "$BB_TEST_TMP/bin"
   cat > "$BB_TEST_TMP/bin/launchctl" <<EOF
 #!/usr/bin/env bash
-# Fake launchctl for tests. Records calls and exits 0.
 printf '%s\n' "\$*" >> "$BB_TEST_TMP/launchctl_calls.txt"
+BB_HOME="\${BB_HOME:-\$HOME/.browser-bridge}"
+label="com.browser-bridge.bridge"
+case "\$1" in
+  list)
+    spid=\$(cat "\$BB_HOME/run/supervisor.pid" 2>/dev/null || true)
+    if [[ -n "\$spid" ]] && kill -0 "\$spid" 2>/dev/null; then
+      printf -- '-\t0\t%s\n' "\$label"
+    fi
+    exit 0
+    ;;
+  bootstrap)
+    plist="\$3"
+    args=()
+    while IFS= read -r line; do
+      args+=("\$line")
+    done < <(awk '/<key>ProgramArguments<\\/key>/{f=1;next} f&&/<\\/array>/{exit} f {gsub(/.*<string>/,""); gsub(/<\\/string>.*/,""); print}' "\$plist")
+    [[ \${#args[@]} -gt 0 ]] || exit 1
+    mkdir -p "\$BB_HOME/logs"
+    env BB_HOME="\$BB_HOME" nohup "\${args[@]}" >>"\$BB_HOME/logs/launchagent.log" 2>&1 &
+    exit 0
+    ;;
+  bootout)
+    spid=\$(cat "\$BB_HOME/run/supervisor.pid" 2>/dev/null || true)
+    if [[ -n "\$spid" ]]; then
+      kill "\$spid" 2>/dev/null || true
+    fi
+    exit 0
+    ;;
+esac
 exit 0
 EOF
   chmod +x "$BB_TEST_TMP/bin/launchctl"
   export PATH="$BB_TEST_TMP/bin:$PATH"
 }
 
-# Create a fake uname that returns a fixed value.
+# Create a fake uname that returns a fixed value. Only influences install.sh
+# itself — the Go bridge binary uses its compiled-in runtime.GOOS.
 make_fake_uname() {
   local sysname="${1:-Darwin}"
   mkdir -p "$BB_TEST_TMP/bin"
@@ -105,42 +109,13 @@ EOF
   export PATH="$BB_TEST_TMP/bin:$PATH"
 }
 
-# Create fake runtime binaries under $BB_HOME/bin for bridge.bats tests.
-# After the bridge-core merge (ADR-0011) there is one runtime binary:
-# bridge-core. The fake binds all three ports (3001 control plane,
-# 3002 extension, 3003 MCP) on loopback so the supervisor's port_in_use
-# check sees them.
-make_fake_binaries() {
-  mkdir -p "$BB_HOME/bin"
-  cat > "$BB_HOME/bin/bridge-core" <<'EOF'
-#!/usr/bin/env python3
-import os, socket, time, sys, traceback
-try:
-    socks = []
-    for port in (
-        int(os.environ.get("BRIDGE_WS_PORT", "3001")),
-        int(os.environ.get("BRIDGE_LOCAL_PORT") or os.environ.get("BRIDGE_LOCAL_PROXY_PORT") or "3002"),
-        int(os.environ.get("BRIDGE_MCP_PORT", "3003")),
-    ):
-        s = socket.socket()
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        s.bind(("127.0.0.1", port))
-        s.listen()
-        socks.append(s)
-except Exception:
-    traceback.print_exc()
-    sys.exit(1)
-while True:
-    time.sleep(60)
-EOF
-  cat > "$BB_HOME/bin/bridge-cmd" <<'EOF'
-#!/usr/bin/env bash
-echo "fake-bridge-cmd: $*"
-EOF
-  chmod +x "$BB_HOME/bin/bridge-core" "$BB_HOME/bin/bridge-cmd"
-}
-
-# Create a fake runtime tarball for install.bats tests.
+# Create a fake runtime tarball for install.bats tests. Layout matches the
+# goreleaser archives: browser-bridge-<os>-<arch>-<version>/bin/{bridge,bridge-core}.
+# bin/bridge is the REAL Go CLI (built once per test file by setup_file into
+# BB_TEST_BRIDGE_BIN); bin/bridge-core is a fake that binds the three test
+# ports so the service manager's liveness probe succeeds. Also appends the
+# tarball to a goreleaser-style checksum manifest
+# (browser-bridge_<version>_checksums.txt) next to the tarball.
 # Returns the path to the tarball.
 make_fake_runtime_tarball() {
   local version="${1:-v9.9.9}" arch="${2:-arm64}"
@@ -166,14 +141,15 @@ while True:
     time.sleep(60)
 "
 EOF
-  cat > "$stage/bin/bridge-cmd" <<'EOF'
-#!/usr/bin/env bash
-echo "fake-bridge-cmd: $*"
-EOF
-  chmod +x "$stage/bin/"/*
+  if [[ -z "${BB_TEST_BRIDGE_BIN:-}" || ! -x "$BB_TEST_BRIDGE_BIN" ]]; then
+    echo "BB_TEST_BRIDGE_BIN not built (setup_file must go build ./cmd/bridge)" >&2
+    return 1
+  fi
+  cp "$BB_TEST_BRIDGE_BIN" "$stage/bin/bridge"
+  chmod +x "$stage/bin/"*
 
   ( cd "$BB_TEST_TMP" && tar czf "${name}.tar.gz" "$name" )
-  ( cd "$BB_TEST_TMP" && shasum -a 256 "${name}.tar.gz" > "${name}.tar.gz.sha256" )
+  ( cd "$BB_TEST_TMP" && shasum -a 256 "${name}.tar.gz" >> "browser-bridge_${version#v}_checksums.txt" )
 
   echo "$BB_TEST_TMP/${name}.tar.gz"
 }
@@ -198,14 +174,34 @@ stop_mock_http() {
   [[ -n "${MOCK_HTTP_PID:-}" ]] && kill "$MOCK_HTTP_PID" 2>/dev/null || true
 }
 
+# Wait up to ~5s for a file to appear (services start asynchronously when the
+# fake launchctl emulates launchd).
+wait_for_file() {
+  local path="$1" waited=0
+  while [[ $waited -lt 50 ]]; do
+    [[ -e "$path" ]] && return 0
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  return 1
+}
+
 # Default teardown. Test files that need their own teardown should call
 # `helpers_teardown` from within their override rather than redefining this.
 helpers_teardown() {
   stop_mock_http
   # Kill anything still running from the test.
   pkill -P $$ 2>/dev/null || true
-  # Also clean up any listeners the orchestrator may have left on default ports.
-  for port in 3001 3002 3003; do
+  # Stop test services recorded in pidfiles under the scratch dir (the
+  # supervisor stops its bridge-core child on TERM).
+  local pidfile pid
+  while IFS= read -r pidfile; do
+    pid=$(cat "$pidfile" 2>/dev/null || true)
+    [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
+  done < <(find "$BB_TEST_TMP" -path '*/run/*.pid' -type f 2>/dev/null)
+  # Sweep ONLY the dedicated test ports — never the production 3001-3003,
+  # which a developer's real bridge-core is listening on.
+  for port in "$BRIDGE_WS_PORT" "$BRIDGE_LOCAL_PORT" "$BRIDGE_MCP_PORT"; do
     for pid in $(lsof -t -i ":$port" 2>/dev/null); do
       kill "$pid" 2>/dev/null || true
     done
