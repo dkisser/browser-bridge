@@ -10,7 +10,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/protocol"
+	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/core"
 )
 
 // readEvent reads one envelope and checks it is the list_browsers event
@@ -22,11 +22,11 @@ func readEvent(conn *websocket.Conn) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("read: %w", err)
 	}
-	env, err := protocol.Decode(string(data))
+	env, err := core.Decode(string(data))
 	if err != nil {
 		return "", fmt.Errorf("decode %q: %w", data, err)
 	}
-	if env.Type != protocol.TypeEvent {
+	if env.Type != core.TypeEvent {
 		return "", fmt.Errorf("type = %s, want event", env.Type)
 	}
 	if env.BrowserID != "" {

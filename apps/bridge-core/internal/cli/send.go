@@ -10,8 +10,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/protocol"
-	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/wsclient"
+	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/core"
+	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/ws"
 )
 
 // sendCommand is apps/cli/src/commands/sendCommand.ts: dial, send one
@@ -28,7 +28,7 @@ func sendCommand(ctx context.Context, g *globals, command string, params map[str
 	// TS: waitForOpen(5000) bounds the connect.
 	dialCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	client, err := wsclient.Dial(dialCtx, g.server)
+	client, err := ws.Dial(dialCtx, g.server)
 	if err != nil {
 		// TS discards the underlying error; the message tells the user how
 		// to fix it.
@@ -37,7 +37,7 @@ func sendCommand(ctx context.Context, g *globals, command string, params map[str
 	}
 	defer client.Close()
 
-	env, err := client.SendCommand(ctx, g.browser, protocol.CommandPayload{
+	env, err := client.SendCommand(ctx, g.browser, core.CommandPayload{
 		Command: command,
 		TabID:   g.tab,
 		Params:  params,
@@ -46,7 +46,7 @@ func sendCommand(ctx context.Context, g *globals, command string, params map[str
 		return nil, err
 	}
 
-	var payload protocol.ResponsePayload
+	var payload core.ResponsePayload
 	if err := json.Unmarshal(env.Payload, &payload); err != nil {
 		return nil, fmt.Errorf("decode response payload %s: %w", env.Payload, err)
 	}
@@ -60,7 +60,7 @@ func sendCommand(ctx context.Context, g *globals, command string, params map[str
 }
 
 // responseError is the TS `payload.message ?? payload.error ?? fallback`.
-func responseError(payload protocol.ResponsePayload, fallback string) string {
+func responseError(payload core.ResponsePayload, fallback string) string {
 	if payload.Message != "" {
 		return payload.Message
 	}

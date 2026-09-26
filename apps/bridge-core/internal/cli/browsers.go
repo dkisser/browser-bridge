@@ -9,8 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/protocol"
-	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/wsclient"
+	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/core"
+	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/ws"
 )
 
 // newBrowserListCommand is the browser:list registration in the TS CLI.
@@ -47,21 +47,21 @@ func newBrowserListCommand(g *globals) *cobra.Command {
 // listBrowsers is apps/cli/src/commands/listBrowsers.ts: a list_browsers
 // event envelope answered with the registry list. It returns the parsed
 // list alongside the raw data so --json output stays byte-faithful.
-func listBrowsers(ctx context.Context, server string) ([]protocol.BrowserConnection, json.RawMessage, error) {
+func listBrowsers(ctx context.Context, server string) ([]core.BrowserConnection, json.RawMessage, error) {
 	dialCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	client, err := wsclient.Dial(dialCtx, server)
+	client, err := ws.Dial(dialCtx, server)
 	if err != nil {
 		//nolint:staticcheck // ST1005: user-facing text mirrors the TS CLI.
 		return nil, nil, fmt.Errorf("Could not connect to the bridge server at %s. Is the service running? Start it with: bridge service up", server)
 	}
 	defer client.Close()
 
-	env, err := client.Request(ctx, protocol.TypeEvent, map[string]any{"event": "list_browsers"}, "", 10*time.Second)
+	env, err := client.Request(ctx, core.TypeEvent, map[string]any{"event": "list_browsers"}, "", 10*time.Second)
 	if err != nil {
 		return nil, nil, err
 	}
-	var payload protocol.ResponsePayload
+	var payload core.ResponsePayload
 	if err := json.Unmarshal(env.Payload, &payload); err != nil {
 		return nil, nil, fmt.Errorf("decode response payload %s: %w", env.Payload, err)
 	}
@@ -73,7 +73,7 @@ func listBrowsers(ctx context.Context, server string) ([]protocol.BrowserConnect
 	if len(raw) == 0 || string(raw) == "null" {
 		raw = json.RawMessage("[]")
 	}
-	browsers := []protocol.BrowserConnection{}
+	browsers := []core.BrowserConnection{}
 	if err := json.Unmarshal(raw, &browsers); err != nil {
 		return nil, nil, fmt.Errorf("decode browser list %s: %w", raw, err)
 	}

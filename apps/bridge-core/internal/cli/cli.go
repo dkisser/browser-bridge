@@ -16,8 +16,6 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
-
-	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/service"
 )
 
 // Default flag values: the ports come from packages/shared/src/constants.ts
@@ -98,7 +96,7 @@ func Execute(version string) int {
 		switch {
 		case errors.Is(err, ErrReported):
 			// Command failures are already formatted by fail().
-		case errors.Is(err, service.ErrSilent):
+		case errors.Is(err, ErrSilent):
 			// status/doctor findings were the output; exit 1 silently.
 		default:
 			// Flag-parse and unknown-command errors land here.

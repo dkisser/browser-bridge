@@ -20,7 +20,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/app"
-	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/protocol"
+	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/core"
 )
 
 const (
@@ -81,7 +81,7 @@ func startApp(t *testing.T, mutate func(*app.Config)) {
 	})
 	// /api/status only proves the browser server is up; the inbound and MCP
 	// listeners start later in app.Run. A TCP dial is enough to prove LISTEN
-	// without disturbing either protocol.
+	// without disturbing either core.
 	waitFor(t, "inbound WS listener", func() bool { return tcpUp(inboundPort) })
 	waitFor(t, "MCP HTTP listener", func() bool { return tcpUp(mcpPort) })
 }
@@ -115,7 +115,7 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 
 // fakeExtension is a protocol-exact stand-in for the Chrome extension: it
 // runs the real pairing handshake over HTTP, then connects to the browser
-// port with the token as its WebSocket subprotocol.
+// port with the token as its WebSocket subcore.
 type fakeExtension struct {
 	t         *testing.T
 	browserID string
@@ -175,7 +175,7 @@ func pairAndConnect(t *testing.T) *fakeExtension {
 	mustUnmarshal(t, statusBody.Data, &statusData)
 	fx.browserID = statusData.BrowserID
 
-	// 3. Connect with the token as the subprotocol.
+	// 3. Connect with the token as the subcore.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	conn, _, err := websocket.Dial(ctx, browserWSURL(), &websocket.DialOptions{
@@ -192,14 +192,14 @@ func pairAndConnect(t *testing.T) *fakeExtension {
 
 	// 4. The server greets with a connected event.
 	greeting := fx.read(t)
-	if greeting.Type != protocol.TypeEvent || string(greeting.Payload) != `{"event":"connected"}` {
+	if greeting.Type != core.TypeEvent || string(greeting.Payload) != `{"event":"connected"}` {
 		t.Fatalf("greeting = %s %s, want the connected event", greeting.Type, greeting.Payload)
 	}
 
 	// 5. Register, like the extension's offscreen document does.
-	fx.send(protocol.Envelope{
-		ID:        protocol.NewID(),
-		Type:      protocol.TypeEvent,
+	fx.send(core.Envelope{
+		ID:        core.NewID(),
+		Type:      core.TypeEvent,
 		BrowserID: fx.browserID,
 		Payload:   json.RawMessage(fmt.Sprintf(`{"event":"register","browserId":%q}`, fx.browserID)),
 		Timestamp: time.Now().UnixMilli(),
@@ -207,7 +207,7 @@ func pairAndConnect(t *testing.T) *fakeExtension {
 	return fx
 }
 
-func (fx *fakeExtension) send(envelope protocol.Envelope) {
+func (fx *fakeExtension) send(envelope core.Envelope) {
 	fx.t.Helper()
 	data, err := json.Marshal(envelope)
 	if err != nil {
@@ -220,7 +220,7 @@ func (fx *fakeExtension) send(envelope protocol.Envelope) {
 	}
 }
 
-func (fx *fakeExtension) read(t *testing.T) protocol.Envelope {
+func (fx *fakeExtension) read(t *testing.T) core.Envelope {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -228,7 +228,7 @@ func (fx *fakeExtension) read(t *testing.T) protocol.Envelope {
 	if err != nil {
 		t.Fatalf("extension read: %v", err)
 	}
-	env, err := protocol.Decode(string(data))
+	env, err := core.Decode(string(data))
 	if err != nil {
 		t.Fatalf("extension decode %q: %v", data, err)
 	}
@@ -245,11 +245,11 @@ func (fx *fakeExtension) servePageinfo() error {
 	if err != nil {
 		return fmt.Errorf("extension read: %w", err)
 	}
-	cmd, err := protocol.Decode(string(data))
+	cmd, err := core.Decode(string(data))
 	if err != nil {
 		return fmt.Errorf("extension decode %q: %w", data, err)
 	}
-	if cmd.Type != protocol.TypeCommand {
+	if cmd.Type != core.TypeCommand {
 		return fmt.Errorf("extension got %s, want command", cmd.Type)
 	}
 	var payload struct {
@@ -262,9 +262,9 @@ func (fx *fakeExtension) servePageinfo() error {
 	if payload.Command != "pageinfo" || payload.TabID != 1 {
 		return fmt.Errorf("command payload = %s, want pageinfo tabId 1", cmd.Payload)
 	}
-	resp, err := json.Marshal(protocol.Envelope{
+	resp, err := json.Marshal(core.Envelope{
 		ID:        cmd.ID,
-		Type:      protocol.TypeResponse,
+		Type:      core.TypeResponse,
 		BrowserID: fx.browserID,
 		Payload:   json.RawMessage(`{"status":"ok","data":{"id":1,"url":"https://example.com/","title":"Example Domain","active":true}}`),
 		Timestamp: time.Now().UnixMilli(),
@@ -295,11 +295,11 @@ func (fx *fakeExtension) serveCommand(wantCommand string, wantParams map[string]
 	if err != nil {
 		return fmt.Errorf("extension read: %w", err)
 	}
-	cmd, err := protocol.Decode(string(data))
+	cmd, err := core.Decode(string(data))
 	if err != nil {
 		return fmt.Errorf("extension decode %q: %w", data, err)
 	}
-	if cmd.Type != protocol.TypeCommand {
+	if cmd.Type != core.TypeCommand {
 		return fmt.Errorf("extension got %s, want command", cmd.Type)
 	}
 	var payload struct {
@@ -317,9 +317,9 @@ func (fx *fakeExtension) serveCommand(wantCommand string, wantParams map[string]
 			return fmt.Errorf("params[%q] = %v, want %v (params %s)", key, got, want, cmd.Payload)
 		}
 	}
-	resp, err := json.Marshal(protocol.Envelope{
+	resp, err := json.Marshal(core.Envelope{
 		ID:        cmd.ID,
-		Type:      protocol.TypeResponse,
+		Type:      core.TypeResponse,
 		BrowserID: fx.browserID,
 		Payload:   json.RawMessage(respondPayload),
 		Timestamp: time.Now().UnixMilli(),
@@ -381,13 +381,13 @@ func connectCLI(t *testing.T) *fakeCLI {
 	cli := &fakeCLI{t: t, conn: conn}
 
 	greeting := cli.read(t)
-	if greeting.Type != protocol.TypeEvent || string(greeting.Payload) != `{"event":"welcome"}` {
+	if greeting.Type != core.TypeEvent || string(greeting.Payload) != `{"event":"welcome"}` {
 		t.Fatalf("greeting = %s %s, want the welcome event", greeting.Type, greeting.Payload)
 	}
 	return cli
 }
 
-func (cli *fakeCLI) read(t *testing.T) protocol.Envelope {
+func (cli *fakeCLI) read(t *testing.T) core.Envelope {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -395,7 +395,7 @@ func (cli *fakeCLI) read(t *testing.T) protocol.Envelope {
 	if err != nil {
 		t.Fatalf("cli read: %v", err)
 	}
-	env, err := protocol.Decode(string(data))
+	env, err := core.Decode(string(data))
 	if err != nil {
 		t.Fatalf("cli decode %q: %v", data, err)
 	}
@@ -405,9 +405,9 @@ func (cli *fakeCLI) read(t *testing.T) protocol.Envelope {
 //nolint:unparam // every caller sends pageinfo today; kept for future commands
 func (cli *fakeCLI) sendCommand(t *testing.T, id, browserID, command string, tabID int) {
 	t.Helper()
-	env := protocol.Envelope{
+	env := core.Envelope{
 		ID:        id,
-		Type:      protocol.TypeCommand,
+		Type:      core.TypeCommand,
 		BrowserID: browserID,
 		Payload:   json.RawMessage(fmt.Sprintf(`{"command":%q,"tabId":%d,"params":{"tabId":%d}}`, command, tabID, tabID)),
 		Timestamp: time.Now().UnixMilli(),
@@ -449,7 +449,7 @@ func mustUnmarshal(t *testing.T, raw json.RawMessage, into any) {
 
 func assertPageinfoPayload(t *testing.T, raw json.RawMessage) {
 	t.Helper()
-	var payload protocol.ResponsePayload
+	var payload core.ResponsePayload
 	mustUnmarshal(t, raw, &payload)
 	if payload.Status != "ok" {
 		t.Fatalf("payload status = %q (%s)", payload.Status, raw)
@@ -481,7 +481,7 @@ func TestCommandRoundTrip(t *testing.T) {
 	if resp.ID != "cmd-1" {
 		t.Fatalf("response id = %q, want cmd-1", resp.ID)
 	}
-	if resp.Type != protocol.TypeResponse {
+	if resp.Type != core.TypeResponse {
 		t.Fatalf("response type = %q", resp.Type)
 	}
 	assertPageinfoPayload(t, resp.Payload)
@@ -570,7 +570,7 @@ func TestBufferedCommandExpiresIntoSWTimeout(t *testing.T) {
 	if resp.ID != "cmd-expire" {
 		t.Fatalf("response id = %q, want cmd-expire", resp.ID)
 	}
-	var payload protocol.ResponsePayload
+	var payload core.ResponsePayload
 	mustUnmarshal(t, resp.Payload, &payload)
 	if payload.Status != "error" || payload.Error != "sw_timeout" || payload.Message != "Service worker did not wake up" {
 		t.Fatalf("payload = %s, want sw_timeout", resp.Payload)
@@ -784,7 +784,7 @@ func TestInboundContract(t *testing.T) {
 	// Unknown browser → browser_offline.
 	cli.sendCommand(t, "cmd-unknown", "b-nonexistent", "pageinfo", 1)
 	resp := cli.read(t)
-	var payload protocol.ResponsePayload
+	var payload core.ResponsePayload
 	mustUnmarshal(t, resp.Payload, &payload)
 	if payload.Error != "browser_offline" || payload.Message != "Browser b-nonexistent is offline" {
 		t.Fatalf("payload = %s", resp.Payload)
@@ -806,9 +806,9 @@ func TestInboundContract(t *testing.T) {
 	}
 
 	// list_browsers event → empty registry list (no extension connected).
-	data, err := json.Marshal(protocol.Envelope{
+	data, err := json.Marshal(core.Envelope{
 		ID:        "evt-1",
-		Type:      protocol.TypeEvent,
+		Type:      core.TypeEvent,
 		BrowserID: "",
 		Payload:   json.RawMessage(`{"event":"list_browsers"}`),
 		Timestamp: time.Now().UnixMilli(),

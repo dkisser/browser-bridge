@@ -1,253 +1,241 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
-
-	"github.com/spf13/cobra"
-
-	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/service"
+	"net"
+	"os"
+	"os/exec"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
 )
 
-// serviceHelpText is the bash print_service_help() output, kept verbatim.
-const serviceHelpText = `Usage: bridge service <command> [args]
-
-Commands:
-  up [--foreground]   Start bridge-core (launchd-supervised on macOS)
-  down                Stop bridge-core
-  restart             Restart bridge-core
-  status              Service state + login auto-start state
-  logs                Tail logs (bridge-core)
-  enable              Start bridge-core at login (macOS LaunchAgent)
-  disable             Do not start bridge-core at login
-  update [version]    Upgrade to a release (default: latest)
-  doctor              Diagnose the install
-  version             Print installed + latest version
-  uninstall           Remove ~/.browser-bridge/ (use --yes to skip prompt)
-`
-
-// newServiceCommand builds the `bridge service` tree: the Go port of
-// install/bridge.sh.tmpl's cmd_service.
-func newServiceCommand(g *globals) *cobra.Command {
-	svc := &cobra.Command{
-		Use:   "service",
-		Short: "Manage bridge services (up, down, status, enable, ...)",
-		// Runnable with arbitrary args so an unknown subcommand reaches RunE
-		// and produces the bash BB-E306 instead of cobra's suggestion text.
-		Args: cobra.ArbitraryArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 0 {
-				fmt.Fprint(cmd.OutOrStdout(), serviceHelpText)
-				return nil
-			}
-			return fail(cmd, g, "BB-E306", fmt.Sprintf("BB-E306: unknown service command '%s'. Run 'bridge service' for the list.", args[0]))
-		},
-	}
-
-	var foreground bool
-	up := &cobra.Command{
-		Use:   "up",
-		Short: "Start bridge-core (launchd-supervised on macOS)",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runService(cmd, g, func(e *service.Env, r service.Runner) error {
-				return service.Up(cmd.Context(), e, r, foreground, cmd.OutOrStdout())
-			})
-		},
-	}
-	up.Flags().BoolVar(&foreground, "foreground", false, "Run the supervisor in the foreground (used by the LaunchAgent)")
-	svc.AddCommand(up)
-
-	svc.AddCommand(&cobra.Command{
-		Use:   "down",
-		Short: "Stop bridge-core",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runService(cmd, g, func(e *service.Env, r service.Runner) error {
-				return service.Down(cmd.Context(), e, r, cmd.OutOrStdout())
-			})
-		},
-	})
-
-	svc.AddCommand(&cobra.Command{
-		Use:   "restart",
-		Short: "Restart bridge-core",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runService(cmd, g, func(e *service.Env, r service.Runner) error {
-				return service.Restart(cmd.Context(), e, r, cmd.OutOrStdout())
-			})
-		},
-	})
-
-	svc.AddCommand(&cobra.Command{
-		Use:   "status",
-		Short: "Service state + login auto-start state",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runService(cmd, g, func(e *service.Env, r service.Runner) error {
-				running, err := service.Status(cmd.Context(), e, r, cmd.OutOrStdout())
-				if err != nil {
-					return err
-				}
-				if !running {
-					return service.ErrSilent
-				}
-				return nil
-			})
-		},
-	})
-
-	svc.AddCommand(&cobra.Command{
-		Use:   "logs",
-		Short: "Tail logs (bridge-core)",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runService(cmd, g, func(e *service.Env, r service.Runner) error {
-				return service.Logs(cmd.Context(), e, cmd.OutOrStdout())
-			})
-		},
-	})
-
-	svc.AddCommand(&cobra.Command{
-		Use:   "enable",
-		Short: "Start bridge-core at login (macOS LaunchAgent)",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runService(cmd, g, func(e *service.Env, r service.Runner) error {
-				return service.Enable(cmd.Context(), e, r, cmd.OutOrStdout())
-			})
-		},
-	})
-
-	svc.AddCommand(&cobra.Command{
-		Use:   "disable",
-		Short: "Do not start bridge-core at login",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runService(cmd, g, func(e *service.Env, r service.Runner) error {
-				return service.Disable(cmd.Context(), e, r, cmd.OutOrStdout())
-			})
-		},
-	})
-
-	svc.AddCommand(&cobra.Command{
-		Use:   "update [version]",
-		Short: "Upgrade to a release (default: latest)",
-		Args:  cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runService(cmd, g, func(e *service.Env, r service.Runner) error {
-				target := "latest"
-				if len(args) == 1 {
-					target = args[0]
-				}
-				url := service.UpdateScriptURL(e.UpdateOrg, e.UpdateRepo, target)
-				return service.Update(cmd.Context(), e, r, target, url, cmd.OutOrStdout())
-			})
-		},
-	})
-
-	svc.AddCommand(&cobra.Command{
-		Use:   "doctor",
-		Short: "Diagnose the install",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runService(cmd, g, func(e *service.Env, r service.Runner) error {
-				ok, err := service.Doctor(cmd.Context(), e, r, cmd.OutOrStdout())
-				if err != nil {
-					return err
-				}
-				if !ok {
-					return service.ErrSilent
-				}
-				return nil
-			})
-		},
-	})
-
-	svc.AddCommand(&cobra.Command{
-		Use:   "version",
-		Short: "Print installed + latest version",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runService(cmd, g, func(e *service.Env, r service.Runner) error {
-				return service.Version(e, cmd.OutOrStdout())
-			})
-		},
-	})
-
-	var uninstallYes bool
-	uninstall := &cobra.Command{
-		Use:   "uninstall",
-		Short: "Remove ~/.browser-bridge/ (use --yes to skip prompt)",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runService(cmd, g, func(e *service.Env, r service.Runner) error {
-				return service.Uninstall(cmd.Context(), e, r, uninstallYes, cmd.InOrStdin(), cmd.OutOrStdout())
-			})
-		},
-	}
-	uninstall.Flags().BoolVar(&uninstallYes, "yes", false, "Skip the confirmation prompt")
-	svc.AddCommand(uninstall)
-
-	return svc
+// CodedError carries the BB-E### codes the bash implementation used, so the
+// user-facing text stays greppable across the rewrite.
+type CodedError struct {
+	Code string
+	Msg  string
 }
 
-// newAutostartCommand is the deprecated `bridge autostart on|off|status`
-// alias, kept for one release like the bash version.
-func newAutostartCommand(g *globals) *cobra.Command {
-	return &cobra.Command{
-		Use:   "autostart [on|off|status]",
-		Short: "Deprecated alias for bridge service enable|disable|status",
-		Args:  cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runService(cmd, g, func(e *service.Env, r service.Runner) error {
-				action := "status"
-				if len(args) == 1 {
-					action = args[0]
-				}
-				return service.Autostart(cmd.Context(), e, r, action, cmd.OutOrStdout(), cmd.ErrOrStderr())
-			})
-		},
-	}
+func (e *CodedError) Error() string { return e.Code + ": " + e.Msg }
+
+// errf formats "BB-E000: ..." errors (bash's `die "BB-E000: ..."`).
+func errf(code, format string, args ...any) *CodedError {
+	return &CodedError{Code: code, Msg: fmt.Sprintf(format, args...)}
 }
 
-// movedVerbs are the pre-service-namespace top-level lifecycle commands.
-// The bash router rejected them with BB-E305; the Go CLI does the same.
-var movedVerbs = []string{"up", "down", "restart", "status", "logs", "update", "doctor", "uninstall", "version"}
-
-// registerMovedVerbs adds the BB-E305 stubs for top-level lifecycle verbs.
-func registerMovedVerbs(root *cobra.Command, g *globals) {
-	for _, verb := range movedVerbs {
-		root.AddCommand(&cobra.Command{
-			Use:   verb,
-			Short: fmt.Sprintf("(moved to 'bridge service %s')", verb),
-			Args:  cobra.ArbitraryArgs,
-			RunE: func(cmd *cobra.Command, _ []string) error {
-				return fail(cmd, g, "BB-E305", fmt.Sprintf("BB-E305: '%s' has moved: lifecycle commands live under 'bridge service' — try 'bridge service %s'.", verb, verb))
-			},
-		})
-	}
+// IsCode reports whether err is a CodedError with the given code.
+func IsCode(err error, code string) bool {
+	var ce *CodedError
+	return errors.As(err, &ce) && ce.Code == code
 }
 
-// runService resolves the environment and runner, runs fn, and maps the
-// error onto the TS-style failure output: --json gets the BB-E### code as
-// the error kind, human mode gets "Error: BB-E###: ..." on stderr.
-func runService(cmd *cobra.Command, g *globals, fn func(e *service.Env, r service.Runner) error) error {
-	e, err := service.EnvFromOSEnv()
+// portInUse mirrors port_in_use: a TCP connect with a 1s timeout. The bash
+// probes always targeted 127.0.0.1 (not the per-service hostname).
+func portInUse(port int) bool {
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), time.Second)
 	if err != nil {
-		return fail(cmd, g, "service_error", err.Error())
+		return false
 	}
-	if err := fn(e, service.ExecRunner{}); err != nil {
-		if errors.Is(err, service.ErrSilent) {
-			return service.ErrSilent
+	_ = conn.Close()
+	return true
+}
+
+// servicePortInUse checks all three bridge-core ports (it binds all three
+// and exits if any single bind fails). Returns the held port, 0 when free.
+func (e *Env) servicePortInUse() int {
+	for _, p := range []int{e.WSPort, e.LocalPort, e.MCPPort} {
+		if portInUse(p) {
+			return p
 		}
-		kind := "service_error"
-		var ce *service.CodedError
-		if errors.As(err, &ce) {
-			kind = ce.Code
-		}
-		return fail(cmd, g, kind, err.Error())
 	}
+	return 0
+}
+
+// readPid reads a pidfile; ok=false when absent or unparseable.
+func readPid(path string) (int, bool) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return 0, false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil || pid <= 0 {
+		return 0, false
+	}
+	return pid, true
+}
+
+// pidAlive mirrors pid_alive: ps state empty → kill -0 fallback; a zombie
+// counts as dead (our own children are reaped via cmd.Wait).
+func pidAlive(ctx context.Context, r Runner, pid int) bool {
+	state, _, err := r.PS(ctx, pid)
+	if err != nil {
+		return r.Kill(pid, 0) == nil
+	}
+	return !strings.HasPrefix(state, "Z")
+}
+
+// pidIs reports whether pid's command line contains want (bash pid_is
+// matched comm+args as one string; PS's command column covers both).
+func pidIs(ctx context.Context, r Runner, pid int, want string) bool {
+	_, command, err := r.PS(ctx, pid)
+	return err == nil && command != "" && strings.Contains(command, want)
+}
+
+// serviceState returns the live bridge-core pid, 0 when stopped.
+func (e *Env) serviceState(ctx context.Context, r Runner) int {
+	pid, ok := readPid(e.PidFile())
+	if !ok || !pidAlive(ctx, r, pid) {
+		return 0
+	}
+	return pid
+}
+
+// classify is classify_service: "ours <pid>" (pidfile live and really
+// bridge-core), "free", or "foreign <port>" (held without a trustworthy
+// pidfile). A stale/unverifiable pidfile is removed.
+func (e *Env) classify(ctx context.Context, r Runner) (state string, num int) {
+	pidFile := e.PidFile()
+	pid, ok := readPid(pidFile)
+	if ok && pidAlive(ctx, r, pid) {
+		if pidIs(ctx, r, pid, serviceName) {
+			return "ours", pid
+		}
+		if held := e.servicePortInUse(); held != 0 {
+			return "foreign", held
+		}
+	}
+	_ = os.Remove(pidFile)
+	if held := e.servicePortInUse(); held != 0 {
+		return "foreign", held
+	}
+	return "free", 0
+}
+
+// startService is the unsupervised (Linux / fallback) start_service.
+func (e *Env) startService(ctx context.Context, r Runner, logf func(string, ...any)) error {
+	if pid := e.serviceState(ctx, r); pid != 0 {
+		logf("%s already running (pid %d)", serviceName, pid)
+		return nil
+	}
+	if held := e.servicePortInUse(); held != 0 {
+		return errf("BB-E010", "%s port %d is already in use", serviceName, held)
+	}
+	child, err := e.spawnCore()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = child.logFile.Close() }()
+
+	if err := e.waitForBind(ctx, child); err != nil {
+		_ = r.Kill(child.pid, syscall.SIGTERM)
+		_ = os.Remove(e.PidFile())
+		return errf("BB-E011", "%s failed to bind port %d within 5s (see %s)", serviceName, e.WSPort, e.LogFile())
+	}
+	return nil
+}
+
+// spawnedCore is a freshly started bridge-core child.
+type spawnedCore struct {
+	cmd     *exec.Cmd
+	pid     int
+	logFile *os.File
+	wait    chan error // receives cmd.Wait() exactly once
+}
+
+// spawnCore starts bridge-core in the background with its log and pidfile,
+// shared by start_service and supervisor_spawn.
+func (e *Env) spawnCore() (*spawnedCore, error) {
+	if err := os.MkdirAll(e.LogDir(), 0o755); err != nil {
+		return nil, errf("BB-E011", "create log dir: %v", err)
+	}
+	if err := os.MkdirAll(e.RunDir(), 0o755); err != nil {
+		return nil, errf("BB-E011", "create run dir: %v", err)
+	}
+	logFile, err := os.OpenFile(e.LogFile(), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return nil, errf("BB-E011", "open log file: %v", err)
+	}
+	cmd := exec.Command(e.CoreBin()) //nolint:gosec // path is $BB_HOME/bin/bridge-core, same as bash
+	cmd.Env = e.childEnv()
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	if err := cmd.Start(); err != nil {
+		_ = logFile.Close()
+		return nil, errf("BB-E011", "start %s: %v", e.CoreBin(), err)
+	}
+	child := &spawnedCore{cmd: cmd, pid: cmd.Process.Pid, logFile: logFile, wait: make(chan error, 1)}
+	go func() { child.wait <- cmd.Wait() }()
+	if err := os.WriteFile(e.PidFile(), []byte(strconv.Itoa(child.pid)+"\n"), 0o644); err != nil {
+		_ = cmd.Process.Kill()
+		_ = logFile.Close()
+		return nil, errf("BB-E011", "write pid file: %v", err)
+	}
+	return child, nil
+}
+
+// errChildExitedBeforeBind marks the waitForBind outcome "the child died
+// before binding" so the supervisor can pick the bash BB-E011 wording.
+var errChildExitedBeforeBind = errors.New("child exited before binding")
+
+// waitForBind polls the control-plane port until bridge-core has bound it
+// (the liveness proxy from the bash script: 3002 binds first, so 3001
+// answering means the child got that far). A child that dies first is
+// reported as errChildExitedBeforeBind — start_service polls the full 5s in
+// bash, but failing fast changes only the wait, not the message.
+func (e *Env) waitForBind(ctx context.Context, child *spawnedCore) error {
+	for range e.bindWaitAttempts {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case err := <-child.wait:
+			return fmt.Errorf("%w: %v", errChildExitedBeforeBind, err)
+		default:
+		}
+		if portInUse(e.WSPort) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(e.pollInterval):
+		}
+	}
+	return fmt.Errorf("timeout waiting for port %d", e.WSPort)
+}
+
+// stopService is the bash stop_service: TERM, short grace, then KILL.
+func (e *Env) stopService(ctx context.Context, r Runner, logf func(string, ...any)) error {
+	pidFile := e.PidFile()
+	pid, ok := readPid(pidFile)
+	if !ok {
+		logf("%s already stopped", serviceName)
+		return nil
+	}
+	if !pidAlive(ctx, r, pid) {
+		logf("%s: pid %d not running, cleaning up", serviceName, pid)
+		_ = os.Remove(pidFile)
+		return nil
+	}
+	_ = r.Kill(pid, syscall.SIGTERM)
+	for range e.termWaitAttempts {
+		if !pidAlive(ctx, r, pid) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(e.pollInterval):
+		}
+	}
+	if pidAlive(ctx, r, pid) {
+		_ = r.Kill(pid, syscall.SIGKILL)
+		logf("%s: sent SIGKILL after timeout", serviceName)
+	}
+	_ = os.Remove(pidFile)
+	logf("%s stopped", serviceName)
 	return nil
 }

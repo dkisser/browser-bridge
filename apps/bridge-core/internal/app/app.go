@@ -8,13 +8,9 @@ import (
 	"log"
 	"time"
 
-	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/browserserver"
-	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/inbound"
-	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/mcpserver"
-	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/pairing"
-	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/registry"
-	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/router"
-	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/state"
+	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/core"
+	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/http"
+	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/ws"
 )
 
 // Default ports: WEBSOCKET_PORT / LOCAL_WS_PORT in packages/shared/src/
@@ -78,34 +74,34 @@ func Run(ctx context.Context, cfg Config) error {
 	cfg.setDefaults()
 	logger := cfg.Logger
 
-	stateOpts := []state.Option{}
+	stateOpts := []core.StateOption{}
 	if cfg.BufferTimeout != 0 {
-		stateOpts = append(stateOpts, state.WithBufferTimeout(cfg.BufferTimeout))
+		stateOpts = append(stateOpts, core.WithBufferTimeout(cfg.BufferTimeout))
 	}
-	st, err := state.NewManager(stateOpts...)
+	st, err := core.NewStateManager(stateOpts...)
 	if err != nil {
 		return err
 	}
 	logger.Printf("Browser ID: %s", st.BrowserID())
 
-	reg := registry.New()
+	reg := core.NewRegistry()
 
-	pm := pairing.NewManager(st.ExtensionTokenHash, st.SetExtensionTokenHash)
+	pm := core.NewPairingManager(st.ExtensionTokenHash, st.SetExtensionTokenHash)
 
 	// BrowserServer needs a Router reference; the getter resolves it after
 	// the Router is constructed (index.ts uses the same closure trick).
-	var rt *router.Router
-	browser := browserserver.New(browserserver.Options{
+	var rt *core.Router
+	browser := ws.NewBrowser(ws.BrowserOptions{
 		Port:      cfg.BrowserPort,
 		Hostname:  cfg.BrowserHostname,
-		GetRouter: func() browserserver.Router { return rt },
+		GetRouter: func() ws.BrowserRouter { return rt },
 		Pairing:   pm,
 		Logger:    logger,
 	})
 
-	rt = router.New(st, browser, reg, logger)
+	rt = core.NewRouter(st, browser, reg, logger)
 
-	in := inbound.New(inbound.Options{
+	in := ws.NewInbound(ws.InboundOptions{
 		Port:     cfg.InboundPort,
 		Hostname: cfg.InboundHostname,
 		Auth:     authorizer(cfg.APIKeys),
@@ -114,7 +110,7 @@ func Run(ctx context.Context, cfg Config) error {
 		Logger:   logger,
 	})
 
-	mcpSrv := mcpserver.New(mcpserver.Options{
+	mcpSrv := http.NewMCP(http.MCPOptions{
 		Port:           cfg.MCPPort,
 		Hostname:       cfg.MCPHostname,
 		Router:         rt,
@@ -154,9 +150,9 @@ func Run(ctx context.Context, cfg Config) error {
 
 // authorizer picks the auth provider the way index.ts does: no BRIDGE_API_KEYS
 // → NoopAuthProvider, else ApiKeyAuthProvider over the trimmed key list.
-func authorizer(apiKeys []string) inbound.Authorizer {
+func authorizer(apiKeys []string) ws.Authorizer {
 	if len(apiKeys) == 0 {
-		return inbound.NoopAuthorizer{}
+		return ws.NoopAuthorizer{}
 	}
-	return inbound.NewAPIKeyAuthorizer(apiKeys)
+	return ws.NewAPIKeyAuthorizer(apiKeys)
 }

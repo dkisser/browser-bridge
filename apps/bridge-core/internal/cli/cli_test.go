@@ -15,7 +15,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/protocol"
+	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/core"
 )
 
 // runCLI executes the root command with args and captures both streams.
@@ -70,17 +70,17 @@ func readCommand(conn *websocket.Conn, wantCommand string, wantTabID int, wantPa
 	if err != nil {
 		return "", fmt.Errorf("read: %w", err)
 	}
-	env, err := protocol.Decode(string(data))
+	env, err := core.Decode(string(data))
 	if err != nil {
 		return "", fmt.Errorf("decode %q: %w", data, err)
 	}
-	if env.Type != protocol.TypeCommand {
+	if env.Type != core.TypeCommand {
 		return "", fmt.Errorf("type = %s, want command", env.Type)
 	}
 	if env.BrowserID != "b-1" {
 		return "", fmt.Errorf("browserId = %q, want b-1", env.BrowserID)
 	}
-	var payload protocol.CommandPayload
+	var payload core.CommandPayload
 	if err := json.Unmarshal(env.Payload, &payload); err != nil {
 		return "", fmt.Errorf("payload %s: %w", env.Payload, err)
 	}
@@ -99,7 +99,7 @@ func readCommand(conn *websocket.Conn, wantCommand string, wantTabID int, wantPa
 }
 
 func respond(conn *websocket.Conn, id, payload string) error {
-	raw, err := protocol.Encode(protocol.TypeResponse, json.RawMessage(payload), id, "")
+	raw, err := core.Encode(core.TypeResponse, json.RawMessage(payload), id, "")
 	if err != nil {
 		return err
 	}
