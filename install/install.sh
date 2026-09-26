@@ -355,6 +355,24 @@ download_skills() {
 
   mkdir -p "$tmpdir/extract"
   tar xzf "${tmpdir}/${tarball}" -C "$tmpdir/extract"
+  # Validate the tarball shape: install_skills expects the extract root to
+  # be a collection directory whose only child is the wrapper (e.g.
+  # browser-bridge/). A wrapper-less tarball (just SKILL.md at the top,
+  # shipped directly without its wrapper dir) would extract as a single
+  # file and install_skills would silently copy it to $dest/<basename of
+  # the extract root>, where no agent would ever find it. Catch it here
+  # where we still know the tarball's URL.
+  local -a entries=()
+  local entry
+  for entry in "$tmpdir/extract"/*; do
+    [[ -e "$entry" ]] && entries+=("$entry")
+  done
+  if [[ ${#entries[@]} -eq 0 ]]; then
+    die "BB-E211: skills tarball is empty: ${base}/${tarball}"
+  fi
+  if [[ ${#entries[@]} -ne 1 || ! -d "${entries[0]}" ]]; then
+    die "BB-E211: skills tarball is missing its top-level wrapper directory: ${base}/${tarball} (saw ${#entries[@]} entries at the root; expected exactly one wrapper directory)"
+  fi
   install_skills "$tmpdir/extract" "$dest"
   trap - RETURN
 }

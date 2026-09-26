@@ -1119,6 +1119,68 @@ SCRIPT
   [[ -x "$BB_TEST_TMP/bb-home-skills-fail/bin/bridge" ]]
 }
 
+@test "install.sh dies BB-E211 when skills tarball is missing its top-level wrapper directory" {
+  # Build a tarball that ships SKILL.md flat, with no wrapper directory
+  # — the case install_skills would silently install under the mktemp
+  # basename if download_skills didn't catch it.
+  local stage bad_tarball sha
+  stage=$(mktemp -d)
+  mkdir -p "$BB_TEST_TMP/www" "$BB_TEST_TMP/stage2"
+  echo "fake-extension-content" > "$BB_TEST_TMP/stage2/bb.zip"
+  ( cd "$BB_TEST_TMP/stage2" && zip -q "$BB_TEST_TMP/www/browser-bridge-extension-v9.9.9.zip" bb.zip )
+  ( cd "$BB_TEST_TMP/www" && shasum -a 256 browser-bridge-extension-v9.9.9.zip > browser-bridge-extension-v9.9.9.zip.sha256 )
+
+  local tarball_path tarball_name
+  tarball_path=$(make_fake_runtime_tarball v9.9.9)
+  tarball_name=$(basename "$tarball_path")
+  cp "$tarball_path" "$BB_TEST_TMP/www/$tarball_name"
+  cp "${tarball_path}.sha256" "$BB_TEST_TMP/www/${tarball_name}.sha256"
+
+  mkdir -p "$stage"
+  cat > "$stage/SKILL.md" <<'EOF'
+---
+name: flat-no-wrapper
+description: test
+---
+EOF
+  bad_tarball="$BB_TEST_TMP/www/browser-bridge-skills-v9.9.9.tar.gz"
+  # Ship SKILL.md at the tarball root with no wrapper directory — the
+  # exact case download_skills is now responsible for rejecting.
+  ( cd "$stage" && tar czf "$bad_tarball" SKILL.md )
+  shasum -a 256 "$bad_tarball" | awk '{print $1"  browser-bridge-skills-v9.9.9.tar.gz"}' > "$bad_tarball.sha256"
+
+  mkdir -p "$HOME/.claude"
+
+  make_fake_uname Linux
+  start_mock_http 18787
+  bash_path=$(find_modern_bash)
+
+  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_flat_skills.sh"
+  cat >> "$BB_TEST_TMP/test_flat_skills.sh" <<'SCRIPT'
+BB_INSTALL_ARCH=arm64
+ORG='127.0.0.1:18787'
+main
+SCRIPT
+
+  BB_HOME="$BB_TEST_TMP/bb-home-flat-skills" \
+  BB_VERSION="v9.9.9" \
+  run "$bash_path" "$BB_TEST_TMP/test_flat_skills.sh"
+  stop_mock_http
+
+  # download_skills is best-effort and never fails the install (ADR-0015) —
+  # the BB-E211 die inside download_skills is converted to a warning by
+  # main(), so the install still succeeds. What we assert is that the
+  # warning fires (so the user sees the malformed-tarball signal) and the
+  # skills were NOT installed under a mktemp dir or under the flat file's
+  # name.
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Warning:"* ]]
+  [[ ! -e "$HOME/.claude/skills/flat-no-wrapper/SKILL.md" ]]
+  [[ ! -e "$HOME/.claude/skills/extract/SKILL.md" ]]
+
+  rm -rf "$stage"
+}
+
 # ---------------------------------------------------------------------------
 # Extension symlink, version skip, and auto-start behavior
 # ---------------------------------------------------------------------------

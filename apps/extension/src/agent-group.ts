@@ -15,9 +15,11 @@ export const AGENT_GROUP_COLOR: chrome.tabGroups.ColorEnum = 'orange';
 // Per-window FIFO queue: concurrent tab:new calls in the same window
 // serialize here so two of them cannot both miss the query and create
 // duplicate groups. Each queue owns its own `tail` pointer rather than
-// storing a closure-captured promise — a hung chrome.tabs.group IPC at most
-// leaves a stale tail that the next enqueue supersedes (Chrome restarts
-// service workers every ~30s anyway, which clears the map).
+// storing a closure-captured promise — a hung chrome.tabs.group IPC
+// leaves the tail pending forever; subsequent enqueues chain on the same
+// pending tail (via .then in enqueue) and wait behind it. The only
+// recovery path is Chrome restarting the service worker (~30s), which
+// clears the Map.
 class WindowGroupQueue {
   private tail: Promise<unknown> = Promise.resolve();
 
@@ -45,12 +47,15 @@ function getQueue(windowId: number): WindowGroupQueue {
   return queue;
 }
 
-// Each chrome.tabGroups call site wraps the API in a tracked call so we
-// can flip the PolicyState.agentGroupAvailable bit on permission
-// rejection — chrome silently denies tabGroups queries after an extension
-// update if the user rejects the new permission prompt, and without this
-// tracking every tab:new would silently leave its tab ungrouped with no
-// UI signal.
+// Each chrome.tabGroups API call (query AND update) is routed through a
+// tracked wrapper so we can flip the PolicyState.agentGroupAvailable bit
+// on permission rejection. Chrome silently denies tabGroups API calls
+// after an extension update if the user rejected the new permission
+// prompt, and without this tracking every tab:new would silently leave
+// its tab ungrouped with no UI signal. Both query and update must be
+// tracked — if update is left bare, a permission revocation between a
+// successful query and the subsequent update would silently fail to
+// label the freshly-created group without flipping the badge.
 async function trackedTabGroupsQuery(
   opts: chrome.tabGroups.QueryInfo,
 ): Promise<chrome.tabGroups.TabGroup[]> {
@@ -58,6 +63,19 @@ async function trackedTabGroupsQuery(
     const groups = await chrome.tabGroups.query(opts);
     await setAgentGroupAvailability(true);
     return groups;
+  } catch (error) {
+    await setAgentGroupAvailability(false, error);
+    throw error;
+  }
+}
+
+async function trackedTabGroupsUpdate(
+  groupId: number,
+  update: chrome.tabGroups.UpdateProperties,
+): Promise<void> {
+  try {
+    await chrome.tabGroups.update(groupId, update);
+    await setAgentGroupAvailability(true);
   } catch (error) {
     await setAgentGroupAvailability(false, error);
     throw error;
@@ -88,7 +106,7 @@ async function ensureAgentGroupInner(
     createProperties: { windowId },
     tabIds: [tabId],
   });
-  await chrome.tabGroups.update(groupId, {
+  await trackedTabGroupsUpdate(groupId, {
     color: AGENT_GROUP_COLOR,
     title: AGENT_GROUP_TITLE,
   });
