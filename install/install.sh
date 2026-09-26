@@ -365,9 +365,11 @@ download_skills() {
   # be a collection directory whose only child is the wrapper (e.g.
   # browser-bridge/). A wrapper-less tarball (just SKILL.md at the top,
   # shipped directly without its wrapper dir) would extract as a single
-  # file and install_skills would silently copy it to $dest/<basename of
-  # the extract root>, where no agent would ever find it. Catch it here
-  # where we still know the tarball's URL.
+  # file and install_skills would silently copy it to
+  # $dest/<basename of the extract root>, where no agent would ever find
+  # it. Catch it here where we still know the tarball's URL. (The exact
+  # name of the extract root is whatever download_skills named it; this
+  # invariant is about the shape, not the name.)
   local -a entries=()
   local entry
   for entry in "$tmpdir/extract"/*; do
@@ -398,7 +400,9 @@ parse_install_args() {
   # SKILLS_STATUS="installed", and empty otherwise. Both are read by
   # print_next_steps to render the post-install summary.
   SKILLS_STATUS=""
-  SKILLS_INSTALLED_DIRS=""
+  # SKILLS_INSTALLED_DIRS is initialized in main() (once, after parse_install_args
+  # has had a chance to set a default) — not here — so future arg-parsing
+  # additions can pre-populate the list without being silently clobbered.
   # --with-skills / BB_WITH_SKILLS predate default-on skills (ADR-0015):
   # accepted as no-ops so old scripts / muscle memory keep working. Tracking
   # this state lets us emit a single deprecation note at the end of the arg

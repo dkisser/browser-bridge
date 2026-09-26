@@ -138,6 +138,21 @@ make_fake_runtime_tarball() {
   echo "$BB_TEST_TMP/${name}.tar.gz"
 }
 
+# Extract a single bash function's source from a script via `declare -f`,
+# so callers can `source <(extract_function_source name script)` for
+# in-process function testing. Robust to nested `}` inside the function
+# body (heredocs, case branches, ${var/pat/replace} substitutions) — the
+# previous `sed -n '/^name()/,/^}/p'` pattern matched the first top-level
+# `}` and silently truncated or mis-extracted when the function gained
+# any nested braces.
+#
+# Usage: extract_function_source <function_name> <script_path>
+extract_function_source() {
+  local func_name="$1"
+  local script_path="$2"
+  bash -c 'source "$1"; declare -f "$2"' _ "$script_path" "$func_name"
+}
+
 # Create a fake skills tarball for install.bats tests. Layout matches
 # .github/scripts/build-skills-tarball.sh (ADR-0015): a single top-level
 # browser-bridge/ directory containing SKILL.md, plus a .sha256 sidecar —
