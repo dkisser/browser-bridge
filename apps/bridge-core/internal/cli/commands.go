@@ -27,7 +27,7 @@ func logf(w io.Writer) func(string, ...any) {
 // macOS and the pidfile path elsewhere; --foreground runs the supervisor.
 func Up(ctx context.Context, e *Env, r Runner, foreground bool, w io.Writer) error {
 	log := logf(w)
-	if !executable(e.CoreBin()) {
+	if !executable(e.BridgeBin()) {
 		return errf("BB-E002", "install not run. Execute the install script first.")
 	}
 	if foreground {
@@ -282,12 +282,8 @@ func isMockHost(org string) bool {
 func Doctor(ctx context.Context, e *Env, r Runner, w io.Writer) (ok bool, err error) {
 	log := logf(w)
 	rc := true
-	if executable(e.CoreBin()) {
-		log("[OK] bridge-core binary present")
-	} else {
-		log("[FAIL] bridge-core binary missing")
-		rc = false
-	}
+	// One binary since ADR-0013: `bridge` is the CLI, the supervisor, and
+	// (via the hidden serve subcommand) the daemon.
 	if executable(e.BridgeBin()) {
 		log("[OK] bridge binary present")
 	} else {

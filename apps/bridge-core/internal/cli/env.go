@@ -26,6 +26,11 @@ const (
 	// implementation so existing installs are recognized).
 	LaunchAgentLabel = "com.browser-bridge.bridge"
 
+	// serviceName is the *service's* display and file-stem name: log file,
+	// pidfile, and the bash-parity status/lifecycle messages. The daemon
+	// process itself is now `bridge serve` (ADR-0013) — a subcommand of the
+	// bridge binary — but the service keeps the bridge-core name so existing
+	// installs keep their logs, pidfiles, and user-facing text.
 	serviceName = "bridge-core"
 )
 
@@ -45,7 +50,7 @@ type Env struct {
 	LocalHost string
 	MCPHost   string
 
-	APIKeys string // BRIDGE_API_KEYS, passed through to bridge-core
+	APIKeys string // BRIDGE_API_KEYS, passed through to the daemon
 
 	// UpdateOrg/UpdateRepo build the install.sh URL for `service update`
 	// (ORG/REPO env; the host:port form switches to plain http for mocks).
@@ -113,10 +118,9 @@ func orEnv(key, fallback string) string {
 
 // ---- Well-known paths (all under BBHome except the login LaunchAgent) ----
 
-// CoreBin is the supervised daemon.
-func (e *Env) CoreBin() string { return filepath.Join(e.BBHome, "bin", "bridge-core") }
-
-// BridgeBin is the CLI binary itself (as installed under BBHome).
+// BridgeBin is the single installed binary: the CLI, the supervisor
+// (`bridge service up --foreground`), and the daemon (`bridge serve`) all
+// run from it (ADR-0013).
 func (e *Env) BridgeBin() string { return filepath.Join(e.BBHome, "bin", "bridge") }
 
 // LogDir holds bridge-core.log and launchagent.log.
@@ -125,10 +129,10 @@ func (e *Env) LogDir() string { return filepath.Join(e.BBHome, "logs") }
 // RunDir holds the pidfiles.
 func (e *Env) RunDir() string { return filepath.Join(e.BBHome, "run") }
 
-// LogFile is the bridge-core stdout/stderr log.
+// LogFile is the daemon's stdout/stderr log.
 func (e *Env) LogFile() string { return filepath.Join(e.LogDir(), serviceName+".log") }
 
-// PidFile records the bridge-core pid.
+// PidFile records the daemon pid.
 func (e *Env) PidFile() string { return filepath.Join(e.RunDir(), serviceName+".pid") }
 
 // SupervisorPidFile records the foreground supervisor pid.
@@ -152,9 +156,9 @@ func (e *Env) Enabled() bool {
 	return err == nil
 }
 
-// childEnv is the environment bridge-core is spawned with: the inherited
-// environment plus the resolved BB_HOME/ports/hostnames, so StateManager
-// picks the same prefix install.sh used.
+// childEnv is the environment the daemon (`bridge serve`) is spawned with:
+// the inherited environment plus the resolved BB_HOME/ports/hostnames, so
+// StateManager picks the same prefix install.sh used.
 func (e *Env) childEnv() []string {
 	return append(os.Environ(),
 		"BB_HOME="+e.BBHome,

@@ -1,6 +1,7 @@
 // Package app assembles the bridge-core control plane from its parts,
-// mirroring the wiring in src/index.ts. cmd/bridge-core parses the BRIDGE_*
-// environment into a Config; the e2e spike test drives Run directly.
+// mirroring the wiring in src/index.ts. The hidden `bridge serve` subcommand
+// parses the BRIDGE_* environment into a Config (ConfigFromEnv); the e2e
+// spike test drives Run directly.
 package app
 
 import (

@@ -11,15 +11,16 @@ import (
 )
 
 // maxRestarts is the supervisor's crash budget: more than this many
-// consecutive short-lived bridge-core starts and the supervisor exits 1 so
+// consecutive short-lived daemon starts and the supervisor exits 1 so
 // launchd (KeepAlive + ThrottleInterval) backs off and retries the group.
 const maxRestarts = 5
 
 // Supervise is `bridge service up --foreground`: one foreground process
-// holding bridge-core so launchd can supervise it as a single KeepAlive'd
-// job (ADR-0005). Returns nil on a clean (signal-driven) shutdown.
+// holding the daemon (`bridge serve`, spawned by spawnCore) so launchd can
+// supervise it as a single KeepAlive'd job (ADR-0005). Returns nil on a
+// clean (signal-driven) shutdown.
 func (e *Env) Supervise(ctx context.Context, r Runner, logf func(string, ...any)) error {
-	if !executable(e.CoreBin()) {
+	if !executable(e.BridgeBin()) {
 		return errf("BB-E002", "install not run. Execute the install script first.")
 	}
 	if err := os.MkdirAll(e.LogDir(), 0o755); err != nil {
@@ -154,7 +155,7 @@ func (e *Env) supervisorWatch(ctx context.Context, r Runner, logf func(string, .
 }
 
 // supervisorShutdown is the bash TERM/INT trap: drop the supervisor pidfile
-// and stop bridge-core. Runs on a detached context — the caller's context is
+// and stop the daemon. Runs on a detached context — the caller's context is
 // already canceled by the signal.
 func (e *Env) supervisorShutdown(r Runner, logf func(string, ...any)) {
 	logf("supervisor: shutting down")

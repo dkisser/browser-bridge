@@ -151,10 +151,11 @@ func testEnv(t *testing.T, goos string) *Env {
 	}
 }
 
-// writeFakeCore installs an executable at $BB_HOME/bin/bridge-core.
-func writeFakeCore(t *testing.T, e *Env, script string) {
+// writeFakeBridge installs an executable at $BB_HOME/bin/bridge. The
+// supervisor spawns it as `bridge serve`; the fake scripts ignore argv.
+func writeFakeBridge(t *testing.T, e *Env, script string) {
 	t.Helper()
-	path := e.CoreBin()
+	path := e.BridgeBin()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +198,7 @@ func TestUpMissingBinary(t *testing.T) {
 
 func TestUpDarwinBootstrapsStagingPlistWhenAutoStartDisabled(t *testing.T) {
 	e := testEnv(t, "darwin")
-	writeFakeCore(t, e, "#!/usr/bin/env bash\nsleep 60\n")
+	writeFakeBridge(t, e, "#!/usr/bin/env bash\nsleep 60\n")
 	r := newFakeRunner()
 	var out bytes.Buffer
 	if err := Up(context.Background(), e, r, false, &out); err != nil {
@@ -230,7 +231,7 @@ func TestUpDarwinBootstrapsStagingPlistWhenAutoStartDisabled(t *testing.T) {
 
 func TestUpDarwinBootstrapsLoginPlistWhenEnabled(t *testing.T) {
 	e := testEnv(t, "darwin")
-	writeFakeCore(t, e, "#!/usr/bin/env bash\nsleep 60\n")
+	writeFakeBridge(t, e, "#!/usr/bin/env bash\nsleep 60\n")
 	// Pretend `service enable` ran earlier.
 	if err := os.MkdirAll(filepath.Dir(e.LaunchAgentPlist()), 0o755); err != nil {
 		t.Fatal(err)
@@ -258,7 +259,7 @@ func TestUpDarwinBootstrapsLoginPlistWhenEnabled(t *testing.T) {
 
 func TestUpDarwinAlreadyRunning(t *testing.T) {
 	e := testEnv(t, "darwin")
-	writeFakeCore(t, e, "#!/usr/bin/env bash\nsleep 60\n")
+	writeFakeBridge(t, e, "#!/usr/bin/env bash\nsleep 60\n")
 	r := newFakeRunner()
 	r.loaded[LaunchAgentLabel] = true
 	r.procs[4242] = fakeProc{state: "Ss", command: e.BBHome + "/bin/bridge service up --foreground"}
@@ -277,7 +278,7 @@ func TestUpDarwinAlreadyRunning(t *testing.T) {
 
 func TestUpDarwinReplacesStaleJob(t *testing.T) {
 	e := testEnv(t, "darwin")
-	writeFakeCore(t, e, "#!/usr/bin/env bash\nsleep 60\n")
+	writeFakeBridge(t, e, "#!/usr/bin/env bash\nsleep 60\n")
 	r := newFakeRunner()
 	r.loaded[LaunchAgentLabel] = true // loaded, but no supervisor pidfile
 	var out bytes.Buffer
@@ -297,7 +298,7 @@ func TestUpDarwinReplacesStaleJob(t *testing.T) {
 
 func TestUpDarwinForeignPortRefused(t *testing.T) {
 	e := testEnv(t, "darwin")
-	writeFakeCore(t, e, "#!/usr/bin/env bash\nsleep 60\n")
+	writeFakeBridge(t, e, "#!/usr/bin/env bash\nsleep 60\n")
 	e.WSPort = holdPort(t) // something else occupies the control plane
 	r := newFakeRunner()
 	var out bytes.Buffer
@@ -315,7 +316,7 @@ func TestUpDarwinForeignPortRefused(t *testing.T) {
 
 func TestUpDarwinBootstrapFailure(t *testing.T) {
 	e := testEnv(t, "darwin")
-	writeFakeCore(t, e, "#!/usr/bin/env bash\nsleep 60\n")
+	writeFakeBridge(t, e, "#!/usr/bin/env bash\nsleep 60\n")
 	r := newFakeRunner()
 	r.bootstrapErr = errors.New("simulated launchd error")
 	var out bytes.Buffer
@@ -342,7 +343,7 @@ func TestDownLinuxAlreadyStopped(t *testing.T) {
 func TestDownLinuxStopsService(t *testing.T) {
 	e := testEnv(t, "linux")
 	r := newFakeRunner()
-	r.procs[777] = fakeProc{state: "S", command: e.BBHome + "/bin/bridge-core"}
+	r.procs[777] = fakeProc{state: "S", command: e.BBHome + "/bin/bridge serve"}
 	writePidFile(t, e, 777)
 	var out bytes.Buffer
 	if err := Down(context.Background(), e, r, &out); err != nil {
@@ -367,7 +368,7 @@ func TestDownDarwinBootoutThenSweep(t *testing.T) {
 	r := newFakeRunner()
 	r.loaded[LaunchAgentLabel] = true
 	r.procs[4242] = fakeProc{state: "Ss", command: "bridge service up --foreground"}
-	r.procs[777] = fakeProc{state: "S", command: e.BBHome + "/bin/bridge-core"}
+	r.procs[777] = fakeProc{state: "S", command: e.BBHome + "/bin/bridge serve"}
 	writeSupervisorPidFile(t, e, 4242)
 	writePidFile(t, e, 777)
 	var out bytes.Buffer
@@ -455,7 +456,7 @@ func TestStatus(t *testing.T) {
 			e := testEnv(t, tt.goos)
 			r := newFakeRunner()
 			if tt.running {
-				r.procs[777] = fakeProc{state: "S", command: e.BBHome + "/bin/bridge-core"}
+				r.procs[777] = fakeProc{state: "S", command: e.BBHome + "/bin/bridge serve"}
 				writePidFile(t, e, 777)
 			}
 			if tt.enabled {
@@ -564,9 +565,9 @@ func TestClassify(t *testing.T) {
 		wantState string
 	}{
 		{
-			name: "ours: pidfile live and bridge-core",
+			name: "ours: pidfile live and bridge serve",
 			setup: func(t *testing.T, e *Env, r *fakeRunner) {
-				r.procs[777] = fakeProc{state: "S", command: e.BBHome + "/bin/bridge-core"}
+				r.procs[777] = fakeProc{state: "S", command: e.BBHome + "/bin/bridge serve"}
 				writePidFile(t, e, 777)
 			},
 			wantState: "ours",
@@ -579,6 +580,14 @@ func TestClassify(t *testing.T) {
 				e.WSPort = holdPort(t)
 			},
 			wantState: "foreign",
+		},
+		{
+			name: "free: pidfile live but a sibling install's daemon is not ours",
+			setup: func(t *testing.T, e *Env, r *fakeRunner) {
+				r.procs[781] = fakeProc{state: "S", command: "/other/prefix/bin/bridge serve"}
+				writePidFile(t, e, 781)
+			},
+			wantState: "free",
 		},
 		{
 			name: "free: pidfile live but not ours and ports free (stale removed)",
@@ -628,22 +637,18 @@ func TestDoctor(t *testing.T) {
 		{
 			name: "all green",
 			setup: func(t *testing.T, e *Env, r *fakeRunner) {
-				writeFakeCore(t, e, "#!/usr/bin/env bash\n")
-				if err := os.WriteFile(e.BridgeBin(), []byte("#!/usr/bin/env bash\n"), 0o755); err != nil {
-					t.Fatal(err)
-				}
+				writeFakeBridge(t, e, "#!/usr/bin/env bash\n")
 				if err := os.MkdirAll(filepath.Join(e.BBHome, "extension"), 0o755); err != nil {
 					t.Fatal(err)
 				}
 				if err := os.WriteFile(filepath.Join(e.BBHome, "extension", "manifest.json"), []byte(`{"name":"x"}`), 0o644); err != nil {
 					t.Fatal(err)
 				}
-				r.procs[777] = fakeProc{state: "S", command: e.BBHome + "/bin/bridge-core"}
+				r.procs[777] = fakeProc{state: "S", command: e.BBHome + "/bin/bridge serve"}
 				writePidFile(t, e, 777)
 			},
 			wantOK: true,
 			wantLine: []string{
-				"[OK] bridge-core binary present",
 				"[OK] bridge binary present",
 				"[OK] extension/manifest.json valid",
 				"[OK] bridge-core running",
@@ -654,7 +659,6 @@ func TestDoctor(t *testing.T) {
 			setup:  func(t *testing.T, e *Env, r *fakeRunner) {},
 			wantOK: false,
 			wantLine: []string{
-				"[FAIL] bridge-core binary missing",
 				"[FAIL] bridge binary missing",
 				"[FAIL] extension/manifest.json missing or invalid",
 				"[WARN] bridge-core not running (run 'bridge service up')",
@@ -831,7 +835,7 @@ func TestAutostartInvalidAction(t *testing.T) {
 
 func TestAutostartOn(t *testing.T) {
 	e := testEnv(t, "darwin")
-	writeFakeCore(t, e, "#!/usr/bin/env bash\nsleep 60\n")
+	writeFakeBridge(t, e, "#!/usr/bin/env bash\nsleep 60\n")
 	r := newFakeRunner()
 	var out, warn bytes.Buffer
 	if err := Autostart(context.Background(), e, r, "on", &out, &warn); err != nil {

@@ -48,8 +48,8 @@ func (s spawnRunner) Kill(pid int, sig syscall.Signal) error {
 
 func (s spawnRunner) UID() int { return 0 }
 
-// fakeCoreBindsAll is a bridge-core stand-in that binds all three ports from
-// the child env and then idles, like the real daemon.
+// fakeCoreBindsAll is a `bridge serve` stand-in that binds all three ports
+// from the child env and then idles, like the real daemon.
 const fakeCoreBindsAll = `#!/usr/bin/env python3
 import os, socket, time
 socks = []
@@ -85,7 +85,7 @@ while True:
 
 func TestStartServiceLinuxLifecycle(t *testing.T) {
 	e := testEnv(t, "linux")
-	writeFakeCore(t, e, fakeCoreBindsAll)
+	writeFakeBridge(t, e, fakeCoreBindsAll)
 	r := spawnRunner{t: t}
 	var out bytes.Buffer
 
@@ -97,7 +97,7 @@ func TestStartServiceLinuxLifecycle(t *testing.T) {
 		t.Fatal("pidfile missing after up")
 	}
 	if !pidAlive(context.Background(), r, pid) {
-		t.Fatal("bridge-core child not alive after up")
+		t.Fatal("daemon child not alive after up")
 	}
 	if !portInUse(e.WSPort) {
 		t.Fatal("control-plane port not bound after up")
@@ -115,7 +115,7 @@ func TestStartServiceLinuxLifecycle(t *testing.T) {
 		t.Fatalf("Down: %v", err)
 	}
 	if pidAlive(context.Background(), r, pid) {
-		t.Error("bridge-core child still alive after down")
+		t.Error("daemon child still alive after down")
 	}
 	if _, err := os.Stat(e.PidFile()); !os.IsNotExist(err) {
 		t.Error("pidfile still present after down")
@@ -127,7 +127,7 @@ func TestStartServiceLinuxLifecycle(t *testing.T) {
 
 func TestStartServicePortConflict(t *testing.T) {
 	e := testEnv(t, "linux")
-	writeFakeCore(t, e, fakeCoreBindsAll)
+	writeFakeBridge(t, e, fakeCoreBindsAll)
 	e.LocalPort = holdPort(t) // a non-WS port conflict must also block startup
 	r := spawnRunner{t: t}
 	var out bytes.Buffer
@@ -143,7 +143,7 @@ func TestStartServicePortConflict(t *testing.T) {
 func TestStartServiceBindTimeout(t *testing.T) {
 	e := testEnv(t, "linux")
 	e.bindWaitAttempts = 30 // 300ms with the test poll interval
-	writeFakeCore(t, e, fakeCoreNeverBinds)
+	writeFakeBridge(t, e, fakeCoreNeverBinds)
 	r := spawnRunner{t: t}
 	var out bytes.Buffer
 	err := Up(context.Background(), e, r, false, &out)
@@ -160,7 +160,7 @@ func TestStartServiceBindTimeout(t *testing.T) {
 
 func TestSuperviseLifecycle(t *testing.T) {
 	e := testEnv(t, "darwin") // supervise is the same code on both platforms
-	writeFakeCore(t, e, fakeCoreBindsAll)
+	writeFakeBridge(t, e, fakeCoreBindsAll)
 	r := spawnRunner{t: t}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -184,7 +184,7 @@ func TestSuperviseLifecycle(t *testing.T) {
 		t.Fatal("supervise did not return after cancel")
 	}
 	if pidAlive(context.Background(), r, childPID) {
-		t.Error("bridge-core child still alive after shutdown")
+		t.Error("daemon child still alive after shutdown")
 	}
 	for _, p := range []string{e.PidFile(), e.SupervisorPidFile()} {
 		if _, err := os.Stat(p); !os.IsNotExist(err) {
@@ -198,7 +198,7 @@ func TestSuperviseLifecycle(t *testing.T) {
 
 func TestSuperviseSingleInstance(t *testing.T) {
 	e := testEnv(t, "darwin")
-	writeFakeCore(t, e, fakeCoreBindsAll)
+	writeFakeBridge(t, e, fakeCoreBindsAll)
 	r := newFakeRunner()
 	r.procs[4242] = fakeProc{state: "Ss", command: e.BBHome + "/bin/bridge service up --foreground"}
 	writeSupervisorPidFile(t, e, 4242)
@@ -211,7 +211,7 @@ func TestSuperviseSingleInstance(t *testing.T) {
 
 func TestSuperviseStaleSupervisorPidRemoved(t *testing.T) {
 	e := testEnv(t, "darwin")
-	writeFakeCore(t, e, fakeCoreBindsAll)
+	writeFakeBridge(t, e, fakeCoreBindsAll)
 	r := spawnRunner{t: t}
 	// A dead supervisor pidfile must not block a new supervisor.
 	writeSupervisorPidFile(t, e, 999999)
@@ -234,7 +234,7 @@ func TestSuperviseStaleSupervisorPidRemoved(t *testing.T) {
 
 func TestSuperviseForeignPort(t *testing.T) {
 	e := testEnv(t, "darwin")
-	writeFakeCore(t, e, fakeCoreBindsAll)
+	writeFakeBridge(t, e, fakeCoreBindsAll)
 	e.MCPPort = holdPort(t)
 	r := spawnRunner{t: t}
 	var out bytes.Buffer
@@ -253,7 +253,7 @@ func TestSuperviseForeignPort(t *testing.T) {
 
 func TestSuperviseRestartBudget(t *testing.T) {
 	e := testEnv(t, "darwin")
-	writeFakeCore(t, e, fakeCoreBindsThenDies)
+	writeFakeBridge(t, e, fakeCoreBindsThenDies)
 	r := spawnRunner{t: t}
 	var out safeBuffer
 	err := e.Supervise(context.Background(), r, out.Printf)
@@ -277,7 +277,7 @@ func TestSuperviseExitedBeforeBinding(t *testing.T) {
 	e := testEnv(t, "darwin")
 	// Exits immediately without binding: the BB-E011 "exited before binding"
 	// variant, distinct from the bind timeout.
-	writeFakeCore(t, e, "#!/usr/bin/env bash\nexit 1\n")
+	writeFakeBridge(t, e, "#!/usr/bin/env bash\nexit 1\n")
 	e.bindWaitAttempts = 500
 	r := spawnRunner{t: t}
 	var out bytes.Buffer

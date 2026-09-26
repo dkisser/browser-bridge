@@ -1,49 +1,18 @@
-// Command bridge-core is the Browser Bridge control plane: it routes
-// commands from the inbound adapters (CLI, MCP) to the browser connection.
-// Go rewrite of the deleted Bun implementation — see
-// docs/adr/0012-control-plane-and-cli-in-go.md.
-package main
+package app
 
 import (
-	"context"
 	"fmt"
-	"log"
 	"os"
-	"os/signal"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
-
-	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/app"
 )
 
-// version is the binary version reported by the MCP server (the TS build
-// read it from package.json). Overridable at link time:
-// -ldflags "-X main.version=1.2.3".
-var version = "0.3.2"
-
-func main() {
-	cfg, err := configFromEnv()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	cfg.Version = version
-	cfg.Logger = log.Default()
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	if err := app.Run(ctx, cfg); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to start bridge-core: %v\n", err)
-		os.Exit(1)
-	}
-}
-
-// configFromEnv reads the BRIDGE_* variables exactly as src/index.ts does.
-func configFromEnv() (app.Config, error) {
-	var cfg app.Config
+// ConfigFromEnv reads the BRIDGE_* variables exactly as src/index.ts did
+// (moved from cmd/bridge-core when the daemon became `bridge serve`,
+// ADR-0013). Zero-value fields fall back to the package defaults in Run.
+func ConfigFromEnv() (Config, error) {
+	var cfg Config
 
 	// BRIDGE_API_KEYS: comma-separated, trimmed, empties dropped; empty →
 	// no auth (NoopAuthProvider).

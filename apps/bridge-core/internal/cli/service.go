@@ -44,8 +44,9 @@ func portInUse(port int) bool {
 	return true
 }
 
-// servicePortInUse checks all three bridge-core ports (it binds all three
-// and exits if any single bind fails). Returns the held port, 0 when free.
+// servicePortInUse checks all three daemon ports (the control plane binds
+// all three and exits if any single bind fails). Returns the held port, 0
+// when free.
 func (e *Env) servicePortInUse() int {
 	for _, p := range []int{e.WSPort, e.LocalPort, e.MCPPort} {
 		if portInUse(p) {
@@ -85,7 +86,7 @@ func pidIs(ctx context.Context, r Runner, pid int, want string) bool {
 	return err == nil && command != "" && strings.Contains(command, want)
 }
 
-// serviceState returns the live bridge-core pid, 0 when stopped.
+// serviceState returns the live daemon pid, 0 when stopped.
 func (e *Env) serviceState(ctx context.Context, r Runner) int {
 	pid, ok := readPid(e.PidFile())
 	if !ok || !pidAlive(ctx, r, pid) {
@@ -94,14 +95,21 @@ func (e *Env) serviceState(ctx context.Context, r Runner) int {
 	return pid
 }
 
-// classify is classify_service: "ours <pid>" (pidfile live and really
-// bridge-core), "free", or "foreign <port>" (held without a trustworthy
-// pidfile). A stale/unverifiable pidfile is removed.
+// daemonIdentity is the command-line fragment pidIs matches a live daemon
+// against: the daemon runs as `<BridgeBin> serve` (ADR-0013). The full path
+// keeps a sibling install's daemon from being claimed as ours (the old
+// standalone bridge-core binary name was globally unique; a subcommand is
+// not).
+func (e *Env) daemonIdentity() string { return e.BridgeBin() + " " + serveCommandName }
+
+// classify is classify_service: "ours <pid>" (pidfile live and really the
+// daemon), "free", or "foreign <port>" (held without a trustworthy pidfile).
+// A stale/unverifiable pidfile is removed.
 func (e *Env) classify(ctx context.Context, r Runner) (state string, num int) {
 	pidFile := e.PidFile()
 	pid, ok := readPid(pidFile)
 	if ok && pidAlive(ctx, r, pid) {
-		if pidIs(ctx, r, pid, serviceName) {
+		if pidIs(ctx, r, pid, e.daemonIdentity()) {
 			return "ours", pid
 		}
 		if held := e.servicePortInUse(); held != 0 {
@@ -138,7 +146,7 @@ func (e *Env) startService(ctx context.Context, r Runner, logf func(string, ...a
 	return nil
 }
 
-// spawnedCore is a freshly started bridge-core child.
+// spawnedCore is a freshly started daemon (`bridge serve`) child.
 type spawnedCore struct {
 	cmd     *exec.Cmd
 	pid     int
@@ -146,8 +154,9 @@ type spawnedCore struct {
 	wait    chan error // receives cmd.Wait() exactly once
 }
 
-// spawnCore starts bridge-core in the background with its log and pidfile,
-// shared by start_service and supervisor_spawn.
+// spawnCore starts the daemon in the background with its log and pidfile,
+// shared by start_service and supervisor_spawn. The daemon is the bridge
+// binary itself running the hidden serve subcommand (ADR-0013).
 func (e *Env) spawnCore() (*spawnedCore, error) {
 	if err := os.MkdirAll(e.LogDir(), 0o755); err != nil {
 		return nil, errf("BB-E011", "create log dir: %v", err)
@@ -159,13 +168,13 @@ func (e *Env) spawnCore() (*spawnedCore, error) {
 	if err != nil {
 		return nil, errf("BB-E011", "open log file: %v", err)
 	}
-	cmd := exec.Command(e.CoreBin()) //nolint:gosec // path is $BB_HOME/bin/bridge-core, same as bash
+	cmd := exec.Command(e.BridgeBin(), serveCommandName) //nolint:gosec // path is $BB_HOME/bin/bridge, same as bash
 	cmd.Env = e.childEnv()
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	if err := cmd.Start(); err != nil {
 		_ = logFile.Close()
-		return nil, errf("BB-E011", "start %s: %v", e.CoreBin(), err)
+		return nil, errf("BB-E011", "start %s: %v", e.BridgeBin(), err)
 	}
 	child := &spawnedCore{cmd: cmd, pid: cmd.Process.Pid, logFile: logFile, wait: make(chan error, 1)}
 	go func() { child.wait <- cmd.Wait() }()
@@ -181,7 +190,7 @@ func (e *Env) spawnCore() (*spawnedCore, error) {
 // before binding" so the supervisor can pick the bash BB-E011 wording.
 var errChildExitedBeforeBind = errors.New("child exited before binding")
 
-// waitForBind polls the control-plane port until bridge-core has bound it
+// waitForBind polls the control-plane port until the daemon has bound it
 // (the liveness proxy from the bash script: 3002 binds first, so 3001
 // answering means the child got that far). A child that dies first is
 // reported as errChildExitedBeforeBind — start_service polls the full 5s in

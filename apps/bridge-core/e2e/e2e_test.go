@@ -34,7 +34,7 @@ func inboundWSURL() string   { return fmt.Sprintf("ws://127.0.0.1:%d", inboundPo
 func browserWSURL() string   { return fmt.Sprintf("ws://127.0.0.1:%d", browserPort) }
 func mcpURL() string         { return fmt.Sprintf("http://127.0.0.1:%d/mcp", mcpPort) }
 
-// startApp boots the full control plane the same way cmd/bridge-core does,
+// startApp boots the full control plane the same way `bridge serve` does,
 // on the alternate ports, and tears it down with the test.
 func startApp(t *testing.T, mutate func(*app.Config)) {
 	t.Helper()

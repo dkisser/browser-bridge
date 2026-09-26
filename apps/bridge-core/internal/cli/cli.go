@@ -1,7 +1,8 @@
 // Package cli implements the bridge command line — the Go port of the
 // deleted apps/cli (commander.js), per ADR-0012 phase 2b, plus the
 // `bridge service` lifecycle tree ported from install/bridge.sh.tmpl
-// (phase 3). Command names, flag semantics, output formats, error texts,
+// (phase 3) and the hidden `bridge serve` control-plane subcommand
+// (ADR-0013). Command names, flag semantics, output formats, error texts,
 // and the exit-1-on-failure contract follow their predecessors.
 package cli
 
@@ -70,6 +71,7 @@ func New(version string) *cobra.Command {
 	root.AddCommand(newPairCommand())
 	root.AddCommand(newServiceCommand(g))
 	root.AddCommand(newAutostartCommand(g))
+	root.AddCommand(newServeCommand(version))
 	registerMovedVerbs(root, g)
 	// Reserved for future distributed-mode support; the TS stub errors out
 	// the same way.

@@ -94,3 +94,28 @@ func TestVersionFlag(t *testing.T) {
 		t.Errorf("stdout = %q, want %q", stdout, "bridge test\n")
 	}
 }
+
+// TestServeHidden: `bridge serve` (the control plane, ADR-0013) runs from the
+// bridge binary but stays out of the public command set — root help must not
+// list it, while `serve --help` resolves normally.
+func TestServeHidden(t *testing.T) {
+	stdout, _, err := runCLI(t, "--help")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	// The Available Commands block lists "<name>   <short>"; a hidden command
+	// never appears there. (--server is a flag line, not a command line.)
+	for line := range strings.Lines(stdout) {
+		if strings.HasPrefix(strings.TrimSpace(line), "serve ") || strings.HasPrefix(strings.TrimSpace(line), "serve\t") {
+			t.Errorf("serve listed in root help:\n%s", stdout)
+		}
+	}
+
+	stdout, _, err = runCLI(t, "serve", "--help")
+	if err != nil {
+		t.Fatalf("serve --help: %v", err)
+	}
+	if !strings.Contains(stdout, "Usage:") {
+		t.Errorf("serve --help = %q, want a usage block", stdout)
+	}
+}
