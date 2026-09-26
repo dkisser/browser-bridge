@@ -27,9 +27,16 @@ jobs:
         run: bun install --frozen-lockfile
 
       # Pinned to the version .golangci.yml is written against (v2 config).
-      # setup-go puts $(go env GOPATH)/bin on PATH.
+      # Uses the official GitHub Action so we ship a single, checksum-
+      # verified binary rather than a curl-piped install script whose
+      # embedded checksums drift out of sync with the upstream release
+      # artefacts (an intermittent checksum mismatch previously failed
+      # base-check on otherwise-clean PRs).
       - name: Install golangci-lint
-        run: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b "$(go env GOPATH)/bin" v2.13.2
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v2.13.2
+          cache: false
 
       # Lint (biome + gofmt + go vet + golangci-lint), type check, and all
       # tests (bun + go test -race) — one umbrella over both toolchains.
