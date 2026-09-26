@@ -208,13 +208,13 @@ func TestCommandTools(t *testing.T) {
 			wantText:    "{}",
 		},
 		{
-			name:        "tab_list renders the tab array",
+			name:        "tab_list renders the tab array with inAgentGroup",
 			tool:        "tab_list",
 			args:        map[string]any{},
-			respond:     core.ResponsePayload{Status: "ok", Data: []byte(`[{"id":1,"title":"T"}]`)},
+			respond:     core.ResponsePayload{Status: "ok", Data: []byte(`[{"id":1,"title":"T","inAgentGroup":true}]`)},
 			wantCommand: "tab:list",
 			wantParams:  map[string]any{},
-			wantText:    "[\n  {\n    \"id\": 1,\n    \"title\": \"T\"\n  }\n]",
+			wantText:    "[\n  {\n    \"id\": 1,\n    \"title\": \"T\",\n    \"inAgentGroup\": true\n  }\n]",
 		},
 		{
 			name:        "tab_list with no data renders []",

@@ -58,6 +58,10 @@ _Avoid_: handoff, human assist, pause mode, manual mode
 The boundary of what the agent may touch without asking: the tabs it opened itself plus the origins a human approved. Commands inside the scope run silent; anything that would cross it triggers Approval.
 _Avoid_: allowlist, permission set, trust zone
 
+**Agent tab group**:
+The per-window Chrome tab group (titled `browser-bridge`) that the extension automatically places every agent-opened tab into, so the human can see the agent's operating area at a glance. Purely visual organization: it is not part of Working scope and membership never feeds policy decisions.
+_Avoid_: workgroup, lane, trust group
+
 **Service command**:
 The `bridge service …` half of the CLI: everything that manages the service lifecycle (up/down/status/logs/update/enable). Kept strictly separate from browser commands, which never manage services and never fall through to them.
 _Avoid_: daemon command, autostart command

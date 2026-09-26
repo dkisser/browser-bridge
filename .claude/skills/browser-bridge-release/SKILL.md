@@ -7,16 +7,17 @@ whenToUse: When the user asks to publish a new release, cut/tag a version (e.g. 
 
 # Browser Bridge Release Skill
 
-Releasing Browser Bridge is tag-driven: pushing a tag `vX.Y.Z` triggers three GitHub Actions workflows that build every release asset and attach them to a GitHub Release automatically. The coding agent executes this skill itself — run the commands, edit the files, and create the commit; do not hand the user a checklist and ask them to run it. Flow: pre-flight checks → version bump → tag → push → verify.
+Releasing Browser Bridge is tag-driven: pushing a tag `vX.Y.Z` triggers four GitHub Actions workflows that build every release asset and attach them to a GitHub Release automatically. The coding agent executes this skill itself — run the commands, edit the files, and create the commit; do not hand the user a checklist and ask them to run it. Flow: pre-flight checks → version bump → tag → push → verify.
 
 ## How release works (read first)
 
 - The version source of truth is the root `package.json` `version` field. CI fails with BB-E030 if it does not match the tag.
 - `CHANGELOG.md` must contain an entry for the version (BB-E031).
-- Three workflows fire on tag push:
+- Four workflows fire on tag push:
   - `release-binaries` (macOS arm64): runtime tarball `browser-bridge-macos-arm64-<tag>.tar.gz` + `.sha256` (contains the single Go binary `bridge` since ADR-0013 — CLI plus the hidden `serve` control-plane subcommand)
   - `release-extension` (Ubuntu): `browser-bridge-extension-<tag>.zip` + `.sha256`
   - `release-installer` (Ubuntu): self-contained `install.sh`
+  - `release-skills` (Ubuntu): `browser-bridge-skills-<tag>.tar.gz` + `.sha256` (the `skills/browser-bridge` usage skill as a top-level `browser-bridge/` directory — ADR-0015)
 - The GitHub Release itself is auto-created by `softprops/action-gh-release`; do NOT run `gh release create` yourself.
 
 ## Step 1 — Pre-flight checks
@@ -54,17 +55,18 @@ git push origin vX.Y.Z
 
 ## Step 4 — Verify the release
 
-1. Watch the runs and wait for all three to succeed:
+1. Watch the runs and wait for all four to succeed:
    ```bash
    gh run list --workflow=release-binaries.yml
    gh run list --workflow=release-extension.yml
    gh run list --workflow=release-installer.yml
+   gh run list --workflow=release-skills.yml
    ```
 2. Verify the assets on the release:
    ```bash
    gh release view vX.Y.Z
    ```
-   Expect 5 files: macOS tarball + `.sha256`, extension zip + `.sha256`, and `install.sh`.
+   Expect 7 files: macOS tarball + `.sha256`, extension zip + `.sha256`, `install.sh`, and skills tarball + `.sha256`.
 3. Optionally smoke-test the installer exactly as a user would. Note this installs/updates `~/.browser-bridge` on the machine it runs on:
    ```bash
    curl -fsSL https://github.com/dkisser/browser-bridge/releases/download/vX.Y.Z/install.sh | bash

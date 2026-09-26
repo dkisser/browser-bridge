@@ -42,7 +42,8 @@
     "offscreen",
     "storage",
     "downloads",
-    "sidePanel"
+    "sidePanel",
+    "tabGroups"
   ],
   "host_permissions": ["<all_urls>"]
 }

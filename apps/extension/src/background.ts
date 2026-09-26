@@ -14,6 +14,7 @@ import {
   type PolicyContext,
   SENSITIVE_FIELD_RECHECK_ERROR,
 } from '@browser-bridge/shared';
+import { addTabToAgentGroup, queryAgentGroupIds } from './agent-group';
 import {
   type ChromeLike,
   ContentScriptUnavailableError,
@@ -272,13 +273,28 @@ async function handleCommand(
     }
 
     case 'tab:list': {
-      const tabs = await chrome.tabs.query({});
+      const [tabs, agentGroupIds] = await Promise.all([
+        chrome.tabs.query({}),
+        // Querying the agent group requires the `tabGroups` permission,
+        // which Chrome may prompt for (and the user may deny) on extension
+        // update. A rejection here would otherwise fail the whole command,
+        // so we degrade to an empty set and log — tab:list still returns
+        // tabs, just without the inAgentGroup mark.
+        queryAgentGroupIds().catch((error) => {
+          console.error(
+            'browser-bridge: failed to query agent groups (degrading tab:list)',
+            error,
+          );
+          return new Set<number>();
+        }),
+      ]);
       return tabs.map((t) => ({
         id: t.id,
         url: t.url,
         title: t.title,
         active: t.active,
         windowId: t.windowId,
+        inAgentGroup: agentGroupIds.has(t.groupId),
       }));
     }
 
@@ -292,6 +308,14 @@ async function handleCommand(
         await updatePolicyState((fresh) => ({
           agentTabs: [...fresh.agentTabs, newTab.id as number],
         }));
+        // Visual grouping (ADR-0014). Awaited (not fire-and-forget) so that
+        // an immediate follow-up tab:list sees the freshly-created tab in
+        // the agent group — otherwise the tab is returned with
+        // inAgentGroup=false until the chrome.tabs.group IPC round-trip
+        // completes, and any agent that gates behavior on inAgentGroup
+        // makes the wrong decision. addTabToAgentGroup still swallows its
+        // own errors so a failed group never fails tab:new.
+        await addTabToAgentGroup(newTab.id, newTab.windowId);
       }
       return { id: newTab.id, url: newTab.url };
     }

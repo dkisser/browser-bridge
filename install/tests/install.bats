@@ -277,15 +277,71 @@ SCRIPT
     source <(sed -n '/^print_next_steps()/,/^}/p' '$INSTALL_SH')
     BB_HOME='$BB_HOME'
     BB_EXTENSION_DIR='$BB_EXTENSION_DIR'
-    AUTOSTART=true WITH_SKILLS=true print_next_steps v9.9.9
+    AUTOSTART=true SKILLS_STATUS=installed SKILLS_INSTALLED_DIRS='$HOME/.agents/skills
+$HOME/.claude/skills' print_next_steps v9.9.9
   "
   [ "$status" -eq 0 ]
   [[ "$output" != *"\\n"* ]]
   [[ "$output" == *"Login auto-start is enabled"* ]]
-  [[ "$output" == *"Installed skills are available"* ]]
+  [[ "$output" == *"Installed the browser-bridge skill into:"* ]]
+  [[ "$output" == *"    $HOME/.agents/skills"* ]]
+  [[ "$output" == *"    $HOME/.claude/skills"* ]]
+  [[ "$output" == *"(available the next time you start your agent)."* ]]
   # Skills note must be on its own line, not glued to the previous one.
-  [[ "$output" == *$'\n  Installed skills are available the next time you start Claude Code.\n'* ]]
+  [[ "$output" == *$'\n  Installed the browser-bridge skill into:'* ]]
   [[ "$output" == *$'\n  Login auto-start is enabled; bridge services will start automatically when you log in.\n'* ]]
+}
+
+@test "print_next_steps reports failed skills install when SKILLS_STATUS=failed" {
+  bash_path=$(find_modern_bash)
+  run "$bash_path" -c "
+    set -euo pipefail
+    source <(sed -n '/^print_next_steps()/,/^}/p' '$INSTALL_SH')
+    BB_HOME='$BB_HOME'
+    BB_EXTENSION_DIR='$BB_EXTENSION_DIR'
+    AUTOSTART=false SKILLS_STATUS=failed print_next_steps v9.9.9
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Skills installation was attempted but failed"* ]]
+}
+
+@test "print_next_steps reports skipped-opt-out when SKILLS_STATUS=skipped-opt-out" {
+  bash_path=$(find_modern_bash)
+  run "$bash_path" -c "
+    set -euo pipefail
+    source <(sed -n '/^print_next_steps()/,/^}/p' '$INSTALL_SH')
+    BB_HOME='$BB_HOME'
+    BB_EXTENSION_DIR='$BB_EXTENSION_DIR'
+    AUTOSTART=false SKILLS_STATUS=skipped-opt-out print_next_steps v9.9.9
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Skills: skipped (--no-skills)."* ]]
+}
+
+@test "print_next_steps reports skipped-no-target when SKILLS_STATUS=skipped-no-target" {
+  bash_path=$(find_modern_bash)
+  run "$bash_path" -c "
+    set -euo pipefail
+    source <(sed -n '/^print_next_steps()/,/^}/p' '$INSTALL_SH')
+    BB_HOME='$BB_HOME'
+    BB_EXTENSION_DIR='$BB_EXTENSION_DIR'
+    AUTOSTART=false SKILLS_STATUS=skipped-no-target print_next_steps v9.9.9
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Skills: skipped — neither ~/.agents nor ~/.claude exists."* ]]
+}
+
+@test "print_next_steps omits the skills note when no skills were installed" {
+  bash_path=$(find_modern_bash)
+  run "$bash_path" -c "
+    set -euo pipefail
+    source <(sed -n '/^print_next_steps()/,/^}/p' '$INSTALL_SH')
+    BB_HOME='$BB_HOME'
+    BB_EXTENSION_DIR='$BB_EXTENSION_DIR'
+    print_next_steps v9.9.9
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"Installed the browser-bridge skill"* ]]
 }
 
 # ---------------------------------------------------------------------------
@@ -563,7 +619,7 @@ SCRIPT
 
 
 # ---------------------------------------------------------------------------
-# Task 13: skills installation
+# Task 13: skills installation (default-on since ADR-0015)
 # ---------------------------------------------------------------------------
 
 @test "install_skills installs a single skill directory" {
@@ -625,6 +681,31 @@ EOF
   rm -rf "$src" "$dest"
 }
 
+@test "install_skills replaces an existing skill directory so no stale files survive" {
+  bash_path=$(find_modern_bash)
+  local src dest
+  src=$(mktemp -d)
+  dest=$(mktemp -d)
+  mkdir -p "$src/browser-bridge"
+  echo "name: browser-bridge" > "$src/browser-bridge/SKILL.md"
+  # Pre-existing install from an older version, with a file the new skill no
+  # longer ships.
+  mkdir -p "$dest/browser-bridge"
+  echo "old" > "$dest/browser-bridge/SKILL.md"
+  echo "stale" > "$dest/browser-bridge/stale.txt"
+
+  run "$bash_path" -c "
+    set -euo pipefail
+    source <(sed '\$d' '$INSTALL_SH')
+    install_skills '$src/browser-bridge' '$dest'
+  "
+  [ "$status" -eq 0 ]
+  [[ -f "$dest/browser-bridge/SKILL.md" ]]
+  [[ "$(cat "$dest/browser-bridge/SKILL.md")" == "name: browser-bridge" ]]
+  [[ ! -e "$dest/browser-bridge/stale.txt" ]]
+  rm -rf "$src" "$dest"
+}
+
 @test "parse_install_args handles --skills-dir" {
   bash_path=$(find_modern_bash)
   run "$bash_path" -c "
@@ -638,7 +719,56 @@ EOF
   [[ "$output" == *"OK"* ]]
 }
 
-@test "install.sh --with-skills downloads and installs release skills" {
+@test "parse_install_args accepts --with-skills as a deprecated no-op" {
+  bash_path=$(find_modern_bash)
+  run "$bash_path" -c "
+    set -euo pipefail
+    source <(sed '\$d' '$INSTALL_SH')
+    parse_install_args --with-skills
+    [[ \"\$NO_SKILLS\" == 'false' ]]
+    [[ \"\$SAW_DEPRECATED_SKILLS_OPT\" == '1' ]]
+    echo OK
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--with-skills"* ]]
+  [[ "$output" == *"are deprecated"* ]]
+  [[ "$output" == *"OK"* ]]
+}
+
+@test "parse_install_args accepts BB_WITH_SKILLS=true as a deprecated no-op" {
+  bash_path=$(find_modern_bash)
+  BB_WITH_SKILLS=true run "$bash_path" -c "
+    set -euo pipefail
+    source <(sed '\$d' '$INSTALL_SH')
+    parse_install_args
+    [[ \"\$NO_SKILLS\" == 'false' ]]
+    [[ \"\$SAW_DEPRECATED_SKILLS_OPT\" == '1' ]]
+    echo OK
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"BB_WITH_SKILLS"* ]]
+  [[ "$output" == *"are deprecated"* ]]
+  [[ "$output" == *"OK"* ]]
+}
+
+@test "parse_install_args suppresses deprecation note when --no-skills is also set" {
+  bash_path=$(find_modern_bash)
+  run "$bash_path" -c "
+    set -euo pipefail
+    source <(sed '\$d' '$INSTALL_SH')
+    parse_install_args --with-skills --no-skills
+    [[ \"\$NO_SKILLS\" == 'true' ]]
+    [[ \"\$SAW_DEPRECATED_SKILLS_OPT\" == '1' ]]
+    echo OK
+  "
+  [ "$status" -eq 0 ]
+  # Note suppressed — "use --no-skills to opt out" while --no-skills has just
+  # been set would read as "we ignored your opt-out".
+  [[ "$output" != *"are deprecated"* ]]
+  [[ "$output" == *"OK"* ]]
+}
+
+@test "install.sh installs skills by default into both ~/.agents/skills and ~/.claude/skills" {
   mkdir -p "$BB_TEST_TMP/www" "$BB_TEST_TMP/stage"
   echo "fake-extension-content" > "$BB_TEST_TMP/stage/bb.zip"
   ( cd "$BB_TEST_TMP/stage" && zip -q "$BB_TEST_TMP/www/browser-bridge-extension-v9.9.9.zip" bb.zip )
@@ -650,30 +780,31 @@ EOF
   cp "$tarball_path" "$BB_TEST_TMP/www/$tarball_name"
   cp "${tarball_path}.sha256" "$BB_TEST_TMP/www/${tarball_name}.sha256"
 
-  # Prepare a fake skills tarball.
-  local skills_stage="$BB_TEST_TMP/browser-bridge-user"
-  mkdir -p "$skills_stage"
-  cat > "$skills_stage/SKILL.md" <<'EOF'
----
-name: browser-bridge-user
-description: test
----
-EOF
-  ( cd "$BB_TEST_TMP" && tar czf "browser-bridge-skills-v9.9.9.tar.gz" "browser-bridge-user" )
-  cp "$BB_TEST_TMP/browser-bridge-skills-v9.9.9.tar.gz" "$BB_TEST_TMP/www/"
-  ( cd "$BB_TEST_TMP/www" && shasum -a 256 browser-bridge-skills-v9.9.9.tar.gz > browser-bridge-skills-v9.9.9.tar.gz.sha256 )
+  # Fake skills release asset: top-level browser-bridge/ dir, like
+  # build-skills-tarball.sh produces.
+  local skills_tarball
+  skills_tarball=$(make_fake_skills_tarball v9.9.9)
+  cp "$skills_tarball" "$BB_TEST_TMP/www/"
+  cp "${skills_tarball}.sha256" "$BB_TEST_TMP/www/"
 
-  mkdir -p "$HOME/.claude/skills"
+  # A local ./skills checkout must NOT be used as the skills source — the
+  # installer installs from the release tarball.
+  mkdir -p "$BB_TEST_TMP/cwd/skills/browser-bridge"
+  echo "LOCAL-CHECKOUT-MARKER" > "$BB_TEST_TMP/cwd/skills/browser-bridge/SKILL.md"
+
+  # Both agent config roots exist → both receive the skill.
+  mkdir -p "$HOME/.agents" "$HOME/.claude"
 
   make_fake_uname Linux
-  start_mock_http 18765
+  start_mock_http 18780
   bash_path=$(find_modern_bash)
 
   sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_e2e_skills.sh"
-  cat >> "$BB_TEST_TMP/test_e2e_skills.sh" <<'SCRIPT'
+  cat >> "$BB_TEST_TMP/test_e2e_skills.sh" <<SCRIPT
 BB_INSTALL_ARCH=arm64
-ORG='127.0.0.1:18765'
-main --with-skills
+ORG='127.0.0.1:18780'
+cd '$BB_TEST_TMP/cwd'
+main
 SCRIPT
 
   BB_HOME="$BB_TEST_TMP/bb-home" \
@@ -685,10 +816,14 @@ SCRIPT
   [[ -f "$BB_TEST_TMP/bb-home/version" ]]
   [[ -f "$BB_TEST_TMP/bb-home/bin/bridge" ]]
   [[ -L "$HOME/.local/bin/bridge" ]]
-  [[ -f "$HOME/.claude/skills/browser-bridge-user/SKILL.md" ]]
+  [[ -f "$HOME/.agents/skills/browser-bridge/SKILL.md" ]]
+  [[ -f "$HOME/.claude/skills/browser-bridge/SKILL.md" ]]
+  # Content comes from the release tarball, not the local checkout.
+  ! grep -q "LOCAL-CHECKOUT-MARKER" "$HOME/.agents/skills/browser-bridge/SKILL.md"
+  [[ "$output" == *"Installed the browser-bridge skill into:"* ]]
 }
 
-@test "install.sh does not install skills by default even when local ./skills exists" {
+@test "install.sh installs skills only into the default targets whose parent exists" {
   mkdir -p "$BB_TEST_TMP/www" "$BB_TEST_TMP/stage"
   echo "fake-extension-content" > "$BB_TEST_TMP/stage/bb.zip"
   ( cd "$BB_TEST_TMP/stage" && zip -q "$BB_TEST_TMP/www/browser-bridge-extension-v9.9.9.zip" bb.zip )
@@ -700,35 +835,74 @@ SCRIPT
   cp "$tarball_path" "$BB_TEST_TMP/www/$tarball_name"
   cp "${tarball_path}.sha256" "$BB_TEST_TMP/www/${tarball_name}.sha256"
 
-  # Create a local ./skills directory as if the repo were present.
-  mkdir -p "$BB_TEST_TMP/cwd/skills/browser-bridge-user"
-  cat > "$BB_TEST_TMP/cwd/skills/browser-bridge-user/SKILL.md" <<'EOF'
----
-name: browser-bridge-user
-description: test
----
-EOF
+  local skills_tarball
+  skills_tarball=$(make_fake_skills_tarball v9.9.9)
+  cp "$skills_tarball" "$BB_TEST_TMP/www/"
+  cp "${skills_tarball}.sha256" "$BB_TEST_TMP/www/"
+
+  # Only ~/.agents exists — ~/.claude must not be created for the user.
+  mkdir -p "$HOME/.agents"
 
   make_fake_uname Linux
-  start_mock_http 18772
+  start_mock_http 18781
   bash_path=$(find_modern_bash)
 
-  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_no_skills.sh"
-  cat >> "$BB_TEST_TMP/test_no_skills.sh" <<SCRIPT
+  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_single_parent.sh"
+  cat >> "$BB_TEST_TMP/test_single_parent.sh" <<'SCRIPT'
 BB_INSTALL_ARCH=arm64
-ORG='127.0.0.1:18772'
-cd '$BB_TEST_TMP/cwd'
+ORG='127.0.0.1:18781'
 main
 SCRIPT
 
-  BB_HOME="$BB_TEST_TMP/bb-home-no-skills" \
+  BB_HOME="$BB_TEST_TMP/bb-home-single-parent" \
   BB_VERSION="v9.9.9" \
-  run "$bash_path" "$BB_TEST_TMP/test_no_skills.sh"
+  run "$bash_path" "$BB_TEST_TMP/test_single_parent.sh"
   stop_mock_http
 
   [ "$status" -eq 0 ]
-  [[ -f "$BB_TEST_TMP/bb-home-no-skills/version" ]]
-  [[ ! -d "$HOME/.claude/skills/browser-bridge-user" ]]
+  [[ -f "$HOME/.agents/skills/browser-bridge/SKILL.md" ]]
+  [[ ! -e "$HOME/.claude" ]]
+  [[ "$output" == *"Installed the browser-bridge skill into:"* ]]
+  [[ "$output" != *".claude/skills"* ]]
+}
+
+@test "install.sh skips skills with a note when neither ~/.agents nor ~/.claude exists" {
+  mkdir -p "$BB_TEST_TMP/www" "$BB_TEST_TMP/stage"
+  echo "fake-extension-content" > "$BB_TEST_TMP/stage/bb.zip"
+  ( cd "$BB_TEST_TMP/stage" && zip -q "$BB_TEST_TMP/www/browser-bridge-extension-v9.9.9.zip" bb.zip )
+  ( cd "$BB_TEST_TMP/www" && shasum -a 256 browser-bridge-extension-v9.9.9.zip > browser-bridge-extension-v9.9.9.zip.sha256 )
+
+  local tarball_path tarball_name
+  tarball_path=$(make_fake_runtime_tarball v9.9.9 arm64)
+  tarball_name=$(basename "$tarball_path")
+  cp "$tarball_path" "$BB_TEST_TMP/www/$tarball_name"
+  cp "${tarball_path}.sha256" "$BB_TEST_TMP/www/${tarball_name}.sha256"
+
+  # Deliberately no skills tarball in the mock release: with no eligible
+  # target the installer must skip before ever trying to download it.
+
+  make_fake_uname Linux
+  start_mock_http 18782
+  bash_path=$(find_modern_bash)
+
+  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_no_parents.sh"
+  cat >> "$BB_TEST_TMP/test_no_parents.sh" <<'SCRIPT'
+BB_INSTALL_ARCH=arm64
+ORG='127.0.0.1:18782'
+main
+SCRIPT
+
+  BB_HOME="$BB_TEST_TMP/bb-home-no-parents" \
+  BB_VERSION="v9.9.9" \
+  run "$bash_path" "$BB_TEST_TMP/test_no_parents.sh"
+  stop_mock_http
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"skipping skills installation"* ]]
+  [[ "$output" != *"Installed the browser-bridge skill"* ]]
+  [[ -f "$BB_TEST_TMP/bb-home-no-parents/version" ]]
+  [[ ! -e "$HOME/.agents" ]]
+  [[ ! -e "$HOME/.claude" ]]
 }
 
 @test "install.sh --no-skills skips skills even with --with-skills" {
@@ -742,6 +916,14 @@ SCRIPT
   tarball_name=$(basename "$tarball_path")
   cp "$tarball_path" "$BB_TEST_TMP/www/$tarball_name"
   cp "${tarball_path}.sha256" "$BB_TEST_TMP/www/${tarball_name}.sha256"
+
+  # Serve the skills tarball and offer both default targets, so --no-skills
+  # (not a missing target) is what skips the install.
+  local skills_tarball
+  skills_tarball=$(make_fake_skills_tarball v9.9.9)
+  cp "$skills_tarball" "$BB_TEST_TMP/www/"
+  cp "${skills_tarball}.sha256" "$BB_TEST_TMP/www/"
+  mkdir -p "$HOME/.agents" "$HOME/.claude"
 
   make_fake_uname Linux
   start_mock_http 18773
@@ -760,7 +942,258 @@ SCRIPT
   stop_mock_http
 
   [ "$status" -eq 0 ]
-  [[ ! -d "$HOME/.claude/skills/browser-bridge-user" ]]
+  [[ ! -e "$HOME/.agents/skills" ]]
+  [[ ! -e "$HOME/.claude/skills" ]]
+  [[ "$output" != *"Installed the browser-bridge skill"* ]]
+}
+
+@test "install.sh --with-skills is accepted as a no-op and still installs skills (default on)" {
+  mkdir -p "$BB_TEST_TMP/www" "$BB_TEST_TMP/stage"
+  echo "fake-extension-content" > "$BB_TEST_TMP/stage/bb.zip"
+  ( cd "$BB_TEST_TMP/stage" && zip -q "$BB_TEST_TMP/www/browser-bridge-extension-v9.9.9.zip" bb.zip )
+  ( cd "$BB_TEST_TMP/www" && shasum -a 256 browser-bridge-extension-v9.9.9.zip > browser-bridge-extension-v9.9.9.zip.sha256 )
+
+  local tarball_path tarball_name
+  tarball_path=$(make_fake_runtime_tarball v9.9.9 arm64)
+  tarball_name=$(basename "$tarball_path")
+  cp "$tarball_path" "$BB_TEST_TMP/www/$tarball_name"
+  cp "${tarball_path}.sha256" "$BB_TEST_TMP/www/${tarball_name}.sha256"
+
+  local skills_tarball
+  skills_tarball=$(make_fake_skills_tarball v9.9.9)
+  cp "$skills_tarball" "$BB_TEST_TMP/www/"
+  cp "${skills_tarball}.sha256" "$BB_TEST_TMP/www/"
+
+  mkdir -p "$HOME/.claude"
+
+  make_fake_uname Linux
+  start_mock_http 18783
+  bash_path=$(find_modern_bash)
+
+  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_with_skills_noop.sh"
+  cat >> "$BB_TEST_TMP/test_with_skills_noop.sh" <<'SCRIPT'
+BB_INSTALL_ARCH=arm64
+ORG='127.0.0.1:18783'
+main --with-skills
+SCRIPT
+
+  BB_HOME="$BB_TEST_TMP/bb-home-with-skills" \
+  BB_VERSION="v9.9.9" \
+  run "$bash_path" "$BB_TEST_TMP/test_with_skills_noop.sh"
+  stop_mock_http
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--with-skills"* ]]
+  [[ "$output" == *"are deprecated"* ]]
+  [[ -f "$HOME/.claude/skills/browser-bridge/SKILL.md" ]]
+}
+
+@test "install.sh replaces a pre-existing modified browser-bridge skill on upgrade" {
+  mkdir -p "$BB_TEST_TMP/www" "$BB_TEST_TMP/stage"
+  echo "fake-extension-content" > "$BB_TEST_TMP/stage/bb.zip"
+  ( cd "$BB_TEST_TMP/stage" && zip -q "$BB_TEST_TMP/www/browser-bridge-extension-v9.9.9.zip" bb.zip )
+  ( cd "$BB_TEST_TMP/www" && shasum -a 256 browser-bridge-extension-v9.9.9.zip > browser-bridge-extension-v9.9.9.zip.sha256 )
+
+  local tarball_path tarball_name
+  tarball_path=$(make_fake_runtime_tarball v9.9.9 arm64)
+  tarball_name=$(basename "$tarball_path")
+  cp "$tarball_path" "$BB_TEST_TMP/www/$tarball_name"
+  cp "${tarball_path}.sha256" "$BB_TEST_TMP/www/${tarball_name}.sha256"
+
+  local skills_tarball
+  skills_tarball=$(make_fake_skills_tarball v9.9.9)
+  cp "$skills_tarball" "$BB_TEST_TMP/www/"
+  cp "${skills_tarball}.sha256" "$BB_TEST_TMP/www/"
+
+  # Older install with local modifications and a stale file that the new
+  # skill version no longer ships — both must be gone after the upgrade.
+  mkdir -p "$HOME/.claude/skills/browser-bridge"
+  echo "USER-MODIFIED-OLD-VERSION" > "$HOME/.claude/skills/browser-bridge/SKILL.md"
+  echo "stale" > "$HOME/.claude/skills/browser-bridge/stale-file.txt"
+
+  make_fake_uname Linux
+  start_mock_http 18784
+  bash_path=$(find_modern_bash)
+
+  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_replace_skills.sh"
+  cat >> "$BB_TEST_TMP/test_replace_skills.sh" <<'SCRIPT'
+BB_INSTALL_ARCH=arm64
+ORG='127.0.0.1:18784'
+main
+SCRIPT
+
+  BB_HOME="$BB_TEST_TMP/bb-home-replace" \
+  BB_VERSION="v9.9.9" \
+  run "$bash_path" "$BB_TEST_TMP/test_replace_skills.sh"
+  stop_mock_http
+
+  [ "$status" -eq 0 ]
+  [[ -f "$HOME/.claude/skills/browser-bridge/SKILL.md" ]]
+  [[ "$(cat "$HOME/.claude/skills/browser-bridge/SKILL.md")" == *"name: browser-bridge"* ]]
+  [[ ! -e "$HOME/.claude/skills/browser-bridge/stale-file.txt" ]]
+}
+
+@test "install.sh --skills-dir installs into the explicit target only" {
+  mkdir -p "$BB_TEST_TMP/www" "$BB_TEST_TMP/stage"
+  echo "fake-extension-content" > "$BB_TEST_TMP/stage/bb.zip"
+  ( cd "$BB_TEST_TMP/stage" && zip -q "$BB_TEST_TMP/www/browser-bridge-extension-v9.9.9.zip" bb.zip )
+  ( cd "$BB_TEST_TMP/www" && shasum -a 256 browser-bridge-extension-v9.9.9.zip > browser-bridge-extension-v9.9.9.zip.sha256 )
+
+  local tarball_path tarball_name
+  tarball_path=$(make_fake_runtime_tarball v9.9.9 arm64)
+  tarball_name=$(basename "$tarball_path")
+  cp "$tarball_path" "$BB_TEST_TMP/www/$tarball_name"
+  cp "${tarball_path}.sha256" "$BB_TEST_TMP/www/${tarball_name}.sha256"
+
+  local skills_tarball
+  skills_tarball=$(make_fake_skills_tarball v9.9.9)
+  cp "$skills_tarball" "$BB_TEST_TMP/www/"
+  cp "${skills_tarball}.sha256" "$BB_TEST_TMP/www/"
+
+  # Both default parents exist but must be ignored in favor of --skills-dir.
+  mkdir -p "$HOME/.agents" "$HOME/.claude"
+
+  make_fake_uname Linux
+  start_mock_http 18785
+  bash_path=$(find_modern_bash)
+
+  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_skills_dir.sh"
+  cat >> "$BB_TEST_TMP/test_skills_dir.sh" <<SCRIPT
+BB_INSTALL_ARCH=arm64
+ORG='127.0.0.1:18785'
+main --skills-dir '$BB_TEST_TMP/custom-skills'
+SCRIPT
+
+  BB_HOME="$BB_TEST_TMP/bb-home-skills-dir" \
+  BB_VERSION="v9.9.9" \
+  run "$bash_path" "$BB_TEST_TMP/test_skills_dir.sh"
+  stop_mock_http
+
+  [ "$status" -eq 0 ]
+  [[ -f "$BB_TEST_TMP/custom-skills/browser-bridge/SKILL.md" ]]
+  [[ ! -e "$HOME/.agents/skills" ]]
+  [[ ! -e "$HOME/.claude/skills" ]]
+  # With multi-target rendering, paths move to their own indented line —
+  # the old "into: <path>" substring no longer holds. Each rendered target
+  # appears as "    <path>" following the "into:" headline.
+  [[ "$output" == *"Installed the browser-bridge skill into:"* ]]
+  [[ "$output" == *"    $BB_TEST_TMP/custom-skills"* ]]
+}
+
+@test "install.sh degrades to a warning when the skills download fails" {
+  mkdir -p "$BB_TEST_TMP/www" "$BB_TEST_TMP/stage"
+  echo "fake-extension-content" > "$BB_TEST_TMP/stage/bb.zip"
+  ( cd "$BB_TEST_TMP/stage" && zip -q "$BB_TEST_TMP/www/browser-bridge-extension-v9.9.9.zip" bb.zip )
+  ( cd "$BB_TEST_TMP/www" && shasum -a 256 browser-bridge-extension-v9.9.9.zip > browser-bridge-extension-v9.9.9.zip.sha256 )
+
+  local tarball_path tarball_name
+  tarball_path=$(make_fake_runtime_tarball v9.9.9 arm64)
+  tarball_name=$(basename "$tarball_path")
+  cp "$tarball_path" "$BB_TEST_TMP/www/$tarball_name"
+  cp "${tarball_path}.sha256" "$BB_TEST_TMP/www/${tarball_name}.sha256"
+
+  # Deliberately no skills tarball in the mock release (e.g. a pinned
+  # pre-ADR-0015 version): the overall install must still succeed.
+  mkdir -p "$HOME/.agents" "$HOME/.claude"
+
+  make_fake_uname Linux
+  start_mock_http 18786
+  bash_path=$(find_modern_bash)
+
+  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_skills_download_fail.sh"
+  cat >> "$BB_TEST_TMP/test_skills_download_fail.sh" <<'SCRIPT'
+BB_INSTALL_ARCH=arm64
+ORG='127.0.0.1:18786'
+main
+SCRIPT
+
+  BB_HOME="$BB_TEST_TMP/bb-home-skills-fail" \
+  BB_VERSION="v9.9.9" \
+  run "$bash_path" "$BB_TEST_TMP/test_skills_download_fail.sh"
+  stop_mock_http
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Warning: skills installation into"* ]]
+  [[ "$output" != *"Installed the browser-bridge skill"* ]]
+  [[ -f "$BB_TEST_TMP/bb-home-skills-fail/version" ]]
+  [[ -x "$BB_TEST_TMP/bb-home-skills-fail/bin/bridge" ]]
+}
+
+@test "install.sh dies BB-E211 when skills tarball is missing its top-level wrapper directory" {
+  # Build a tarball that ships SKILL.md flat, with no wrapper directory
+  # — the case install_skills would silently install under the mktemp
+  # basename if download_skills didn't catch it.
+  local stage bad_tarball sha
+  stage=$(mktemp -d)
+  mkdir -p "$BB_TEST_TMP/www" "$BB_TEST_TMP/stage2"
+  echo "fake-extension-content" > "$BB_TEST_TMP/stage2/bb.zip"
+  ( cd "$BB_TEST_TMP/stage2" && zip -q "$BB_TEST_TMP/www/browser-bridge-extension-v9.9.9.zip" bb.zip )
+  ( cd "$BB_TEST_TMP/www" && shasum -a 256 browser-bridge-extension-v9.9.9.zip > browser-bridge-extension-v9.9.9.zip.sha256 )
+
+  local tarball_path tarball_name
+  tarball_path=$(make_fake_runtime_tarball v9.9.9)
+  tarball_name=$(basename "$tarball_path")
+  cp "$tarball_path" "$BB_TEST_TMP/www/$tarball_name"
+  cp "${tarball_path}.sha256" "$BB_TEST_TMP/www/${tarball_name}.sha256"
+
+  mkdir -p "$stage"
+  cat > "$stage/SKILL.md" <<'EOF'
+---
+name: flat-no-wrapper
+description: test
+---
+EOF
+  bad_tarball="$BB_TEST_TMP/www/browser-bridge-skills-v9.9.9.tar.gz"
+  # Ship SKILL.md at the tarball root with no wrapper directory — the
+  # exact case download_skills is now responsible for rejecting.
+  ( cd "$stage" && tar czf "$bad_tarball" SKILL.md )
+  shasum -a 256 "$bad_tarball" | awk '{print $1"  browser-bridge-skills-v9.9.9.tar.gz"}' > "$bad_tarball.sha256"
+
+  mkdir -p "$HOME/.claude"
+
+  make_fake_uname Linux
+  start_mock_http 18787
+  bash_path=$(find_modern_bash)
+
+  # Point TMPDIR at a controlled location so we can assert no mktemp
+  # leakage after download_skills's BB-E211 die(). Default $TMPDIR leaks
+  # mktemp dirs invisibly across CI runs.
+  local controlled_tmpdir="$BB_TEST_TMP/flat-tmpdir"
+  mkdir -p "$controlled_tmpdir"
+
+  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_flat_skills.sh"
+  cat >> "$BB_TEST_TMP/test_flat_skills.sh" <<SCRIPT
+BB_INSTALL_ARCH=arm64
+ORG='127.0.0.1:18787'
+TMPDIR='$controlled_tmpdir'
+main
+SCRIPT
+
+  BB_HOME="$BB_TEST_TMP/bb-home-flat-skills" \
+  BB_VERSION="v9.9.9" \
+  run "$bash_path" "$BB_TEST_TMP/test_flat_skills.sh"
+  stop_mock_http
+
+  # download_skills is best-effort and never fails the install (ADR-0015) —
+  # the BB-E211 die inside download_skills is converted to a warning by
+  # main(), so the install still succeeds. What we assert is that the
+  # warning fires (so the user sees the malformed-tarball signal) and the
+  # skills were NOT installed under a mktemp dir or under the flat file's
+  # name.
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Warning:"* ]]
+  [[ ! -e "$HOME/.claude/skills/flat-no-wrapper/SKILL.md" ]]
+  [[ ! -e "$HOME/.claude/skills/extract/SKILL.md" ]]
+
+  # download_skills sets mktemp -d under $TMPDIR and traps EXIT (not
+  # RETURN — die() bypasses RETURN) to rm -rf the dir. With the wrong
+  # trap shape, every BB-E211 invocation leaks a tmp.XXX directory; with
+  # the EXIT trap, the dir is gone before main() resumes.
+  local leaked
+  leaked=$(find "$controlled_tmpdir" -maxdepth 1 -mindepth 1 -name 'tmp.*' -type d 2>/dev/null | wc -l | tr -d ' ')
+  [ "$leaked" -eq 0 ]
+
+  rm -rf "$stage" "$controlled_tmpdir"
 }
 
 # ---------------------------------------------------------------------------

@@ -138,6 +138,29 @@ make_fake_runtime_tarball() {
   echo "$BB_TEST_TMP/${name}.tar.gz"
 }
 
+# Create a fake skills tarball for install.bats tests. Layout matches
+# .github/scripts/build-skills-tarball.sh (ADR-0015): a single top-level
+# browser-bridge/ directory containing SKILL.md, plus a .sha256 sidecar —
+# that is what install.sh's download_skills extracts and installs. Returns
+# the path to the tarball.
+make_fake_skills_tarball() {
+  local version="${1:-v9.9.9}"
+  local name="browser-bridge-skills-${version}"
+  local stage="$BB_TEST_TMP/skills-stage-${name}"
+  mkdir -p "$stage/browser-bridge"
+  cat > "$stage/browser-bridge/SKILL.md" <<'EOF'
+---
+name: browser-bridge
+description: test
+---
+EOF
+
+  ( cd "$stage" && tar czf "$BB_TEST_TMP/${name}.tar.gz" browser-bridge )
+  ( cd "$BB_TEST_TMP" && shasum -a 256 "${name}.tar.gz" > "${name}.tar.gz.sha256" )
+
+  echo "$BB_TEST_TMP/${name}.tar.gz"
+}
+
 # Start a tiny Python HTTP server on a free port serving $BB_TEST_TMP/www.
 start_mock_http() {
   mkdir -p "$BB_TEST_TMP/www"

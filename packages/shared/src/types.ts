@@ -104,6 +104,9 @@ export interface TabListResultItem {
   title?: string;
   active: boolean;
   windowId: number;
+  // True when the tab sits in the window's "browser-bridge" tab group
+  // (ADR-0014). Visual organization only — not a trust signal.
+  inAgentGroup: boolean;
 }
 
 export interface TabNewResult {
