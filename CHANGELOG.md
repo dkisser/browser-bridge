@@ -4,6 +4,8 @@ All notable changes to Browser Bridge are documented here. The format follows [K
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-09-26
+
 ### Added
 - Agent tab group (ADR-0014): every tab opened via `tab_new` is automatically placed into a per-window Chrome tab group titled "browser-bridge" (orange), so the agent's operating area is visually distinct from the user's own tabs. Grouping is purely visual — policy decisions still rely solely on Working scope (ADR-0007) — and user customizations (rename, recolor, ungroup) are never fought. `tab_list` gains an `inAgentGroup` field per entry; the extension now requests the `tabGroups` permission.
 - The usage skill is renamed `browser-bridge-use` → `browser-bridge` and is now actually distributed: releases ship a new `browser-bridge-skills-<version>.tar.gz` asset, and the installer installs it by default into `~/.agents/skills/` and `~/.claude/skills/` (whichever parent exists) with replace semantics on upgrade (ADR-0015). Opt out with `--no-skills` / `BB_NO_SKILLS=true`; `--with-skills` remains accepted as a no-op.
