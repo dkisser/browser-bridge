@@ -7,6 +7,8 @@
 // ungrouped, the query misses and a fresh group is created on the next
 // tab:new — the user's customization is never fought.
 
+import { setAgentGroupAvailability } from './policy-state';
+
 export const AGENT_GROUP_TITLE = 'browser-bridge';
 export const AGENT_GROUP_COLOR: chrome.tabGroups.ColorEnum = 'orange';
 
@@ -43,8 +45,27 @@ function getQueue(windowId: number): WindowGroupQueue {
   return queue;
 }
 
+// Each chrome.tabGroups call site wraps the API in a tracked call so we
+// can flip the PolicyState.agentGroupAvailable bit on permission
+// rejection — chrome silently denies tabGroups queries after an extension
+// update if the user rejects the new permission prompt, and without this
+// tracking every tab:new would silently leave its tab ungrouped with no
+// UI signal.
+async function trackedTabGroupsQuery(
+  opts: chrome.tabGroups.QueryInfo,
+): Promise<chrome.tabGroups.TabGroup[]> {
+  try {
+    const groups = await chrome.tabGroups.query(opts);
+    await setAgentGroupAvailability(true);
+    return groups;
+  } catch (error) {
+    await setAgentGroupAvailability(false, error);
+    throw error;
+  }
+}
+
 async function queryAgentGroupId(windowId: number): Promise<number | null> {
-  const groups = await chrome.tabGroups.query({
+  const groups = await trackedTabGroupsQuery({
     color: AGENT_GROUP_COLOR,
     title: AGENT_GROUP_TITLE,
     windowId,
@@ -100,7 +121,7 @@ export async function addTabToAgentGroup(
 // Group ids of every agent group across all windows — the tab:list handler
 // marks entries by membership in this set.
 export async function queryAgentGroupIds(): Promise<Set<number>> {
-  const groups = await chrome.tabGroups.query({
+  const groups = await trackedTabGroupsQuery({
     color: AGENT_GROUP_COLOR,
     title: AGENT_GROUP_TITLE,
   });

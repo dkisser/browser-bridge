@@ -277,16 +277,58 @@ SCRIPT
     source <(sed -n '/^print_next_steps()/,/^}/p' '$INSTALL_SH')
     BB_HOME='$BB_HOME'
     BB_EXTENSION_DIR='$BB_EXTENSION_DIR'
-    AUTOSTART=true SKILLS_INSTALLED_DIRS='$HOME/.agents/skills $HOME/.claude/skills' print_next_steps v9.9.9
+    AUTOSTART=true SKILLS_STATUS=installed SKILLS_INSTALLED_DIRS='$HOME/.agents/skills
+$HOME/.claude/skills' print_next_steps v9.9.9
   "
   [ "$status" -eq 0 ]
   [[ "$output" != *"\\n"* ]]
   [[ "$output" == *"Login auto-start is enabled"* ]]
   [[ "$output" == *"Installed the browser-bridge skill into:"* ]]
-  [[ "$output" == *"$HOME/.agents/skills $HOME/.claude/skills"* ]]
+  [[ "$output" == *"    $HOME/.agents/skills"* ]]
+  [[ "$output" == *"    $HOME/.claude/skills"* ]]
+  [[ "$output" == *"(available the next time you start your agent)."* ]]
   # Skills note must be on its own line, not glued to the previous one.
-  [[ "$output" == *$'\n  Installed the browser-bridge skill into: '* ]]
+  [[ "$output" == *$'\n  Installed the browser-bridge skill into:'* ]]
   [[ "$output" == *$'\n  Login auto-start is enabled; bridge services will start automatically when you log in.\n'* ]]
+}
+
+@test "print_next_steps reports failed skills install when SKILLS_STATUS=failed" {
+  bash_path=$(find_modern_bash)
+  run "$bash_path" -c "
+    set -euo pipefail
+    source <(sed -n '/^print_next_steps()/,/^}/p' '$INSTALL_SH')
+    BB_HOME='$BB_HOME'
+    BB_EXTENSION_DIR='$BB_EXTENSION_DIR'
+    AUTOSTART=false SKILLS_STATUS=failed print_next_steps v9.9.9
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Skills installation was attempted but failed"* ]]
+}
+
+@test "print_next_steps reports skipped-opt-out when SKILLS_STATUS=skipped-opt-out" {
+  bash_path=$(find_modern_bash)
+  run "$bash_path" -c "
+    set -euo pipefail
+    source <(sed -n '/^print_next_steps()/,/^}/p' '$INSTALL_SH')
+    BB_HOME='$BB_HOME'
+    BB_EXTENSION_DIR='$BB_EXTENSION_DIR'
+    AUTOSTART=false SKILLS_STATUS=skipped-opt-out print_next_steps v9.9.9
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Skills: skipped (--no-skills)."* ]]
+}
+
+@test "print_next_steps reports skipped-no-target when SKILLS_STATUS=skipped-no-target" {
+  bash_path=$(find_modern_bash)
+  run "$bash_path" -c "
+    set -euo pipefail
+    source <(sed -n '/^print_next_steps()/,/^}/p' '$INSTALL_SH')
+    BB_HOME='$BB_HOME'
+    BB_EXTENSION_DIR='$BB_EXTENSION_DIR'
+    AUTOSTART=false SKILLS_STATUS=skipped-no-target print_next_steps v9.9.9
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Skills: skipped — neither ~/.agents nor ~/.claude exists."* ]]
 }
 
 @test "print_next_steps omits the skills note when no skills were installed" {
@@ -683,12 +725,13 @@ EOF
     set -euo pipefail
     source <(sed '\$d' '$INSTALL_SH')
     parse_install_args --with-skills
-    [[ \"\$WITH_SKILLS\" == 'true' ]]
     [[ \"\$NO_SKILLS\" == 'false' ]]
+    [[ \"\$SAW_DEPRECATED_SKILLS_OPT\" == '1' ]]
     echo OK
   "
   [ "$status" -eq 0 ]
-  [[ "$output" == *"--with-skills is deprecated"* ]]
+  [[ "$output" == *"--with-skills"* ]]
+  [[ "$output" == *"are deprecated"* ]]
   [[ "$output" == *"OK"* ]]
 }
 
@@ -699,10 +742,29 @@ EOF
     source <(sed '\$d' '$INSTALL_SH')
     parse_install_args
     [[ \"\$NO_SKILLS\" == 'false' ]]
+    [[ \"\$SAW_DEPRECATED_SKILLS_OPT\" == '1' ]]
     echo OK
   "
   [ "$status" -eq 0 ]
-  [[ "$output" == *"BB_WITH_SKILLS is deprecated"* ]]
+  [[ "$output" == *"BB_WITH_SKILLS"* ]]
+  [[ "$output" == *"are deprecated"* ]]
+  [[ "$output" == *"OK"* ]]
+}
+
+@test "parse_install_args suppresses deprecation note when --no-skills is also set" {
+  bash_path=$(find_modern_bash)
+  run "$bash_path" -c "
+    set -euo pipefail
+    source <(sed '\$d' '$INSTALL_SH')
+    parse_install_args --with-skills --no-skills
+    [[ \"\$NO_SKILLS\" == 'true' ]]
+    [[ \"\$SAW_DEPRECATED_SKILLS_OPT\" == '1' ]]
+    echo OK
+  "
+  [ "$status" -eq 0 ]
+  # Note suppressed — "use --no-skills to opt out" while --no-skills has just
+  # been set would read as "we ignored your opt-out".
+  [[ "$output" != *"are deprecated"* ]]
   [[ "$output" == *"OK"* ]]
 }
 
@@ -921,7 +983,8 @@ SCRIPT
   stop_mock_http
 
   [ "$status" -eq 0 ]
-  [[ "$output" == *"--with-skills is deprecated"* ]]
+  [[ "$output" == *"--with-skills"* ]]
+  [[ "$output" == *"are deprecated"* ]]
   [[ -f "$HOME/.claude/skills/browser-bridge/SKILL.md" ]]
 }
 
@@ -1010,7 +1073,11 @@ SCRIPT
   [[ -f "$BB_TEST_TMP/custom-skills/browser-bridge/SKILL.md" ]]
   [[ ! -e "$HOME/.agents/skills" ]]
   [[ ! -e "$HOME/.claude/skills" ]]
-  [[ "$output" == *"Installed the browser-bridge skill into: $BB_TEST_TMP/custom-skills"* ]]
+  # With multi-target rendering, paths move to their own indented line —
+  # the old "into: <path>" substring no longer holds. Each rendered target
+  # appears as "    <path>" following the "into:" headline.
+  [[ "$output" == *"Installed the browser-bridge skill into:"* ]]
+  [[ "$output" == *"    $BB_TEST_TMP/custom-skills"* ]]
 }
 
 @test "install.sh degrades to a warning when the skills download fails" {

@@ -61,13 +61,32 @@ write_artifacts() {
 
 print_next_steps() {
   local version="$1" skills_note="" autostart_note=""
-  # SKILLS_INSTALLED_DIRS is set by main() to the space-separated list of
-  # skill targets that actually received the browser-bridge skill; it stays
-  # empty when skills were skipped (--no-skills, no eligible default target,
-  # or a failed skills download, which never fails the install — ADR-0015).
-  if [[ -n "${SKILLS_INSTALLED_DIRS:-}" ]]; then
-    skills_note=$'  Installed the browser-bridge skill into: '"${SKILLS_INSTALLED_DIRS}"$' (available the next time you start your agent).\n'
-  fi
+  # Always render a line about skills so the user never has to infer the
+  # outcome from upstream warnings. SKILLS_STATUS drives which line; empty
+  # SKILLS_STATUS (e.g. when sourced in isolation by a BATS test) renders
+  # nothing, preserving the existing "omits the skills note" assertion for
+  # the unset case.
+  case "${SKILLS_STATUS:-}" in
+    installed)
+      # Newline-separated paths render one per indented line so $HOME with
+      # embedded spaces or a path that's a prefix of another doesn't blur
+      # the boundary between targets.
+      local indented=""
+      while IFS= read -r dir; do
+        [[ -n "$dir" ]] && indented+="    ${dir}"$'\n'
+      done <<< "${SKILLS_INSTALLED_DIRS:-}"
+      skills_note=$'  Installed the browser-bridge skill into:\n'"${indented}"$'\n  (available the next time you start your agent).\n'
+      ;;
+    failed)
+      skills_note=$'  Skills installation was attempted but failed; continuing without skills. Re-run with --skills-dir <path> to retry once the issue is resolved.\n'
+      ;;
+    skipped-opt-out)
+      skills_note=$'  Skills: skipped (--no-skills).\n'
+      ;;
+    skipped-no-target)
+      skills_note=$'  Skills: skipped — neither ~/.agents nor ~/.claude exists. Re-run with --skills-dir <path> to install.\n'
+      ;;
+  esac
   # AUTOSTART gates the user-visible message independently of the host
   # platform; macOS is the only platform that actually enables login
   # auto-start today, but users on other platforms who run with
@@ -266,12 +285,29 @@ install_skills() {
   # Explicit `|| die` on mkdir/cp: main() runs download_skills (and thus this
   # function) in a subshell as an `if` condition, which suspends errexit, so
   # unguarded commands would otherwise fail silently.
-  mkdir -p "$dest" || die "BB-E201: could not create skills destination directory: $dest"
+  mkdir -p "$dest" || die "BB-E210: could not create skills destination directory: $dest"
 
   local installed=0
   if [[ -f "$src/SKILL.md" ]]; then
     local name
     name=$(basename "$src")
+    # Defensive: if both $src/SKILL.md and a same-named subdirectory with
+    # its own SKILL.md exist, the tarball extracted without its wrapper —
+    # the skill files would end up nested inside the wrapper, and
+    # basename($src) would point at the mktemp dir ("extract"), so the
+    # install would silently copy the skill to $dest/extract/, where no
+    # agent would find it. Detect it explicitly.
+    local nested_skill_dir=""
+    for inner in "$src"/*/; do
+      [[ -d "$inner" ]] || continue
+      if [[ -f "$inner/SKILL.md" ]]; then
+        nested_skill_dir="$(basename "$inner")"
+        break
+      fi
+    done
+    if [[ -n "$nested_skill_dir" ]]; then
+      die "BB-E211: skills tarball is missing its top-level wrapper directory (saw both $src/SKILL.md and $src/$nested_skill_dir/SKILL.md)."
+    fi
     rm -rf "${dest}/${name}"
     cp -R "$src" "${dest}/${name}" || die "BB-E208: failed to install skill $name into $dest"
     info "Installed skill: $name"
@@ -325,20 +361,23 @@ download_skills() {
 
 parse_install_args() {
   SKILLS_TARGET_DIR="${BB_SKILLS_TARGET_DIR:-}"
-  WITH_SKILLS="${BB_WITH_SKILLS:-false}"
   NO_SKILLS="${BB_NO_SKILLS:-false}"
   FORCE="${BB_FORCE:-false}"
   AUTOSTART="${BB_AUTOSTART:-true}"
-  # Space-separated list of skill targets main() actually installed into;
-  # read by print_next_steps.
+  # SKILLS_STATUS is one of: "installed" / "failed" /
+  # "skipped-opt-out" / "skipped-no-target" / "unknown" (the empty default
+  # before main() runs). SKILLS_INSTALLED_DIRS is the newline-separated list
+  # of skill targets that actually received the browser-bridge skill when
+  # SKILLS_STATUS="installed", and empty otherwise. Both are read by
+  # print_next_steps to render the post-install summary.
+  SKILLS_STATUS=""
   SKILLS_INSTALLED_DIRS=""
-
   # --with-skills / BB_WITH_SKILLS predate default-on skills (ADR-0015):
-  # they stay accepted as no-ops so old scripts and muscle memory keep
-  # working, with a note that the flag is no longer needed.
-  if [[ "$WITH_SKILLS" == "true" ]]; then
-    info "Note: BB_WITH_SKILLS is deprecated; skills are installed by default (use BB_NO_SKILLS=true to opt out)."
-  fi
+  # accepted as no-ops so old scripts / muscle memory keep working. Tracking
+  # this state lets us emit a single deprecation note at the end of the arg
+  # loop, gated on the user NOT also opting out via --no-skills.
+  SAW_DEPRECATED_SKILLS_OPT=0
+  [[ "${BB_WITH_SKILLS:-false}" == "true" ]] && SAW_DEPRECATED_SKILLS_OPT=1
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -348,8 +387,7 @@ parse_install_args() {
         shift 2
         ;;
       --with-skills)
-        WITH_SKILLS=true
-        info "Note: --with-skills is deprecated; skills are installed by default (use --no-skills to opt out)."
+        SAW_DEPRECATED_SKILLS_OPT=1
         shift
         ;;
       --no-skills)
@@ -373,6 +411,14 @@ parse_install_args() {
         ;;
     esac
   done
+
+  # Single deprecation notice at the end of arg parsing, gated on the user
+  # NOT opting out via --no-skills. Printing "use --no-skills to opt out"
+  # while --no-skills has just been set (e.g. `install.sh --with-skills
+  # --no-skills`) reads as "we ignored your opt-out".
+  if [[ "$SAW_DEPRECATED_SKILLS_OPT" -eq 1 && "$NO_SKILLS" != "true" ]]; then
+    info "Note: --with-skills (and BB_WITH_SKILLS) are deprecated; skills are installed by default (use --no-skills to opt out)."
+  fi
 }
 
 # Publish the platform the install is running on to the bridge binary so
@@ -439,31 +485,47 @@ main() {
   # never fails the overall install: without an explicit --skills-dir only
   # agent config roots that already exist are targeted (neither present →
   # skip with a note), and a failed download/install (e.g. a pinned release
-  # that predates the skills tarball) degrades to a warning.
-  if [[ "$NO_SKILLS" != "true" ]]; then
-    if [[ -n "$SKILLS_TARGET_DIR" ]]; then
-      # Explicit --skills-dir: single target, exactly as requested.
-      if ( download_skills "$version" "$SKILLS_TARGET_DIR" ); then
-        SKILLS_INSTALLED_DIRS="$SKILLS_TARGET_DIR"
-      else
-        info "Warning: skills installation failed; continuing without skills."
-      fi
+  # that predates the skills tarball) degrades to a warning. SKILLS_STATUS
+  # summarizes the outcome for print_next_steps.
+  SKILLS_INSTALLED_DIRS=""
+  if [[ "$NO_SKILLS" == "true" ]]; then
+    SKILLS_STATUS="skipped-opt-out"
+  elif [[ -n "$SKILLS_TARGET_DIR" ]]; then
+    # Explicit --skills-dir: single target, exactly as requested.
+    if ( download_skills "$version" "$SKILLS_TARGET_DIR" ); then
+      SKILLS_INSTALLED_DIRS="$SKILLS_TARGET_DIR"
+      SKILLS_STATUS="installed"
     else
-      local dest_dirs=()
-      while IFS= read -r line; do
-        [[ -n "$line" ]] && dest_dirs+=("$line")
-      done < <(detect_default_skills_dirs)
-      if [[ ${#dest_dirs[@]} -eq 0 ]]; then
-        info "Note: neither ~/.agents nor ~/.claude exists; skipping skills installation (pass --skills-dir to choose a location)."
-      else
-        local dest_dir
-        for dest_dir in "${dest_dirs[@]}"; do
-          if ( download_skills "$version" "$dest_dir" ); then
-            SKILLS_INSTALLED_DIRS="${SKILLS_INSTALLED_DIRS:+$SKILLS_INSTALLED_DIRS }$dest_dir"
+      info "Warning: skills installation failed; continuing without skills."
+      SKILLS_STATUS="failed"
+    fi
+  else
+    local dest_dirs=()
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && dest_dirs+=("$line")
+    done < <(detect_default_skills_dirs)
+    if [[ ${#dest_dirs[@]} -eq 0 ]]; then
+      info "Note: neither ~/.agents nor ~/.claude exists; skipping skills installation (pass --skills-dir to choose a location)."
+      SKILLS_STATUS="skipped-no-target"
+    else
+      local any_installed=0
+      local dest_dir
+      for dest_dir in "${dest_dirs[@]}"; do
+        if ( download_skills "$version" "$dest_dir" ); then
+          any_installed=1
+          if [[ -z "$SKILLS_INSTALLED_DIRS" ]]; then
+            SKILLS_INSTALLED_DIRS="$dest_dir"
           else
-            info "Warning: skills installation into $dest_dir failed; continuing."
+            SKILLS_INSTALLED_DIRS="${SKILLS_INSTALLED_DIRS}"$'\n'"${dest_dir}"
           fi
-        done
+        else
+          info "Warning: skills installation into $dest_dir failed; continuing."
+        fi
+      done
+      if [[ "$any_installed" -eq 1 ]]; then
+        SKILLS_STATUS="installed"
+      else
+        SKILLS_STATUS="failed"
       fi
     fi
   fi

@@ -382,7 +382,7 @@ function walkElement(
     } else if (child.nodeType === Node.TEXT_NODE) {
       const run = collapseWhitespace(child.textContent ?? '');
       if (run === '') continue;
-      if (inheritedName !== undefined && inheritedName.includes(run)) continue;
+      if (inheritedName?.includes(run)) continue;
       children.push({ role: 'text', text: run, children: [] });
     }
   }

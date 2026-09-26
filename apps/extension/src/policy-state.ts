@@ -29,6 +29,14 @@ export interface PolicyState {
   blockedOrigins: string[];
   // Downloads paused by the policy gate, awaiting human resume/cancel.
   pendingDownloads: PendingDownload[];
+  // Whether `chrome.tabGroups` is callable right now (ADR-0014). Chrome
+  // revokes the permission silently on extension update if the user
+  // declines the new prompt — the API then rejects every call. Defaults to
+  // true; flipped to false on the first rejection and restored on the
+  // next success. updateBadge() reads this to render a '!' indicator so
+  // the user has a visible signal that grouping is disabled, instead of
+  // having to open the service-worker DevTools console.
+  agentGroupAvailable: boolean;
 }
 
 const STORAGE_KEY = 'policyState';
@@ -44,6 +52,7 @@ const DEFAULT_STATE: PolicyState = {
   recentDenials: [],
   blockedOrigins: [],
   pendingDownloads: [],
+  agentGroupAvailable: true,
 };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -168,5 +177,47 @@ export async function clearSessionScoped(): Promise<void> {
 export async function updateBadge(): Promise<void> {
   const state = await getPolicyState();
   const count = state.recentDenials.length + state.pendingDownloads.length;
-  await chrome.action.setBadgeText({ text: count > 0 ? String(count) : '' });
+  if (!state.agentGroupAvailable) {
+    // Permissions revoked (typically Chrome's post-update prompt the user
+    // dismissed). Prefix the denial count with '!' and tint the badge red
+    // so the disabled-feature signal survives on top of any denial counts;
+    // setBadgeBackgroundColor is sticky, so we also have to restore the
+    // default blue when grouping comes back.
+    await chrome.action.setBadgeBackgroundColor({ color: '#d93025' });
+    await chrome.action.setBadgeText({
+      text: count > 0 ? `!${String(count)}` : '!',
+    });
+    await chrome.action.setTitle({
+      title:
+        'Browser Bridge — agent tab group permission denied (grouping disabled; see chrome://extensions)',
+    });
+  } else {
+    await chrome.action.setBadgeBackgroundColor({ color: '#1a73e8' });
+    await chrome.action.setBadgeText({
+      text: count > 0 ? String(count) : '',
+    });
+    await chrome.action.setTitle({ title: 'Browser Bridge' });
+  }
+}
+
+// Flip the agentGroupAvailable bit and refresh the badge. No-ops when the
+// value is already in the desired state — avoids a write+badge churn on
+// every chrome.tabGroups.query call when the permission is healthy.
+export async function setAgentGroupAvailability(
+  available: boolean,
+  error?: unknown,
+): Promise<void> {
+  if (!available && error !== undefined) {
+    console.error(
+      'browser-bridge: chrome.tabGroups unavailable (agent grouping disabled)',
+      error,
+    );
+  }
+  const state = await getPolicyState();
+  if (state.agentGroupAvailable === available) return;
+  await updatePolicyState((fresh) => ({
+    ...fresh,
+    agentGroupAvailable: available,
+  }));
+  await updateBadge();
 }
