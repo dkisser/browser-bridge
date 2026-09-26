@@ -45,65 +45,14 @@ detect_arch() {
   esac
 }
 
-# Path to the bridge template, baked into install.sh via a heredoc at emit time.
-BRIDGE_TEMPLATE_PATH="${BRIDGE_TEMPLATE_PATH:-}"
-
-fetch_bridge_template() {
-  [[ -n "${BRIDGE_TEMPLATE_PATH:-}" && -f "$BRIDGE_TEMPLATE_PATH" ]] && return 0
-  local tmpdir
-  tmpdir=$(mktemp -d)
-
-  # Self-contained release installers embed the template after these markers.
-  if grep -q '^__BB_TEMPLATE_BEGIN__$' "$0" 2>/dev/null && grep -q '^__BB_TEMPLATE_END__$' "$0" 2>/dev/null; then
-    awk '/^__BB_TEMPLATE_BEGIN__$/{f=1;next}/^__BB_TEMPLATE_END__$/{f=0}f' "$0" > "${tmpdir}/bridge.sh.tmpl"
-    BRIDGE_TEMPLATE_PATH="${tmpdir}/bridge.sh.tmpl"
-    return 0
-  fi
-
-  # Development fallback: fetch the template from the same release tag as the assets.
-  local version="${1:-}"
-  local tag="${version:-main}"
-  local url="https://raw.githubusercontent.com/${ORG}/${REPO}/${tag}/install/bridge.sh.tmpl"
-  curl -fsSL "$url" -o "${tmpdir}/bridge.sh.tmpl" \
-    || die "BB-E021: failed to fetch bridge template"
-  BRIDGE_TEMPLATE_PATH="${tmpdir}/bridge.sh.tmpl"
-}
-
-LAUNCHAGENT_TEMPLATE_PATH="${LAUNCHAGENT_TEMPLATE_PATH:-}"
-
-fetch_launchagent_template() {
-  [[ -n "${LAUNCHAGENT_TEMPLATE_PATH:-}" && -f "$LAUNCHAGENT_TEMPLATE_PATH" ]] && return 0
-  local tmpdir
-  tmpdir=$(mktemp -d)
-
-  # Self-contained release installers embed the template after these markers.
-  if grep -q '^__BB_LAUNCHAGENT_BEGIN__$' "$0" 2>/dev/null && grep -q '^__BB_LAUNCHAGENT_END__$' "$0" 2>/dev/null; then
-    awk '/^__BB_LAUNCHAGENT_BEGIN__$/{f=1;next}/^__BB_LAUNCHAGENT_END__$/{f=0}f' "$0" > "${tmpdir}/launchagent.plist.tmpl"
-    LAUNCHAGENT_TEMPLATE_PATH="${tmpdir}/launchagent.plist.tmpl"
-    return 0
-  fi
-
-  # Development fallback: fetch the template from the same release tag as the assets.
-  local version="${1:-}"
-  local tag="${version:-main}"
-  local url="https://raw.githubusercontent.com/${ORG}/${REPO}/${tag}/install/launchagent.plist.tmpl"
-  curl -fsSL "$url" -o "${tmpdir}/launchagent.plist.tmpl" \
-    || die "BB-E021: failed to fetch launchagent template"
-  LAUNCHAGENT_TEMPLATE_PATH="${tmpdir}/launchagent.plist.tmpl"
-}
-
+# Both runtime binaries (bridge-core + the bridge CLI, Go builds per
+# ADR-0012) arrive in the runtime tarball. The bash router template and the
+# LaunchAgent plist template are gone: `bridge` is the Go binary itself and
+# the plist template is embedded in it (go:embed), so install.sh only
+# records the version and maintains the PATH symlink.
 write_artifacts() {
   local version="$1"
-  fetch_bridge_template "$version"
-  fetch_launchagent_template "$version"
-  mkdir -p "$BB_HOME/bin"
-  info "Writing bridge to $BB_HOME/bin/bridge"
-  local tmp_bridge
-  tmp_bridge=$(mktemp "$BB_HOME/bin/bridge.XXXXXX")
-  sed -e "s|{{BRIDGE_VERSION}}|${version}|g" -e "s|{{ORG}}|${ORG}|g" -e "s|{{REPO}}|${REPO}|g" "$BRIDGE_TEMPLATE_PATH" > "$tmp_bridge"
-  chmod +x "$tmp_bridge"
-  mv "$tmp_bridge" "$BB_HOME/bin/bridge"
-  cp "$LAUNCHAGENT_TEMPLATE_PATH" "$BB_HOME/launchagent.plist.tmpl"
+  mkdir -p "$BB_HOME"
   echo "$version" > "$BB_HOME/version"
   mkdir -p "$HOME/.local/bin"
   ln -sf "$BB_HOME/bin/bridge" "$HOME/.local/bin/bridge"
@@ -250,9 +199,10 @@ download_runtime() {
 
   local extracted="$BB_HOME/browser-bridge-macos-${arch}-${version}"
   [[ -d "$extracted/bin" ]] || die "BB-E032: tarball missing bin/ directory"
-  # Bridge-core merge (ADR-0011): only two binaries ship now.
+  # Two Go binaries ship (ADR-0012): bridge-core (control plane) and bridge
+  # (CLI + service lifecycle). bridge-cmd is retired.
   [[ -x "$extracted/bin/bridge-core" ]] || die "BB-E032: tarball missing bridge-core binary"
-  [[ -x "$extracted/bin/bridge-cmd" ]] || die "BB-E032: tarball missing bridge-cmd binary"
+  [[ -x "$extracted/bin/bridge" ]] || die "BB-E032: tarball missing bridge binary"
 
   # Migration: when upgrading from a pre-merge install, the old ws-server
   # and local-proxy binaries are still in $BB_HOME/bin/ and the old config
@@ -261,6 +211,10 @@ download_runtime() {
   # pairing hash, and the user is prompted to re-pair the extension. See
   # ADR-0011.
   rm -f "$BB_HOME/bin/ws-server" "$BB_HOME/bin/local-proxy" 2>/dev/null || true
+  # Go rewrite (ADR-0012): the TS bridge-cmd is superseded by the Go `bridge`
+  # binary below, and the LaunchAgent plist template moved into the binary
+  # (go:embed) — drop both leftovers.
+  rm -f "$BB_HOME/bin/bridge-cmd" "$BB_HOME/launchagent.plist.tmpl" 2>/dev/null || true
   # bridge-core resolves its config dir from BB_HOME, falling back to
   # ~/.browser-bridge. Remove both: the current location, and the default
   # location a pre-merge build always used (which is a different path when
@@ -268,7 +222,7 @@ download_runtime() {
   rm -f "$BB_HOME/config.json" "$HOME/.browser-bridge/config.json" 2>/dev/null || true
 
   mkdir -p "$BB_HOME/bin"
-  mv "$extracted/bin/bridge-core" "$extracted/bin/bridge-cmd" "$BB_HOME/bin/"
+  mv "$extracted/bin/bridge-core" "$extracted/bin/bridge" "$BB_HOME/bin/"
   rm -rf "$extracted"
   trap - RETURN
 }

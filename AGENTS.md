@@ -18,8 +18,10 @@ For project structure, commands, architecture, and conventions, see [README.md](
 ## Testing
 
 - Use `bun run test` for the Bun unit/integration test suite.
-- Use `bun run test:install` for the BATS installer tests.
+- Use `bun run test:install` for the BATS installer tests (`install/tests/install.bats` — install.sh only; the service lifecycle moved into the Go binary and its BATS suite is gone).
+- Go tests: `go test ./...` from `apps/bridge-core` (unit + service integration); the black-box contract suite (golden JSON fixtures, `tools/list` diff) is driven from `apps/bridge-core` as well.
 - BATS tests spawn real subprocesses and may hang if background services are not detached cleanly.
+- **BATS never touches real launchd or the production ports**: the suite exports test ports 3311-3313 (never 3001-3003), and `install.bats` installs a fake `launchctl` in `setup()` because the Go binary always walks the launchd path on macOS regardless of any fake `uname`.
 - **If the BATS installer tests fail or hang twice in a row, stop using BATS and validate directly with bash.** Simulate `bridge service up` with fake binaries, confirm services bind to `127.0.0.1`, and verify external IPs cannot connect.
 
 ## Compiled binaries

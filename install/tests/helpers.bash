@@ -10,6 +10,9 @@ mkdir -p "$BB_TEST_TMP"
 export BB_TEST_TMP
 
 # Fake HOME so we never touch the developer's real ~/.browser-bridge.
+# The real HOME is kept for setup_file's go build, which needs the shared
+# module cache (GOPATH/GOCACHE derive from HOME).
+export BB_REAL_HOME="$HOME"
 export HOME="$BB_TEST_TMP/home"
 mkdir -p "$HOME"
 
@@ -54,7 +57,7 @@ case "\$1" in
     args=()
     while IFS= read -r line; do
       args+=("\$line")
-    done < <(awk '/<key>ProgramArguments<\\/key>/{f=1;next} f&&/<\\/array>/{exit} f {gsub(/.*<string>/,""); gsub(/<\\/string>.*/,""); print}' "\$plist")
+    done < <(awk '/<key>ProgramArguments<\\/key>/{f=1;next} f&&/<\\/array>/{exit} f&&/<string>/{gsub(/.*<string>/,""); gsub(/<\\/string>.*/,""); print}' "\$plist")
     [[ \${#args[@]} -gt 0 ]] || exit 1
     mkdir -p "\$BB_HOME/logs"
     env BB_HOME="\$BB_HOME" nohup "\${args[@]}" >>"\$BB_HOME/logs/launchagent.log" 2>&1 &
@@ -109,14 +112,12 @@ EOF
   export PATH="$BB_TEST_TMP/bin:$PATH"
 }
 
-# Create a fake runtime tarball for install.bats tests. Layout matches the
-# goreleaser archives: browser-bridge-<os>-<arch>-<version>/bin/{bridge,bridge-core}.
-# bin/bridge is the REAL Go CLI (built once per test file by setup_file into
-# BB_TEST_BRIDGE_BIN); bin/bridge-core is a fake that binds the three test
-# ports so the service manager's liveness probe succeeds. Also appends the
-# tarball to a goreleaser-style checksum manifest
-# (browser-bridge_<version>_checksums.txt) next to the tarball.
-# Returns the path to the tarball.
+# Create a fake runtime tarball for install.bats tests. Layout matches
+# build-tarball.sh: browser-bridge-macos-<arch>-<version>/bin/{bridge,bridge-core}
+# plus a per-tarball .sha256 sidecar. bin/bridge is the REAL Go CLI (built
+# once per test file by setup_file into BB_TEST_BRIDGE_BIN); bin/bridge-core
+# is a fake that binds the three test ports so the service manager's
+# liveness probe succeeds. Returns the path to the tarball.
 make_fake_runtime_tarball() {
   local version="${1:-v9.9.9}" arch="${2:-arm64}"
   local name="browser-bridge-macos-${arch}-${version}"
@@ -149,7 +150,7 @@ EOF
   chmod +x "$stage/bin/"*
 
   ( cd "$BB_TEST_TMP" && tar czf "${name}.tar.gz" "$name" )
-  ( cd "$BB_TEST_TMP" && shasum -a 256 "${name}.tar.gz" >> "browser-bridge_${version#v}_checksums.txt" )
+  ( cd "$BB_TEST_TMP" && shasum -a 256 "${name}.tar.gz" > "${name}.tar.gz.sha256" )
 
   echo "$BB_TEST_TMP/${name}.tar.gz"
 }
@@ -192,6 +193,17 @@ helpers_teardown() {
   stop_mock_http
   # Kill anything still running from the test.
   pkill -P $$ 2>/dev/null || true
+  # Supervisors started via the fake launchctl are nohup-detached (reparented)
+  # and a fast test can finish before the supervisor wrote its pidfile. Their
+  # command line always contains this test's scratch path, so match on that
+  # and wait for them to exit — a supervisor's TERM shutdown stops its
+  # bridge-core child, which keeps the test ports free for the next test.
+  pkill -f "$BB_TEST_TMP/" 2>/dev/null || true
+  local waited=0
+  while pgrep -f "$BB_TEST_TMP/" >/dev/null 2>&1 && [[ $waited -lt 30 ]]; do
+    sleep 0.1
+    waited=$((waited + 1))
+  done
   # Stop test services recorded in pidfiles under the scratch dir (the
   # supervisor stops its bridge-core child on TERM).
   local pidfile pid

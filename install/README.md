@@ -32,8 +32,8 @@ To pin a version: `BB_VERSION=v1.2.3 curl ... | bash`.
 4. Extracts the extension into `~/.browser-bridge/extension/` and exposes it through a symlink at `~/Browser-Bridge/extension/` for easy Chrome loading.
 5. Detects the macOS architecture (arm64 or x64).
 6. Downloads the matching runtime tarball (`browser-bridge-macos-{arch}-{version}.tar.gz`) and its `.sha256`; aborts on mismatch.
-7. Extracts the two binaries (`bridge-core`, `bridge-cmd`) into `~/.browser-bridge/bin/`. On upgrade from a pre-merge install, force-reinitializes `~/.browser-bridge/config.json` (new browserId + cleared pairing hash) so the next extension reconnect is forced through pairing.
-8. Writes `~/.browser-bridge/bin/bridge` (templated from `install/bridge.sh.tmpl`) and symlinks it into `~/.local/bin/bridge`.
+7. Extracts the two binaries (`bridge-core`, `bridge`) into `~/.browser-bridge/bin/`. On upgrade from a pre-merge install, force-reinitializes `~/.browser-bridge/config.json` (new browserId + cleared pairing hash) so the next extension reconnect is forced through pairing.
+8. Symlinks `~/.browser-bridge/bin/bridge` into `~/.local/bin/bridge` (the LaunchAgent plist is embedded in the binary since ADR-0012; nothing is templated at install time).
 9. Writes the resolved version to `~/.browser-bridge/version`.
 10. Stops any already-running bridge services, then starts them again after installation.
 11. Prints next steps: PATH export, Chrome "load unpacked" pointer at `~/Browser-Bridge/extension/`.
@@ -45,7 +45,7 @@ To pin a version: `BB_VERSION=v1.2.3 curl ... | bash`.
 | Command | Purpose |
 |---|---|
 | `bridge service up` | Start bridge-core (launchd-supervised on macOS). |
-| `bridge service down` | Stop both. |
+| `bridge service down` | Stop the supervisor and bridge-core. |
 | `bridge service restart` | down then up. |
 | `bridge service status` | Show service state + login auto-start state. |
 | `bridge service logs [name]` | Tail logs. |
@@ -89,15 +89,12 @@ Run `bridge --help` for the full command list.
 | `BB-E033` | Unsupported architecture | Only macOS arm64 and x64 are supported. |
 | `BB-E030` | Tag/version mismatch on release | Fix `package.json` and re-tag. |
 | `BB-E031` | CHANGELOG missing entry for release | Add an entry, re-tag. |
-| `BB-E100` | Subcommand stub (during dev) | Implementation pending. |
-| `BB-E101` | Unknown subcommand | Run `bridge` for help. |
-| `BB-E102` | Unknown log target | Use `bridge-core`. |
 | `BB-E103` | Cannot locate installer (update) | Re-run the install script manually. |
 | `BB-E304` | `launchctl bootout` failed while stopping services | Check `launchctl list` for `com.browser-bridge.bridge`; retry `bridge service down`. |
 | `BB-E305` | Lifecycle command moved under `bridge service` | Re-run as `bridge service <command>`. |
 | `BB-E306` | Unknown `bridge service` subcommand | Run `bridge service` for the list. |
 | `BB-E300` | Login auto-start is macOS-only | Nothing to do on Linux; `service up/down` work unsupervised. |
-| `BB-E301` | LaunchAgent template missing | Reinstall; check `~/.browser-bridge/launchagent.plist.tmpl`. |
+| `BB-E301` | LaunchAgent plist could not be written (embedded in the binary since ADR-0012) | Check permissions on `~/.browser-bridge/launchagents/` and `~/Library/LaunchAgents/`. |
 | `BB-E303` | Bad `bridge autostart` usage (deprecated alias) | Use `bridge service enable|disable`. |
 | `BB-E307` | A second supervisor tried to start while one is already watching | Stop the duplicate; `bridge service status` shows the running pair. |
 
