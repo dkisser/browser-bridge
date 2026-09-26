@@ -10,11 +10,38 @@
 export const AGENT_GROUP_TITLE = 'browser-bridge';
 export const AGENT_GROUP_COLOR: chrome.tabGroups.ColorEnum = 'orange';
 
-// Per-window promise chains: concurrent tab:new calls in the same window
-// serialize here, so two of them cannot both miss the query and create
-// duplicate groups. Entries are dropped once settled so closed windows do
-// not accumulate.
-const groupOpsByWindow = new Map<number, Promise<unknown>>();
+// Per-window FIFO queue: concurrent tab:new calls in the same window
+// serialize here so two of them cannot both miss the query and create
+// duplicate groups. Each queue owns its own `tail` pointer rather than
+// storing a closure-captured promise — a hung chrome.tabs.group IPC at most
+// leaves a stale tail that the next enqueue supersedes (Chrome restarts
+// service workers every ~30s anyway, which clears the map).
+class WindowGroupQueue {
+  private tail: Promise<unknown> = Promise.resolve();
+
+  constructor(readonly windowId: number) {}
+
+  enqueue(tabId: number): Promise<number> {
+    const next = this.tail
+      .catch(() => undefined)
+      .then(() => ensureAgentGroupInner(this.windowId, tabId));
+    // Advance the tail so the next enqueue waits on this one without
+    // propagating the result/error to its consumer.
+    this.tail = next.catch(() => undefined);
+    return next;
+  }
+}
+
+const groupQueuesByWindow = new Map<number, WindowGroupQueue>();
+
+function getQueue(windowId: number): WindowGroupQueue {
+  let queue = groupQueuesByWindow.get(windowId);
+  if (!queue) {
+    queue = new WindowGroupQueue(windowId);
+    groupQueuesByWindow.set(windowId, queue);
+  }
+  return queue;
+}
 
 async function queryAgentGroupId(windowId: number): Promise<number | null> {
   const groups = await chrome.tabGroups.query({
@@ -47,22 +74,13 @@ async function ensureAgentGroupInner(
   return groupId;
 }
 
-// Serialized per windowId; rejects on Chrome API failure (callers that must
-// not fail use addTabToAgentGroup).
+// Serialized per windowId; rejects on Chrome API failure. Callers that must
+// not fail use addTabToAgentGroup instead.
 export function ensureAgentGroup(
   windowId: number,
   tabId: number,
 ): Promise<number> {
-  const previous = groupOpsByWindow.get(windowId) ?? Promise.resolve();
-  const operation = previous
-    .catch(() => {})
-    .then(() => ensureAgentGroupInner(windowId, tabId));
-  groupOpsByWindow.set(windowId, operation);
-  return operation.finally(() => {
-    if (groupOpsByWindow.get(windowId) === operation) {
-      groupOpsByWindow.delete(windowId);
-    }
-  });
+  return getQueue(windowId).enqueue(tabId);
 }
 
 // Group a freshly created tab into the window's agent group. Never throws:

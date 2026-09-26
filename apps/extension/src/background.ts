@@ -275,7 +275,18 @@ async function handleCommand(
     case 'tab:list': {
       const [tabs, agentGroupIds] = await Promise.all([
         chrome.tabs.query({}),
-        queryAgentGroupIds(),
+        // Querying the agent group requires the `tabGroups` permission,
+        // which Chrome may prompt for (and the user may deny) on extension
+        // update. A rejection here would otherwise fail the whole command,
+        // so we degrade to an empty set and log — tab:list still returns
+        // tabs, just without the inAgentGroup mark.
+        queryAgentGroupIds().catch((error) => {
+          console.error(
+            'browser-bridge: failed to query agent groups (degrading tab:list)',
+            error,
+          );
+          return new Set<number>();
+        }),
       ]);
       return tabs.map((t) => ({
         id: t.id,
@@ -297,9 +308,11 @@ async function handleCommand(
         await updatePolicyState((fresh) => ({
           agentTabs: [...fresh.agentTabs, newTab.id as number],
         }));
-        // Visual grouping (ADR-0014); never fails the command — on error the
-        // tab stays ungrouped.
-        await addTabToAgentGroup(newTab.id, newTab.windowId);
+        // Visual grouping (ADR-0014); cosmetic fire-and-forget. addTabToAgentGroup
+        // swallows its own errors (a failed group never fails tab:new), and
+        // serialization through the per-window queue would otherwise block
+        // the response on chrome.tabs.group latency.
+        void addTabToAgentGroup(newTab.id, newTab.windowId);
       }
       return { id: newTab.id, url: newTab.url };
     }
