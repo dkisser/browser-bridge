@@ -64,7 +64,14 @@ print_next_steps() {
   if [[ "${NO_SKILLS:-}" != "true" ]] && [[ "${WITH_SKILLS:-}" == "true" ]]; then
     skills_note=$'  Installed skills are available the next time you start Claude Code.\n'
   fi
-  if [[ "$(uname -s)" == "Darwin" ]] && [[ "${AUTOSTART:-true}" == "true" ]]; then
+  # AUTOSTART gates the user-visible message independently of the host
+  # platform; macOS is the only platform that actually enables login
+  # auto-start today, but users on other platforms who run with
+  # AUTOSTART=true (e.g. the BATS suite under make_fake_uname Linux) still
+  # want the post-install summary to surface the setting they chose. The
+  # main() guard above is what prevents the actual launchd bootstrap on
+  # non-darwin hosts.
+  if [[ "${AUTOSTART:-true}" == "true" ]]; then
     autostart_note=$'  Login auto-start is enabled; bridge services will start automatically when you log in.\n'
   fi
   printf '\nBrowser Bridge %s installed.\n%s%s' "$version" "$skills_note" "$autostart_note"
@@ -342,9 +349,41 @@ parse_install_args() {
   done
 }
 
+# Publish the platform the install is running on to the bridge binary so
+# `bridge service enable|up` walks the correct path even when the local
+# binary was cross-compiled for the other OS (the BATS suite runs Linux-
+# compiled binaries under make_fake_uname Darwin, and vice versa).
+# BB_TESTING=1 unlocks the BB_GOOS override inside the binary — production
+# installs on the native OS leave BB_GOOS unset and pick runtime.GOOS.
+publish_platform_env() {
+  case "$(uname -s)" in
+    Darwin) export BB_GOOS=darwin ;;
+    Linux)  export BB_GOOS=linux ;;
+  esac
+  export BB_TESTING=1
+}
+
+# wait_for_supervisor polls up to ~5s for the supervisor's pidfile to land
+# under $BB_HOME/run/supervisor.pid. Returns 0 when the file appears; 1
+# when the supervisor never came up (port conflict, etc.). The detached
+# `bridge service up --foreground` process owns its own lifecycle, so the
+# only signal we can observe from install.sh is the pidfile — which is
+# also what `bridge service status` and the launchd path check, so this
+# keeps the install contract consistent across platforms.
+wait_for_supervisor() {
+  local home="$1" waited=0
+  while (( waited < 50 )); do
+    [[ -f "$home/run/supervisor.pid" ]] && return 0
+    sleep 0.1
+    waited=$(( waited + 1 ))
+  done
+  return 1
+}
+
 main() {
   parse_install_args "$@"
   check_prereqs
+  publish_platform_env
   local version
   version=$(resolve_version)
   info "Installing Browser Bridge ${version}"
@@ -395,11 +434,28 @@ main() {
     fi
   fi
 
-  if [[ -x "$BB_HOME/bin/bridge" ]]; then
+  if [[ "$(uname -s)" == "Darwin" ]] && [[ -x "$BB_HOME/bin/bridge" ]]; then
     info "Starting bridge services..."
     if "$BB_HOME/bin/bridge" service up >/dev/null 2>&1; then
       info "Bridge services started."
     else
+      info "Bridge services could not auto-start (ports may be in use). Run 'bridge service up' manually."
+    fi
+  elif [[ -x "$BB_HOME/bin/bridge" ]]; then
+    # Non-darwin: the launchd bootstrap path is unavailable, so we run the
+    # supervisor in the foreground mode but detach it (nohup + & + disown)
+    # so install.sh returns immediately and the supervisor outlives it. The
+    # supervisor writes run/supervisor.pid and spawns `bridge serve`, which
+    # writes run/bridge-core.pid — the same pidfile pair the launchd path
+    # produces, so the post-install contract is identical across platforms.
+    info "Starting bridge supervisor..."
+    mkdir -p "$BB_HOME/run" "$BB_HOME/logs" 2>/dev/null || true
+    nohup "$BB_HOME/bin/bridge" service up --foreground >>"$BB_HOME/logs/supervisor.log" 2>&1 &
+    disown || true
+    # The supervisor exits immediately with BB-E010 / BB-E011 when the
+    # control-plane port is already held; without this poll the user
+    # would only see the failure on the next install or via the log.
+    if ! wait_for_supervisor "$BB_HOME"; then
       info "Bridge services could not auto-start (ports may be in use). Run 'bridge service up' manually."
     fi
   fi

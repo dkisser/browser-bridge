@@ -75,7 +75,7 @@ func EnvFromOSEnv() (*Env, error) {
 		BBHome:           orEnv("BB_HOME", filepath.Join(home, ".browser-bridge")),
 		ExtensionDir:     orEnv("BB_EXTENSION_DIR", filepath.Join(home, "Browser-Bridge")),
 		HomeDir:          home,
-		GOOS:             runtime.GOOS,
+		GOOS:             resolveGOOS(),
 		WSHost:           orEnv("BRIDGE_WS_HOSTNAME", "127.0.0.1"),
 		LocalHost:        orEnv("BRIDGE_LOCAL_HOSTNAME", "127.0.0.1"),
 		MCPHost:          orEnv("BRIDGE_MCP_HOSTNAME", "127.0.0.1"),
@@ -114,6 +114,20 @@ func orEnv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// resolveGOOS picks the platform the bridge service layer should treat the
+// host as. Defaults to runtime.GOOS (the compiled platform); the BB_GOOS
+// env override is read so install.sh's macOS BATS suite can run on a
+// Linux CI runner without rebuilding for darwin. The override is gated on
+// BB_TESTING=1 so production binaries never accept a spoofed value.
+func resolveGOOS() string {
+	if os.Getenv("BB_TESTING") == "1" {
+		if v := os.Getenv("BB_GOOS"); v == "darwin" || v == "linux" {
+			return v
+		}
+	}
+	return runtime.GOOS
 }
 
 // ---- Well-known paths (all under BBHome except the login LaunchAgent) ----
