@@ -113,35 +113,18 @@ EOF
 }
 
 # Create a fake runtime tarball for install.bats tests. Layout matches
-# build-tarball.sh: browser-bridge-macos-<arch>-<version>/bin/{bridge,bridge-core}
-# plus a per-tarball .sha256 sidecar. bin/bridge is the REAL Go CLI (built
-# once per test file by setup_file into BB_TEST_BRIDGE_BIN); bin/bridge-core
-# is a fake that binds the three test ports so the service manager's
-# liveness probe succeeds. Returns the path to the tarball.
+# build-tarball.sh: browser-bridge-macos-<arch>-<version>/bin/bridge (the
+# single binary since ADR-0013) plus a per-tarball .sha256 sidecar.
+# bin/bridge is the REAL Go binary (built once per test file by setup_file
+# into BB_TEST_BRIDGE_BIN): the supervisor spawns `<bin>/bridge serve`,
+# which binds the three test ports so the service manager's liveness probe
+# succeeds. Returns the path to the tarball.
 make_fake_runtime_tarball() {
   local version="${1:-v9.9.9}" arch="${2:-arm64}"
   local name="browser-bridge-macos-${arch}-${version}"
   local stage="$BB_TEST_TMP/${name}"
   mkdir -p "$stage/bin"
 
-  cat > "$stage/bin/bridge-core" <<'EOF'
-#!/usr/bin/env bash
-ws_port="${BRIDGE_WS_PORT:-3001}"
-local_port="${BRIDGE_LOCAL_PORT:-${BRIDGE_LOCAL_PROXY_PORT:-3002}}"
-mcp_port="${BRIDGE_MCP_PORT:-3003}"
-exec python3 -c "
-import socket, time
-socks = []
-for port in (int('$ws_port'), int('$local_port'), int('$mcp_port')):
-    s = socket.socket()
-    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    s.bind(('127.0.0.1', port))
-    s.listen()
-    socks.append(s)
-while True:
-    time.sleep(60)
-"
-EOF
   if [[ -z "${BB_TEST_BRIDGE_BIN:-}" || ! -x "$BB_TEST_BRIDGE_BIN" ]]; then
     echo "BB_TEST_BRIDGE_BIN not built (setup_file must go build ./cmd/bridge)" >&2
     return 1
@@ -197,7 +180,7 @@ helpers_teardown() {
   # and a fast test can finish before the supervisor wrote its pidfile. Their
   # command line always contains this test's scratch path, so match on that
   # and wait for them to exit — a supervisor's TERM shutdown stops its
-  # bridge-core child, which keeps the test ports free for the next test.
+  # `bridge serve` child, which keeps the test ports free for the next test.
   pkill -f "$BB_TEST_TMP/" 2>/dev/null || true
   local waited=0
   while pgrep -f "$BB_TEST_TMP/" >/dev/null 2>&1 && [[ $waited -lt 30 ]]; do
@@ -205,7 +188,7 @@ helpers_teardown() {
     waited=$((waited + 1))
   done
   # Stop test services recorded in pidfiles under the scratch dir (the
-  # supervisor stops its bridge-core child on TERM).
+  # supervisor stops its daemon child on TERM).
   local pidfile pid
   while IFS= read -r pidfile; do
     pid=$(cat "$pidfile" 2>/dev/null || true)

@@ -193,8 +193,39 @@ SCRIPT
   BB_HOME="$BB_TEST_TMP/bb-home2" run "$bash_path" "$BB_TEST_TMP/test_rt.sh"
   stop_mock_http
   [ "$status" -eq 0 ]
-  [[ "$output" == *"bridge-core"* ]]
   [[ "$output" == *"bridge"* ]]
+  [[ "$output" != *"bridge-core"* ]]
+}
+
+@test "download_runtime removes the leftover bridge-core binary from the two-binary era" {
+  bash_path=$(find_modern_bash)
+  local tarball_path tarball_name
+  tarball_path=$(make_fake_runtime_tarball v9.9.9 arm64)
+  tarball_name=$(basename "$tarball_path")
+  mkdir -p "$BB_TEST_TMP/www"
+  cp "$tarball_path" "$BB_TEST_TMP/www/$tarball_name"
+  cp "${tarball_path}.sha256" "$BB_TEST_TMP/www/${tarball_name}.sha256"
+  start_mock_http 18778
+
+  # Seed the ADR-0012-era leftover the migration block must remove: a
+  # standalone bridge-core daemon binary next to an older bridge CLI.
+  mkdir -p "$BB_TEST_TMP/bb-home/bin"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$BB_TEST_TMP/bb-home/bin/bridge-core"
+  chmod +x "$BB_TEST_TMP/bb-home/bin/bridge-core"
+
+  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_rt_migrate.sh"
+  cat >> "$BB_TEST_TMP/test_rt_migrate.sh" <<'SCRIPT'
+BB_INSTALL_ARCH=arm64
+ORG='127.0.0.1:18778'
+REPO='browser-bridge'
+resolve_version() { echo 'v9.9.9'; }
+download_runtime v9.9.9 arm64 "http://${ORG}"
+SCRIPT
+  BB_HOME="$BB_TEST_TMP/bb-home" run "$bash_path" "$BB_TEST_TMP/test_rt_migrate.sh"
+  stop_mock_http
+  [ "$status" -eq 0 ]
+  [[ ! -e "$BB_TEST_TMP/bb-home/bin/bridge-core" ]]
+  [[ -x "$BB_TEST_TMP/bb-home/bin/bridge" ]]
 }
 
 # ---------------------------------------------------------------------------
@@ -293,7 +324,7 @@ SCRIPT
   [ "$status" -eq 0 ]
   [[ -f "$BB_TEST_TMP/bb-home/version" ]]
   [[ -x "$BB_TEST_TMP/bb-home/bin/bridge" ]]
-  [[ -x "$BB_TEST_TMP/bb-home/bin/bridge-core" ]]
+  [[ ! -e "$BB_TEST_TMP/bb-home/bin/bridge-core" ]]
   [[ -L "$HOME/.local/bin/bridge" ]]
 }
 
@@ -527,7 +558,7 @@ SCRIPT
   [[ -f "$BB_TEST_TMP/bb-home-sc/version" ]]
   [[ "$(cat "$BB_TEST_TMP/bb-home-sc/version")" == "v9.9.9" ]]
   [[ -x "$BB_TEST_TMP/bb-home-sc/bin/bridge" ]]
-  [[ -x "$BB_TEST_TMP/bb-home-sc/bin/bridge-core" ]]
+  [[ ! -e "$BB_TEST_TMP/bb-home-sc/bin/bridge-core" ]]
 }
 
 
@@ -845,7 +876,7 @@ SCRIPT
 
   [ "$status" -eq 0 ]
   [[ "$output" != *"already installed and up to date"* ]]
-  [[ -x "$BB_TEST_TMP/bb-home/bin/bridge-core" ]]
+  [[ -x "$BB_TEST_TMP/bb-home/bin/bridge" ]]
 }
 
 @test "install.sh auto-starts bridge services after install" {
@@ -878,7 +909,8 @@ SCRIPT
 
   [ "$status" -eq 0 ]
   # launchd (fake launchctl) starts the supervisor asynchronously; the
-  # supervisor then spawns bridge-core and writes its pidfile.
+  # supervisor then spawns the daemon (`bridge serve`) and writes its
+  # pidfile (run/bridge-core.pid — the service keeps the old name).
   wait_for_file "$BB_TEST_TMP/bb-home/run/bridge-core.pid"
   [[ -f "$BB_TEST_TMP/bb-home/run/supervisor.pid" ]]
 }
@@ -923,9 +955,10 @@ SCRIPT
   stop_mock_http
 
   [ "$status" -eq 0 ]
-  # Old fake bridge-core should have been stopped.
+  # Old fake daemon should have been stopped.
   ! kill -0 "$old_pid" 2>/dev/null
-  # New bridge-core should be running (started asynchronously via launchd).
+  # New daemon (`bridge serve`) should be running (started asynchronously
+  # via launchd).
   wait_for_file "$BB_TEST_TMP/bb-home/run/bridge-core.pid"
   local new_pid
   new_pid=$(cat "$BB_TEST_TMP/bb-home/run/bridge-core.pid")

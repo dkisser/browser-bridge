@@ -12,10 +12,10 @@ import (
 )
 
 // version is reported by `bridge --version` and by the MCP server when the
-// binary runs `bridge serve`. Overridable at link time:
-// -ldflags "-X main.version=v1.2.3". The default matches package.json (the
-// standalone bridge-core binary hardcoded it).
-var version = "0.3.2"
+// binary runs `bridge serve`. Release builds inject it at link time from the
+// root package.json version (build-binaries.sh:
+// -ldflags "-X main.version=vX.Y.Z"); untagged builds report "dev".
+var version = "dev"
 
 func main() {
 	os.Exit(cli.Execute(version))

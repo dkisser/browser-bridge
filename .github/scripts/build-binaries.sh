@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# Compile runtime binaries for a single macOS architecture.
-# Two Go binaries ship (ADR-0012): `bridge-core` (control plane + MCP +
-# extension bridge) and `bridge` (CLI + service lifecycle). Both are plain
-# `go build` outputs — the bun-compiled TS sources are gone.
+# Compile the runtime binary for a single macOS architecture.
+# One Go binary ships (ADR-0013): `bridge` — cobra CLI, the `service`
+# lifecycle tree, and the hidden `serve` subcommand that runs the control
+# plane. Plain `go build` output — the bun-compiled TS sources are gone.
+# The link-time version (main.version) comes from the root package.json
+# version field; VERSION=vX.Y.Z overrides it (release workflow passes the
+# tag). Must be run from the repo root.
 set -euo pipefail
 
 ARCH="${1:-$(uname -m)}"
@@ -12,9 +15,13 @@ case "$ARCH" in
   *) echo "Unsupported architecture: $ARCH" >&2; exit 1 ;;
 esac
 
-mkdir -p dist
-CGO_ENABLED=0 GOOS=darwin GOARCH="$GOARCH" go -C apps/bridge-core build -o ../../dist/bridge-core ./cmd/bridge-core
-CGO_ENABLED=0 GOOS=darwin GOARCH="$GOARCH" go -C apps/bridge-core build -o ../../dist/bridge      ./cmd/bridge
+VERSION="${VERSION:-$(node -p "require('./package.json').version")}"
+VERSION="v${VERSION#v}"
 
-echo "Built binaries for darwin/$GOARCH in dist/"
-ls -l dist/bridge-core dist/bridge
+mkdir -p dist
+CGO_ENABLED=0 GOOS=darwin GOARCH="$GOARCH" go -C apps/bridge-core build \
+  -ldflags "-X main.version=${VERSION}" \
+  -o ../../dist/bridge ./cmd/bridge
+
+echo "Built dist/bridge ${VERSION} for darwin/$GOARCH"
+ls -l dist/bridge

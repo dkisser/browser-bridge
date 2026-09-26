@@ -29,7 +29,7 @@ The stateless entry point through which external callers drive Browser Bridge. T
 _Avoid_: access layer, frontend, gateway, entry point
 
 **Control plane**:
-The bridge-core process that accepts external commands on the local machine and dispatches them to the browser connection. Replaces the previously separate "WebSocket Server" and "Local Proxy" roles; today both responsibilities live in one binary on the loopback port (3001 for the WebSocket adapter).
+The local process that accepts external commands and dispatches them to the browser connection — it runs as the hidden `bridge serve` subprocess of the single bridge binary, and the *service* still answers to the name bridge-core (logs, pidfile, status text). Replaces the previously separate "WebSocket Server" and "Local Proxy" roles; today both responsibilities live in one process on the loopback port (3001 for the WebSocket adapter).
 _Avoid_: ws-server, WebSocket Server, routing layer
 
 **Browser connection**:

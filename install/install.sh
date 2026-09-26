@@ -45,11 +45,12 @@ detect_arch() {
   esac
 }
 
-# Both runtime binaries (bridge-core + the bridge CLI, Go builds per
-# ADR-0012) arrive in the runtime tarball. The bash router template and the
-# LaunchAgent plist template are gone: `bridge` is the Go binary itself and
-# the plist template is embedded in it (go:embed), so install.sh only
-# records the version and maintains the PATH symlink.
+# The single runtime binary (`bridge`, a Go build — CLI + service lifecycle +
+# hidden `serve` control-plane subcommand, ADR-0012/ADR-0013) arrives in the
+# runtime tarball. The bash router template and the LaunchAgent plist template
+# are gone: `bridge` is the Go binary itself and the plist template is
+# embedded in it (go:embed), so install.sh only records the version and
+# maintains the PATH symlink.
 write_artifacts() {
   local version="$1"
   mkdir -p "$BB_HOME"
@@ -199,9 +200,8 @@ download_runtime() {
 
   local extracted="$BB_HOME/browser-bridge-macos-${arch}-${version}"
   [[ -d "$extracted/bin" ]] || die "BB-E032: tarball missing bin/ directory"
-  # Two Go binaries ship (ADR-0012): bridge-core (control plane) and bridge
-  # (CLI + service lifecycle). bridge-cmd is retired.
-  [[ -x "$extracted/bin/bridge-core" ]] || die "BB-E032: tarball missing bridge-core binary"
+  # One Go binary ships (ADR-0013): bridge (CLI + service lifecycle + the
+  # hidden `serve` control-plane subcommand). bridge-cmd is retired.
   [[ -x "$extracted/bin/bridge" ]] || die "BB-E032: tarball missing bridge binary"
 
   # Migration: when upgrading from a pre-merge install, the old ws-server
@@ -215,6 +215,10 @@ download_runtime() {
   # binary below, and the LaunchAgent plist template moved into the binary
   # (go:embed) — drop both leftovers.
   rm -f "$BB_HOME/bin/bridge-cmd" "$BB_HOME/launchagent.plist.tmpl" 2>/dev/null || true
+  # Single-binary merge (ADR-0013): the standalone bridge-core binary from
+  # the two-Go-binary era is superseded by `bridge serve`; drop the leftover
+  # so a stale daemon binary cannot linger in $BB_HOME/bin.
+  rm -f "$BB_HOME/bin/bridge-core" 2>/dev/null || true
   # bridge-core resolves its config dir from BB_HOME, falling back to
   # ~/.browser-bridge. Remove both: the current location, and the default
   # location a pre-merge build always used (which is a different path when
@@ -222,7 +226,7 @@ download_runtime() {
   rm -f "$BB_HOME/config.json" "$HOME/.browser-bridge/config.json" 2>/dev/null || true
 
   mkdir -p "$BB_HOME/bin"
-  mv "$extracted/bin/bridge-core" "$extracted/bin/bridge" "$BB_HOME/bin/"
+  mv "$extracted/bin/bridge" "$BB_HOME/bin/"
   rm -rf "$extracted"
   trap - RETURN
 }

@@ -32,7 +32,7 @@ To pin a version: `BB_VERSION=v1.2.3 curl ... | bash`.
 4. Extracts the extension into `~/.browser-bridge/extension/` and exposes it through a symlink at `~/Browser-Bridge/extension/` for easy Chrome loading.
 5. Detects the macOS architecture (arm64 or x64).
 6. Downloads the matching runtime tarball (`browser-bridge-macos-{arch}-{version}.tar.gz`) and its `.sha256`; aborts on mismatch.
-7. Extracts the two binaries (`bridge-core`, `bridge`) into `~/.browser-bridge/bin/`. On upgrade from a pre-merge install, force-reinitializes `~/.browser-bridge/config.json` (new browserId + cleared pairing hash) so the next extension reconnect is forced through pairing.
+7. Extracts the single `bridge` binary (CLI + service lifecycle + hidden `serve` control-plane subcommand, ADR-0013) into `~/.browser-bridge/bin/`, removing stale binaries left by earlier layouts (`ws-server`, `local-proxy`, `bridge-cmd`, the two-binary-era `bridge-core`). On upgrade from a pre-merge install, force-reinitializes `~/.browser-bridge/config.json` (new browserId + cleared pairing hash) so the next extension reconnect is forced through pairing.
 8. Symlinks `~/.browser-bridge/bin/bridge` into `~/.local/bin/bridge` (the LaunchAgent plist is embedded in the binary since ADR-0012; nothing is templated at install time).
 9. Writes the resolved version to `~/.browser-bridge/version`.
 10. Stops any already-running bridge services, then starts them again after installation.
@@ -85,7 +85,7 @@ Run `bridge --help` for the full command list.
 | `BB-E022` | Invalid version string | Use `vX.Y.Z` format. |
 | `BB-E028` | Runtime tarball download failed | Check network; verify the release includes a tarball for your architecture. |
 | `BB-E029` | Runtime tarball SHA-256 mismatch | Re-run; check network/proxy. |
-| `BB-E032` | Runtime tarball extraction failed | Inspect `~/.browser-bridge/bin/`. |
+| `BB-E032` | Runtime tarball is malformed (missing `bin/bridge`) | Inspect `~/.browser-bridge/bin/`; re-run the install. |
 | `BB-E033` | Unsupported architecture | Only macOS arm64 and x64 are supported. |
 | `BB-E030` | Tag/version mismatch on release | Fix `package.json` and re-tag. |
 | `BB-E031` | CHANGELOG missing entry for release | Add an entry, re-tag. |

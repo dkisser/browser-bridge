@@ -270,7 +270,7 @@ MCP 端点地址为 `http://localhost:3003/mcp`。
 # 1. 安装依赖
 bun install
 
-# 2. 启动 bridge-core（CLI/WebSocket/MCP 控制平面 + 扩展桥接）
+# 2. 启动控制平面（bridge serve:CLI/WebSocket/MCP 控制平面 + 扩展桥接）
 bun run dev:core
 
 # 3. 另一个终端构建扩展
@@ -289,7 +289,7 @@ bun run cli
 ```
 Browser-Bridge/
 ├── apps/
-│   ├── bridge-core/    # 控制平面与 CLI（Go）：cmd/bridge-core + cmd/bridge
+│   ├── bridge-core/    # 单一 Go 二进制：cmd/bridge（CLI + 隐藏的 serve 控制平面），internal/{app,cli,core,http,ws}
 │   └── extension/      # Chrome 扩展（Manifest V3，Vite）
 ├── packages/
 │   └── shared/         # 共享常量与工具

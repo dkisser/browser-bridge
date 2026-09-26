@@ -272,7 +272,7 @@ See [`docs/architecture-diagram.html`](./docs/architecture-diagram.html) for the
 # 1. Install dependencies
 bun install
 
-# 2. Start bridge-core (CLI/WebSocket/MCP control plane + extension bridge)
+# 2. Start the control plane (bridge serve: CLI/WebSocket/MCP + extension bridge)
 bun run dev:core
 
 # 3. In another terminal, build the extension
@@ -291,7 +291,7 @@ bun run cli
 ```
 Browser-Bridge/
 ├── apps/
-│   ├── bridge-core/    # Control plane + CLI (Go): cmd/bridge-core + cmd/bridge
+│   ├── bridge-core/    # Single Go binary: cmd/bridge (CLI + hidden serve control plane), internal/{app,cli,core,http,ws}
 │   └── extension/      # Chrome Extension (Manifest V3, Vite)
 ├── packages/
 │   └── shared/         # Shared constants and utilities

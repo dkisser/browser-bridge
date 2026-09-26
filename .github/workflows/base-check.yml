@@ -29,9 +29,6 @@ jobs:
 
   go:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: apps/bridge-core
     steps:
       - uses: actions/checkout@v4
 
@@ -40,31 +37,17 @@ jobs:
           go-version: '1.27'
           cache-dependency-path: apps/bridge-core/go.sum
 
-      - name: gofmt
-        run: |
-          unformatted="$(gofmt -l .)"
-          if [ -n "$unformatted" ]; then
-            echo "not gofmt-clean:"
-            echo "$unformatted"
-            exit 1
-          fi
-
-      - name: go vet
-        run: go vet ./...
-
-      - name: Run tests
-        run: go test -race ./...
-
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v9
+      - uses: oven-sh/setup-bun@v2
         with:
-          version: v2.13.2
-          working-directory: apps/bridge-core
+          bun-version: latest
 
-      - name: Verify binaries compile
-        run: |
-          mkdir -p ../../dist
-          CGO_ENABLED=0 go build -o ../../dist/bridge-core ./cmd/bridge-core
-          CGO_ENABLED=0 go build -o ../../dist/bridge ./cmd/bridge
-          test -x ../../dist/bridge-core
-          test -x ../../dist/bridge
+      # Pinned to the version .golangci.yml is written against (v2 config).
+      # setup-go puts $(go env GOPATH)/bin on PATH.
+      - name: Install golangci-lint
+        run: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b "$(go env GOPATH)/bin" v2.13.2
+
+      - name: Go checks (gofmt + vet + golangci-lint + tests)
+        run: bun run check:go
+
+      - name: Verify binary compiles
+        run: bun run build:binaries
