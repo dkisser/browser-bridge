@@ -1,0 +1,22 @@
+version: "2"
+linters:
+  enable:
+    - misspell
+    - unconvert
+    - unparam
+  settings:
+    errcheck:
+      check-type-assertions: true
+      # Every fmt.Fprint* call in this module writes CLI output to
+      # stdout/stderr, where the error is unactionable.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintln
+        - fmt.Fprintf
+    govet:
+      enable:
+        - shadow
+formatters:
+  enable:
+    - gofmt
+    - goimports

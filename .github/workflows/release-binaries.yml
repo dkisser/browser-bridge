@@ -27,6 +27,11 @@ jobs:
         with:
           bun-version: latest
 
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27'
+          cache-dependency-path: apps/bridge-core/go.sum
+
       - name: Verify package.json matches tag
         run: |
           TAG="${GITHUB_REF_NAME}"

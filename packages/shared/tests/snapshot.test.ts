@@ -300,9 +300,11 @@ describe('renderSnapshotTree', () => {
       });
       const result = renderSnapshotTree(tree, 3000, META, 'full');
       expect(result.snapshot).toBe(
-        ['Page: Example | https://example.com', 'generic @e5', '  button [OK]'].join(
-          '\n',
-        ),
+        [
+          'Page: Example | https://example.com',
+          'generic @e5',
+          '  button [OK]',
+        ].join('\n'),
       );
     });
 

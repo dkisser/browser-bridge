@@ -18,19 +18,30 @@ jobs:
         with:
           bun-version: latest
 
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27'
+          cache-dependency-path: apps/bridge-core/go.sum
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Type check
-        run: bun run type-check
+      # Pinned to the version .golangci.yml is written against (v2 config).
+      # Uses the official GitHub Action so we ship a single, checksum-
+      # verified binary rather than a curl-piped install script whose
+      # embedded checksums drift out of sync with the upstream release
+      # artefacts (an intermittent checksum mismatch previously failed
+      # base-check on otherwise-clean PRs).
+      - name: Install golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v2.13.2
+          cache: false
 
-      - name: Run unit/integration tests
-        run: bun run test
+      # Lint (biome + gofmt + go vet + golangci-lint), type check, and all
+      # tests (bun + go test -race) — one umbrella over both toolchains.
+      - name: Check
+        run: bun run check
 
-      - name: Verify binaries compile
-        run: |
-          mkdir -p dist
-          bun build --compile apps/bridge-core/src/index.ts --outfile dist/bridge-core --target=bun-linux-x64
-          bun build --compile apps/cli/src/index.ts --outfile dist/bridge-cmd --target=bun-linux-x64
-          test -x dist/bridge-core
-          test -x dist/bridge-cmd
+      - name: Verify binary compiles
+        run: bun run build:binaries

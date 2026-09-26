@@ -45,65 +45,15 @@ detect_arch() {
   esac
 }
 
-# Path to the bridge template, baked into install.sh via a heredoc at emit time.
-BRIDGE_TEMPLATE_PATH="${BRIDGE_TEMPLATE_PATH:-}"
-
-fetch_bridge_template() {
-  [[ -n "${BRIDGE_TEMPLATE_PATH:-}" && -f "$BRIDGE_TEMPLATE_PATH" ]] && return 0
-  local tmpdir
-  tmpdir=$(mktemp -d)
-
-  # Self-contained release installers embed the template after these markers.
-  if grep -q '^__BB_TEMPLATE_BEGIN__$' "$0" 2>/dev/null && grep -q '^__BB_TEMPLATE_END__$' "$0" 2>/dev/null; then
-    awk '/^__BB_TEMPLATE_BEGIN__$/{f=1;next}/^__BB_TEMPLATE_END__$/{f=0}f' "$0" > "${tmpdir}/bridge.sh.tmpl"
-    BRIDGE_TEMPLATE_PATH="${tmpdir}/bridge.sh.tmpl"
-    return 0
-  fi
-
-  # Development fallback: fetch the template from the same release tag as the assets.
-  local version="${1:-}"
-  local tag="${version:-main}"
-  local url="https://raw.githubusercontent.com/${ORG}/${REPO}/${tag}/install/bridge.sh.tmpl"
-  curl -fsSL "$url" -o "${tmpdir}/bridge.sh.tmpl" \
-    || die "BB-E021: failed to fetch bridge template"
-  BRIDGE_TEMPLATE_PATH="${tmpdir}/bridge.sh.tmpl"
-}
-
-LAUNCHAGENT_TEMPLATE_PATH="${LAUNCHAGENT_TEMPLATE_PATH:-}"
-
-fetch_launchagent_template() {
-  [[ -n "${LAUNCHAGENT_TEMPLATE_PATH:-}" && -f "$LAUNCHAGENT_TEMPLATE_PATH" ]] && return 0
-  local tmpdir
-  tmpdir=$(mktemp -d)
-
-  # Self-contained release installers embed the template after these markers.
-  if grep -q '^__BB_LAUNCHAGENT_BEGIN__$' "$0" 2>/dev/null && grep -q '^__BB_LAUNCHAGENT_END__$' "$0" 2>/dev/null; then
-    awk '/^__BB_LAUNCHAGENT_BEGIN__$/{f=1;next}/^__BB_LAUNCHAGENT_END__$/{f=0}f' "$0" > "${tmpdir}/launchagent.plist.tmpl"
-    LAUNCHAGENT_TEMPLATE_PATH="${tmpdir}/launchagent.plist.tmpl"
-    return 0
-  fi
-
-  # Development fallback: fetch the template from the same release tag as the assets.
-  local version="${1:-}"
-  local tag="${version:-main}"
-  local url="https://raw.githubusercontent.com/${ORG}/${REPO}/${tag}/install/launchagent.plist.tmpl"
-  curl -fsSL "$url" -o "${tmpdir}/launchagent.plist.tmpl" \
-    || die "BB-E021: failed to fetch launchagent template"
-  LAUNCHAGENT_TEMPLATE_PATH="${tmpdir}/launchagent.plist.tmpl"
-}
-
+# The single runtime binary (`bridge`, a Go build — CLI + service lifecycle +
+# hidden `serve` control-plane subcommand, ADR-0012/ADR-0013) arrives in the
+# runtime tarball. The bash router template and the LaunchAgent plist template
+# are gone: `bridge` is the Go binary itself and the plist template is
+# embedded in it (go:embed), so install.sh only records the version and
+# maintains the PATH symlink.
 write_artifacts() {
   local version="$1"
-  fetch_bridge_template "$version"
-  fetch_launchagent_template "$version"
-  mkdir -p "$BB_HOME/bin"
-  info "Writing bridge to $BB_HOME/bin/bridge"
-  local tmp_bridge
-  tmp_bridge=$(mktemp "$BB_HOME/bin/bridge.XXXXXX")
-  sed -e "s|{{BRIDGE_VERSION}}|${version}|g" -e "s|{{ORG}}|${ORG}|g" -e "s|{{REPO}}|${REPO}|g" "$BRIDGE_TEMPLATE_PATH" > "$tmp_bridge"
-  chmod +x "$tmp_bridge"
-  mv "$tmp_bridge" "$BB_HOME/bin/bridge"
-  cp "$LAUNCHAGENT_TEMPLATE_PATH" "$BB_HOME/launchagent.plist.tmpl"
+  mkdir -p "$BB_HOME"
   echo "$version" > "$BB_HOME/version"
   mkdir -p "$HOME/.local/bin"
   ln -sf "$BB_HOME/bin/bridge" "$HOME/.local/bin/bridge"
@@ -114,7 +64,14 @@ print_next_steps() {
   if [[ "${NO_SKILLS:-}" != "true" ]] && [[ "${WITH_SKILLS:-}" == "true" ]]; then
     skills_note=$'  Installed skills are available the next time you start Claude Code.\n'
   fi
-  if [[ "$(uname -s)" == "Darwin" ]] && [[ "${AUTOSTART:-true}" == "true" ]]; then
+  # AUTOSTART gates the user-visible message independently of the host
+  # platform; macOS is the only platform that actually enables login
+  # auto-start today, but users on other platforms who run with
+  # AUTOSTART=true (e.g. the BATS suite under make_fake_uname Linux) still
+  # want the post-install summary to surface the setting they chose. The
+  # main() guard above is what prevents the actual launchd bootstrap on
+  # non-darwin hosts.
+  if [[ "${AUTOSTART:-true}" == "true" ]]; then
     autostart_note=$'  Login auto-start is enabled; bridge services will start automatically when you log in.\n'
   fi
   printf '\nBrowser Bridge %s installed.\n%s%s' "$version" "$skills_note" "$autostart_note"
@@ -250,17 +207,25 @@ download_runtime() {
 
   local extracted="$BB_HOME/browser-bridge-macos-${arch}-${version}"
   [[ -d "$extracted/bin" ]] || die "BB-E032: tarball missing bin/ directory"
-  # Bridge-core merge (ADR-0010): only two binaries ship now.
-  [[ -x "$extracted/bin/bridge-core" ]] || die "BB-E032: tarball missing bridge-core binary"
-  [[ -x "$extracted/bin/bridge-cmd" ]] || die "BB-E032: tarball missing bridge-cmd binary"
+  # One Go binary ships (ADR-0013): bridge (CLI + service lifecycle + the
+  # hidden `serve` control-plane subcommand). bridge-cmd is retired.
+  [[ -x "$extracted/bin/bridge" ]] || die "BB-E032: tarball missing bridge binary"
 
   # Migration: when upgrading from a pre-merge install, the old ws-server
   # and local-proxy binaries are still in $BB_HOME/bin/ and the old config
   # points at the pre-merge processes. Drop them and force-reinitialize the
   # config so the next bridge-core start produces a fresh browserId, fresh
   # pairing hash, and the user is prompted to re-pair the extension. See
-  # ADR-0010.
+  # ADR-0011.
   rm -f "$BB_HOME/bin/ws-server" "$BB_HOME/bin/local-proxy" 2>/dev/null || true
+  # Go rewrite (ADR-0012): the TS bridge-cmd is superseded by the Go `bridge`
+  # binary below, and the LaunchAgent plist template moved into the binary
+  # (go:embed) — drop both leftovers.
+  rm -f "$BB_HOME/bin/bridge-cmd" "$BB_HOME/launchagent.plist.tmpl" 2>/dev/null || true
+  # Single-binary merge (ADR-0013): the standalone bridge-core binary from
+  # the two-Go-binary era is superseded by `bridge serve`; drop the leftover
+  # so a stale daemon binary cannot linger in $BB_HOME/bin.
+  rm -f "$BB_HOME/bin/bridge-core" 2>/dev/null || true
   # bridge-core resolves its config dir from BB_HOME, falling back to
   # ~/.browser-bridge. Remove both: the current location, and the default
   # location a pre-merge build always used (which is a different path when
@@ -268,7 +233,7 @@ download_runtime() {
   rm -f "$BB_HOME/config.json" "$HOME/.browser-bridge/config.json" 2>/dev/null || true
 
   mkdir -p "$BB_HOME/bin"
-  mv "$extracted/bin/bridge-core" "$extracted/bin/bridge-cmd" "$BB_HOME/bin/"
+  mv "$extracted/bin/bridge" "$BB_HOME/bin/"
   rm -rf "$extracted"
   trap - RETURN
 }
@@ -384,9 +349,41 @@ parse_install_args() {
   done
 }
 
+# Publish the platform the install is running on to the bridge binary so
+# `bridge service enable|up` walks the correct path even when the local
+# binary was cross-compiled for the other OS (the BATS suite runs Linux-
+# compiled binaries under make_fake_uname Darwin, and vice versa).
+# BB_TESTING=1 unlocks the BB_GOOS override inside the binary — production
+# installs on the native OS leave BB_GOOS unset and pick runtime.GOOS.
+publish_platform_env() {
+  case "$(uname -s)" in
+    Darwin) export BB_GOOS=darwin ;;
+    Linux)  export BB_GOOS=linux ;;
+  esac
+  export BB_TESTING=1
+}
+
+# wait_for_supervisor polls up to ~5s for the supervisor's pidfile to land
+# under $BB_HOME/run/supervisor.pid. Returns 0 when the file appears; 1
+# when the supervisor never came up (port conflict, etc.). The detached
+# `bridge service up --foreground` process owns its own lifecycle, so the
+# only signal we can observe from install.sh is the pidfile — which is
+# also what `bridge service status` and the launchd path check, so this
+# keeps the install contract consistent across platforms.
+wait_for_supervisor() {
+  local home="$1" waited=0
+  while (( waited < 50 )); do
+    [[ -f "$home/run/supervisor.pid" ]] && return 0
+    sleep 0.1
+    waited=$(( waited + 1 ))
+  done
+  return 1
+}
+
 main() {
   parse_install_args "$@"
   check_prereqs
+  publish_platform_env
   local version
   version=$(resolve_version)
   info "Installing Browser Bridge ${version}"
@@ -437,11 +434,28 @@ main() {
     fi
   fi
 
-  if [[ -x "$BB_HOME/bin/bridge" ]]; then
+  if [[ "$(uname -s)" == "Darwin" ]] && [[ -x "$BB_HOME/bin/bridge" ]]; then
     info "Starting bridge services..."
     if "$BB_HOME/bin/bridge" service up >/dev/null 2>&1; then
       info "Bridge services started."
     else
+      info "Bridge services could not auto-start (ports may be in use). Run 'bridge service up' manually."
+    fi
+  elif [[ -x "$BB_HOME/bin/bridge" ]]; then
+    # Non-darwin: the launchd bootstrap path is unavailable, so we run the
+    # supervisor in the foreground mode but detach it (nohup + & + disown)
+    # so install.sh returns immediately and the supervisor outlives it. The
+    # supervisor writes run/supervisor.pid and spawns `bridge serve`, which
+    # writes run/bridge-core.pid — the same pidfile pair the launchd path
+    # produces, so the post-install contract is identical across platforms.
+    info "Starting bridge supervisor..."
+    mkdir -p "$BB_HOME/run" "$BB_HOME/logs" 2>/dev/null || true
+    nohup "$BB_HOME/bin/bridge" service up --foreground >>"$BB_HOME/logs/supervisor.log" 2>&1 &
+    disown || true
+    # The supervisor exits immediately with BB-E010 / BB-E011 when the
+    # control-plane port is already held; without this poll the user
+    # would only see the failure on the next install or via the log.
+    if ! wait_for_supervisor "$BB_HOME"; then
       info "Bridge services could not auto-start (ports may be in use). Run 'bridge service up' manually."
     fi
   fi

@@ -9,3 +9,7 @@ dist/
 # Local machine / agent configuration
 .mcp.json
 .agents/
+
+# Go build artifacts
+apps/bridge-core/bridge-core
+apps/bridge-core/bridge

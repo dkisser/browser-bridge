@@ -8,9 +8,9 @@ export interface HardConfigEntry {
 }
 
 // The five entries shown in the settings tab. Paths follow the install
-// layout in `install/bridge.sh.tmpl`: BB_HOME=~/.browser-bridge, the
-// LaunchAgent label is com.browser-bridge.bridge, the CLI binary lives at
-// BB_HOME/bin/bridge-cmd.
+// layout managed by the Go `bridge` binary (apps/bridge-core/internal/service):
+// BB_HOME=~/.browser-bridge, the LaunchAgent label is com.browser-bridge.bridge,
+// the CLI binary lives at BB_HOME/bin/bridge.
 const BB_HOME = '~/.browser-bridge';
 const LAUNCHAGENT_LABEL = 'com.browser-bridge.bridge';
 
@@ -34,7 +34,7 @@ export function formatHardConfig(): HardConfigEntry[] {
     },
     {
       label: 'CLI binary',
-      value: `${BB_HOME}/bin/bridge-cmd`,
+      value: `${BB_HOME}/bin/bridge`,
     },
   ];
 }

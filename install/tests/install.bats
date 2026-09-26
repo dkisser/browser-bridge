@@ -14,6 +14,26 @@ find_modern_bash() {
   return 1
 }
 
+setup_file() {
+  # Build the real Go CLI once per file; the fake runtime tarball ships it
+  # as bin/bridge (see helpers.make_fake_runtime_tarball). HOME is the fake
+  # test HOME here, so restore the real one for go build to reach the shared
+  # module/build caches.
+  local out
+  out="$(mktemp -d "${TMPDIR:-/tmp}/bb-bridge-bin.XXXXXX")"
+  (cd "$BB_TEST_ROOT/apps/bridge-core" && HOME="$BB_REAL_HOME" CGO_ENABLED=0 go build -o "$out/bridge" ./cmd/bridge)
+  export BB_TEST_BRIDGE_BIN="$out/bridge"
+}
+
+setup() {
+  # The Go bin/bridge shipped by the fake tarball is compiled for the host OS
+  # (runtime.GOOS), so on macOS `bridge service up|down` always walks the
+  # launchd path regardless of any fake uname. Intercept launchctl for EVERY
+  # test so the suite can never touch the developer's real launchd — a real
+  # bootstrap/bootout once killed the production bridge service mid-run.
+  make_fake_launchctl
+}
+
 @test "install.sh check_prereqs succeeds when all required tools are present" {
   bash_path=$(find_modern_bash)
   sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_prereq.sh"
@@ -173,37 +193,64 @@ SCRIPT
   BB_HOME="$BB_TEST_TMP/bb-home2" run "$bash_path" "$BB_TEST_TMP/test_rt.sh"
   stop_mock_http
   [ "$status" -eq 0 ]
-  [[ "$output" == *"bridge-core"* ]]
-  [[ "$output" == *"bridge-cmd"* ]]
+  [[ "$output" == *"bridge"* ]]
+  [[ "$output" != *"bridge-core"* ]]
+}
+
+@test "download_runtime removes the leftover bridge-core binary from the two-binary era" {
+  bash_path=$(find_modern_bash)
+  local tarball_path tarball_name
+  tarball_path=$(make_fake_runtime_tarball v9.9.9 arm64)
+  tarball_name=$(basename "$tarball_path")
+  mkdir -p "$BB_TEST_TMP/www"
+  cp "$tarball_path" "$BB_TEST_TMP/www/$tarball_name"
+  cp "${tarball_path}.sha256" "$BB_TEST_TMP/www/${tarball_name}.sha256"
+  start_mock_http 18778
+
+  # Seed the ADR-0012-era leftover the migration block must remove: a
+  # standalone bridge-core daemon binary next to an older bridge CLI.
+  mkdir -p "$BB_TEST_TMP/bb-home/bin"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$BB_TEST_TMP/bb-home/bin/bridge-core"
+  chmod +x "$BB_TEST_TMP/bb-home/bin/bridge-core"
+
+  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_rt_migrate.sh"
+  cat >> "$BB_TEST_TMP/test_rt_migrate.sh" <<'SCRIPT'
+BB_INSTALL_ARCH=arm64
+ORG='127.0.0.1:18778'
+REPO='browser-bridge'
+resolve_version() { echo 'v9.9.9'; }
+download_runtime v9.9.9 arm64 "http://${ORG}"
+SCRIPT
+  BB_HOME="$BB_TEST_TMP/bb-home" run "$bash_path" "$BB_TEST_TMP/test_rt_migrate.sh"
+  stop_mock_http
+  [ "$status" -eq 0 ]
+  [[ ! -e "$BB_TEST_TMP/bb-home/bin/bridge-core" ]]
+  [[ -x "$BB_TEST_TMP/bb-home/bin/bridge" ]]
 }
 
 # ---------------------------------------------------------------------------
 # Task 11: write_artifacts + print_next_steps
 # ---------------------------------------------------------------------------
 
-@test "write_artifacts emits bridge script and version file" {
+@test "write_artifacts emits version file and PATH symlink" {
   bash_path=$(find_modern_bash)
-  mkdir -p "$BB_HOME"
-  cat > "$BB_TEST_TMP/bridge.tmpl" <<'TPL'
-#!/usr/bin/env bash
-echo bridge-{{BRIDGE_VERSION}}
-echo org-{{ORG}}
-TPL
+  mkdir -p "$BB_HOME/bin"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$BB_HOME/bin/bridge"
+  chmod +x "$BB_HOME/bin/bridge"
   run "$bash_path" -c "
     set -euo pipefail
     source <(sed '\$d' '$INSTALL_SH')
     BB_HOME='$BB_HOME'
-    ORG='testorg'
-    BRIDGE_TEMPLATE_PATH='$BB_TEST_TMP/bridge.tmpl'
+    HOME='$HOME'
     info() { :; }
     write_artifacts v9.9.9
-    cat '$BB_HOME/bin/bridge'
     cat '$BB_HOME/version'
     test -L '$HOME/.local/bin/bridge'
+    readlink '$HOME/.local/bin/bridge'
   "
   [ "$status" -eq 0 ]
-  [[ "$output" == *"bridge-v9.9.9"* ]]
   [[ "$output" == *"v9.9.9"* ]]
+  [[ "$output" == *"$BB_HOME/bin/bridge"* ]]
 }
 
 @test "print_next_steps mentions PATH, Chrome load, and the visible extension directory" {
@@ -271,16 +318,13 @@ SCRIPT
 
   BB_HOME="$BB_TEST_TMP/bb-home" \
   BB_VERSION="v9.9.9" \
-  BRIDGE_TEMPLATE_PATH="$BB_TEST_ROOT/install/bridge.sh.tmpl" \
   run "$bash_path" "$BB_TEST_TMP/test_e2e.sh"
   stop_mock_http
 
   [ "$status" -eq 0 ]
   [[ -f "$BB_TEST_TMP/bb-home/version" ]]
-  [[ -f "$BB_TEST_TMP/bb-home/bin/bridge" ]]
-  [[ -x "$BB_TEST_TMP/bb-home/bin/bridge-core" ]]
-  [[ -x "$BB_TEST_TMP/bb-home/bin/bridge-core" ]]
-  [[ -x "$BB_TEST_TMP/bb-home/bin/bridge-cmd" ]]
+  [[ -x "$BB_TEST_TMP/bb-home/bin/bridge" ]]
+  [[ ! -e "$BB_TEST_TMP/bb-home/bin/bridge-core" ]]
   [[ -L "$HOME/.local/bin/bridge" ]]
 }
 
@@ -310,14 +354,12 @@ SCRIPT
   # First run — fresh install
   BB_HOME="$BB_TEST_TMP/bb-home" \
   BB_VERSION="v9.9.9" \
-  BRIDGE_TEMPLATE_PATH="$BB_TEST_ROOT/install/bridge.sh.tmpl" \
   run "$bash_path" "$BB_TEST_TMP/test_e2e.sh"
   first_status=$status
 
   # Second run — upgrade in place
   BB_HOME="$BB_TEST_TMP/bb-home" \
   BB_VERSION="v9.9.9" \
-  BRIDGE_TEMPLATE_PATH="$BB_TEST_ROOT/install/bridge.sh.tmpl" \
   run "$bash_path" "$BB_TEST_TMP/test_e2e.sh"
   stop_mock_http
 
@@ -359,7 +401,6 @@ SCRIPT
   stop_mock_http
 
   [ "$status" -eq 0 ]
-  [[ -f "$BB_TEST_TMP/bb-home-autostart/launchagent.plist.tmpl" ]]
   [[ -f "$HOME/Library/LaunchAgents/com.browser-bridge.bridge.plist" ]]
   [[ "$output" == *"Login auto-start enabled"* ]]
   grep -q 'bootstrap' "$BB_TEST_TMP/launchctl_calls.txt"
@@ -479,17 +520,11 @@ SCRIPT
   [[ "$output" != *"Login auto-start enabled"* ]]
 }
 
-@test "build-installer.sh embeds bridge.sh.tmpl and launchagent.plist.tmpl into install.sh" {
+@test "build-installer.sh copies install.sh verbatim (templates embedded in Go since ADR-0012)" {
   bash "$BB_TEST_ROOT/.github/scripts/build-installer.sh" "$BB_TEST_TMP/self-contained-install.sh"
   [ -x "$BB_TEST_TMP/self-contained-install.sh" ]
-  grep -q '^__BB_TEMPLATE_BEGIN__$' "$BB_TEST_TMP/self-contained-install.sh"
-  grep -q '^__BB_TEMPLATE_END__$' "$BB_TEST_TMP/self-contained-install.sh"
-  grep -q '^__BB_LAUNCHAGENT_BEGIN__$' "$BB_TEST_TMP/self-contained-install.sh"
-  grep -q '^__BB_LAUNCHAGENT_END__$' "$BB_TEST_TMP/self-contained-install.sh"
-  awk '/^__BB_TEMPLATE_BEGIN__$/{f=1;next}/^__BB_TEMPLATE_END__$/{f=0}f' "$BB_TEST_TMP/self-contained-install.sh" > "$BB_TEST_TMP/extracted.tmpl"
-  diff -u "$BB_TEST_ROOT/install/bridge.sh.tmpl" "$BB_TEST_TMP/extracted.tmpl"
-  awk '/^__BB_LAUNCHAGENT_BEGIN__$/{f=1;next}/^__BB_LAUNCHAGENT_END__$/{f=0}f' "$BB_TEST_TMP/self-contained-install.sh" > "$BB_TEST_TMP/extracted-launchagent.tmpl"
-  diff -u "$BB_TEST_ROOT/install/launchagent.plist.tmpl" "$BB_TEST_TMP/extracted-launchagent.tmpl"
+  diff -u "$BB_TEST_ROOT/install/install.sh" "$BB_TEST_TMP/self-contained-install.sh"
+  ! grep -q '^__BB_TEMPLATE_BEGIN__$' "$BB_TEST_TMP/self-contained-install.sh"
 }
 
 @test "self-contained install.sh installs without fetching template from main" {
@@ -523,28 +558,9 @@ SCRIPT
   [[ -f "$BB_TEST_TMP/bb-home-sc/version" ]]
   [[ "$(cat "$BB_TEST_TMP/bb-home-sc/version")" == "v9.9.9" ]]
   [[ -x "$BB_TEST_TMP/bb-home-sc/bin/bridge" ]]
-  [[ -x "$BB_TEST_TMP/bb-home-sc/bin/bridge-core" ]]
-  [[ -x "$BB_TEST_TMP/bb-home-sc/bin/bridge-core" ]]
-  [[ -x "$BB_TEST_TMP/bb-home-sc/bin/bridge-cmd" ]]
+  [[ ! -e "$BB_TEST_TMP/bb-home-sc/bin/bridge-core" ]]
 }
 
-@test "fetch_bridge_template falls back to versioned tag when no embedded template" {
-  bash_path=$(find_modern_bash)
-  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_fbt.sh"
-  cat >> "$BB_TEST_TMP/test_fbt.sh" <<SCRIPT
-resolve_version() { echo "v9.9.9"; }
-unset BRIDGE_TEMPLATE_PATH LAUNCHAGENT_TEMPLATE_PATH
-curl() {
-  printf '%s\n' "\$@" > "$BB_TEST_TMP/curl_args.txt"
-  touch "\${4:-$BB_TEST_TMP/bridge.sh.tmpl}"
-}
-fetch_bridge_template "v9.9.9"
-cat "$BB_TEST_TMP/curl_args.txt"
-SCRIPT
-  run "$bash_path" "$BB_TEST_TMP/test_fbt.sh"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"v9.9.9/install/bridge.sh.tmpl"* ]]
-}
 
 # ---------------------------------------------------------------------------
 # Task 13: skills installation
@@ -855,13 +871,12 @@ SCRIPT
 
   BB_HOME="$BB_TEST_TMP/bb-home" \
   BB_VERSION="v9.9.9" \
-  BRIDGE_TEMPLATE_PATH="$BB_TEST_ROOT/install/bridge.sh.tmpl" \
   run "$bash_path" "$BB_TEST_TMP/test_force.sh"
   stop_mock_http
 
   [ "$status" -eq 0 ]
   [[ "$output" != *"already installed and up to date"* ]]
-  [[ -x "$BB_TEST_TMP/bb-home/bin/bridge-core" ]]
+  [[ -x "$BB_TEST_TMP/bb-home/bin/bridge" ]]
 }
 
 @test "install.sh auto-starts bridge services after install" {
@@ -889,13 +904,15 @@ SCRIPT
 
   BB_HOME="$BB_TEST_TMP/bb-home" \
   BB_VERSION="v9.9.9" \
-  BRIDGE_TEMPLATE_PATH="$BB_TEST_ROOT/install/bridge.sh.tmpl" \
   run "$bash_path" "$BB_TEST_TMP/test_autostart.sh"
   stop_mock_http
 
   [ "$status" -eq 0 ]
-  [[ -f "$BB_TEST_TMP/bb-home/run/bridge-core.pid" ]]
-  [[ -f "$BB_TEST_TMP/bb-home/run/bridge-core.pid" ]]
+  # launchd (fake launchctl) starts the supervisor asynchronously; the
+  # supervisor then spawns the daemon (`bridge serve`) and writes its
+  # pidfile (run/bridge-core.pid — the service keeps the old name).
+  wait_for_file "$BB_TEST_TMP/bb-home/run/bridge-core.pid"
+  [[ -f "$BB_TEST_TMP/bb-home/run/supervisor.pid" ]]
 }
 
 @test "install.sh stops existing bridge before update and starts again after" {
@@ -911,10 +928,10 @@ SCRIPT
   cp "${tarball_path}.sha256" "$BB_TEST_TMP/www/${tarball_name}.sha256"
 
   # Pre-populate an old install with a different version and running services.
+  # The "old" bin/bridge is the current Go binary — install.sh only needs
+  # `service status`/`service down` from it.
   mkdir -p "$BB_TEST_TMP/bb-home/bin" "$BB_TEST_TMP/bb-home/run"
-  cp -R "$BB_TEST_ROOT/install/bridge.sh.tmpl" "$BB_TEST_TMP/bb-home/bin/bridge"
-  sed -i.bak 's/{{BRIDGE_VERSION}}/v0.0.1/g' "$BB_TEST_TMP/bb-home/bin/bridge"
-  rm "$BB_TEST_TMP/bb-home/bin/bridge.bak"
+  cp "$BB_TEST_BRIDGE_BIN" "$BB_TEST_TMP/bb-home/bin/bridge"
   chmod +x "$BB_TEST_TMP/bb-home/bin/bridge"
   echo "v0.0.1" > "$BB_TEST_TMP/bb-home/version"
   ( trap "" TERM; sleep 60 ) & echo $! > "$BB_TEST_TMP/bb-home/run/bridge-core.pid"
@@ -934,15 +951,15 @@ SCRIPT
 
   BB_HOME="$BB_TEST_TMP/bb-home" \
   BB_VERSION="v9.9.9" \
-  BRIDGE_TEMPLATE_PATH="$BB_TEST_ROOT/install/bridge.sh.tmpl" \
   run "$bash_path" "$BB_TEST_TMP/test_upgrade.sh"
   stop_mock_http
 
   [ "$status" -eq 0 ]
-  # Old fake bridge-core should have been stopped.
+  # Old fake daemon should have been stopped.
   ! kill -0 "$old_pid" 2>/dev/null
-  # New bridge-core should be running.
-  [[ -f "$BB_TEST_TMP/bb-home/run/bridge-core.pid" ]]
+  # New daemon (`bridge serve`) should be running (started asynchronously
+  # via launchd).
+  wait_for_file "$BB_TEST_TMP/bb-home/run/bridge-core.pid"
   local new_pid
   new_pid=$(cat "$BB_TEST_TMP/bb-home/run/bridge-core.pid")
   [ "$new_pid" != "$old_pid" ]
@@ -960,8 +977,8 @@ SCRIPT
   cp "$tarball_path" "$BB_TEST_TMP/www/$tarball_name"
   cp "${tarball_path}.sha256" "$BB_TEST_TMP/www/${tarball_name}.sha256"
 
-  # Occupy the control plane port so bridge up fails.
-  python3 -c "import socket; s=socket.socket(); s.bind(('127.0.0.1',3001)); s.listen(); import time; time.sleep(60)" &
+  # Occupy the TEST control plane port (never the production 3001) so bridge up fails.
+  python3 -c "import socket; s=socket.socket(); s.bind(('127.0.0.1',${BRIDGE_WS_PORT})); s.listen(); import time; time.sleep(60)" &
   PORT_HOLDER_PID=$!
   sleep 0.3
 
@@ -978,7 +995,6 @@ SCRIPT
 
   BB_HOME="$BB_TEST_TMP/bb-home" \
   BB_VERSION="v9.9.9" \
-  BRIDGE_TEMPLATE_PATH="$BB_TEST_ROOT/install/bridge.sh.tmpl" \
   run "$bash_path" "$BB_TEST_TMP/test_autostart_fail.sh"
   kill "$PORT_HOLDER_PID" 2>/dev/null || true
   stop_mock_http

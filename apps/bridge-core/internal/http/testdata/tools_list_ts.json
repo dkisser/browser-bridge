@@ -1,0 +1,576 @@
+[
+  {
+    "description": "List all browsers connected to Browser Bridge. Call this first before any other tool; use set_browser when multiple browsers are online.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 120000
+        }
+      },
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "name": "list_browsers"
+  },
+  {
+    "description": "Explicitly choose which connected browser to control for this MCP session. Requires a browserId obtained from list_browsers.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "browserId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "browserId"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "name": "set_browser"
+  },
+  {
+    "description": "Navigate a specific tab of the selected browser to a URL. Requires a valid tab_id — call tab_list first to discover open tabs.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "tab_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 120000
+        }
+      },
+      "required": [
+        "url",
+        "tab_id"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "name": "navigate"
+  },
+  {
+    "description": "Go back one page in the browser history. Requires a valid tab_id — call tab_list first to discover open tabs.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 120000
+        }
+      },
+      "required": [
+        "tab_id"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "name": "go_back"
+  },
+  {
+    "description": "Go forward one page in the browser history. Requires a valid tab_id — call tab_list first to discover open tabs.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 120000
+        }
+      },
+      "required": [
+        "tab_id"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "name": "go_forward"
+  },
+  {
+    "description": "Refresh the current page. Requires a valid tab_id — call tab_list first to discover open tabs.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 120000
+        }
+      },
+      "required": [
+        "tab_id"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "name": "refresh"
+  },
+  {
+    "description": "List all tabs in the selected browser.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 120000
+        }
+      },
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "name": "tab_list"
+  },
+  {
+    "description": "Open a new tab in the selected browser. Defaults to opening in the background (active=false).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "auto_close": {
+          "type": "boolean"
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 120000
+        }
+      },
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "name": "tab_new"
+  },
+  {
+    "description": "Close a tab in the selected browser by tab ID. Requires a valid tab_id — call tab_list first to discover open tabs.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 120000
+        }
+      },
+      "required": [
+        "tab_id"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "name": "tab_close"
+  },
+  {
+    "description": "Switch to a tab by its ID in the selected browser. Requires a valid tab_id — call tab_list first to discover open tabs.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 120000
+        }
+      },
+      "required": [
+        "tab_id"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "name": "tab_switch"
+  },
+  {
+    "description": "Click an element in the selected browser by CSS selector. The selector must exist on the page — if you have not seen the DOM yet, call snapshot first and use a rendered selector or its @eN ref. A semantic guess like \"article\" only matches real <article> tags. Requires a valid tab_id — call tab_list first to discover open tabs.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "selector": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tab_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 120000
+        }
+      },
+      "required": [
+        "selector",
+        "tab_id"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "name": "click"
+  },
+  {
+    "description": "Type text into an input element in the selected browser. The selector must exist on the page — if you have not seen the DOM yet, call snapshot first and use a rendered selector or its @eN ref. A semantic guess like \"article\" only matches real <article> tags. Requires a valid tab_id — call tab_list first to discover open tabs.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "selector": {
+          "type": "string",
+          "minLength": 1
+        },
+        "text": {
+          "type": "string"
+        },
+        "submit": {
+          "type": "boolean"
+        },
+        "tab_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 120000
+        }
+      },
+      "required": [
+        "selector",
+        "text",
+        "tab_id"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "name": "type"
+  },
+  {
+    "description": "Select an option from a dropdown in the selected browser by CSS selector. The selector must exist on the page — if you have not seen the DOM yet, call snapshot first and use a rendered selector or its @eN ref. A semantic guess like \"article\" only matches real <article> tags. Requires a valid tab_id — call tab_list first to discover open tabs.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "selector": {
+          "type": "string",
+          "minLength": 1
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tab_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 120000
+        }
+      },
+      "required": [
+        "selector",
+        "value",
+        "tab_id"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "name": "select"
+  },
+  {
+    "description": "Scroll the page or an element in the selected browser. Requires a valid tab_id — call tab_list first to discover open tabs.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "integer"
+        },
+        "y": {
+          "type": "integer"
+        },
+        "selector": {
+          "type": "string",
+          "minLength": 1,
+          "default": "page"
+        },
+        "tab_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 120000
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "tab_id"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "name": "scroll"
+  },
+  {
+    "description": "Hover over an element in the selected browser by CSS selector. The selector must exist on the page — if you have not seen the DOM yet, call snapshot first and use a rendered selector or its @eN ref. A semantic guess like \"article\" only matches real <article> tags. Requires a valid tab_id — call tab_list first to discover open tabs.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "selector": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tab_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 120000
+        }
+      },
+      "required": [
+        "selector",
+        "tab_id"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "name": "hover"
+  },
+  {
+    "description": "Get the text content of an element by CSS selector. The selector must exist on the page — if you have not seen the DOM yet, call snapshot first and use a rendered selector or its @eN ref. A semantic guess like \"article\" only matches real <article> tags. Requires a valid tab_id — call tab_list first to discover open tabs.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "selector": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tab_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 120000
+        }
+      },
+      "required": [
+        "selector",
+        "tab_id"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "name": "get_text"
+  },
+  {
+    "description": "Get the raw innerHTML of an element by CSS selector. Escape hatch for untouched markup — prefer the snapshot tool for reading and understanding page content. The selector must exist on the page — if you have not seen the DOM yet, call snapshot first and use a rendered selector or its @eN ref. A semantic guess like \"article\" only matches real <article> tags. Requires a valid tab_id — call tab_list first to discover open tabs.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "selector": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tab_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 120000
+        }
+      },
+      "required": [
+        "selector",
+        "tab_id"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "name": "get_html"
+  },
+  {
+    "description": "Take a compact, budgeted snapshot of the page: interactive elements (links, buttons, text boxes, checkboxes, combos) and headings, with stable @eN refs you can pass to other tools as selectors (e.g. \"@e12\"). Use this to see what you can ACT ON. Default filter is \"interactive\"; pass filter=\"full\" for the complete pseudo-tree including text runs, images and structural containers. To READ page content (article body, email subjects, feed items), use get_text instead — it returns plain text and is the right tool for reading. When output is truncated, text runs may be replaced by placeholders (full filter) or dropped (interactive filter); narrow with selector or raise max_chars. Requires a valid tab_id — call tab_list first to discover open tabs.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "selector": {
+          "type": "string",
+          "minLength": 1
+        },
+        "filter": {
+          "type": "string",
+          "enum": [
+            "interactive",
+            "full"
+          ]
+        },
+        "max_chars": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 100000
+        },
+        "tab_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 120000
+        }
+      },
+      "required": [
+        "tab_id"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "name": "snapshot"
+  },
+  {
+    "description": "Take a screenshot of the selected browser. For getting html or text content, use the get_html or get_text tools first. Requires a valid tab_id — call tab_list first to discover open tabs.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "fullPage": {
+          "type": "boolean"
+        },
+        "tab_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 120000
+        }
+      },
+      "required": [
+        "tab_id"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "name": "screenshot"
+  },
+  {
+    "description": "Get title, URL, and active status of a specific tab. Requires a valid tab_id — call tab_list first to discover open tabs.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 120000
+        }
+      },
+      "required": [
+        "tab_id"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "name": "pageinfo"
+  },
+  {
+    "description": "Wait for an element to appear in the selected browser by CSS selector. The selector must exist on the page — if you have not seen the DOM yet, call snapshot first and use a rendered selector or its @eN ref. A semantic guess like \"article\" only matches real <article> tags. Requires a valid tab_id — call tab_list first to discover open tabs.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "selector": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tab_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 120000
+        }
+      },
+      "required": [
+        "selector",
+        "tab_id"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "name": "wait_element"
+  },
+  {
+    "description": "Wait for navigation to complete in the selected browser. Requires a valid tab_id — call tab_list first to discover open tabs.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "tab_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 120000
+        }
+      },
+      "required": [
+        "tab_id"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "name": "wait_navigation"
+  }
+]
