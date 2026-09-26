@@ -14,7 +14,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/core"
+	"browser-bridge/internal/core"
 )
 
 // fakeServer upgrades every request to WebSocket and runs handle on the

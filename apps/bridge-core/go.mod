@@ -1,4 +1,4 @@
-module github.com/dkisser/browser-bridge/apps/bridge-core
+module browser-bridge
 
 go 1.27
 

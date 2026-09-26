@@ -13,8 +13,8 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/core"
-	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/http"
+	"browser-bridge/internal/core"
+	"browser-bridge/internal/http"
 )
 
 const extensionOriginPrefix = "chrome-extension://"

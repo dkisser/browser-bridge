@@ -9,8 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/core"
-	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/ws"
+	"browser-bridge/internal/core"
+	"browser-bridge/internal/ws"
 )
 
 // newBrowserListCommand is the browser:list registration in the TS CLI.

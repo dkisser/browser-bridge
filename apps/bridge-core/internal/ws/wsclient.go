@@ -10,7 +10,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/core"
+	"browser-bridge/internal/core"
 )
 
 // ErrConnectionClosed rejects every pending request when the connection

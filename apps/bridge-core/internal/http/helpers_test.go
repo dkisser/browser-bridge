@@ -14,7 +14,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/core"
+	"browser-bridge/internal/core"
 )
 
 // capturedCommand is what the fake router saw: the decoded command payload

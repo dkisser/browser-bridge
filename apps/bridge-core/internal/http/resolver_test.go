@@ -3,7 +3,7 @@ package http
 import (
 	"testing"
 
-	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/core"
+	"browser-bridge/internal/core"
 )
 
 // TestResolveBrowser is the table-driven port of resolveBrowser in

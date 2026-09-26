@@ -10,8 +10,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/core"
-	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/ws"
+	"browser-bridge/internal/core"
+	"browser-bridge/internal/ws"
 )
 
 // sendCommand is apps/cli/src/commands/sendCommand.ts: dial, send one

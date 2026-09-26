@@ -9,7 +9,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/core"
+	"browser-bridge/internal/core"
 )
 
 // TestCommandTools drives every command tool through a real MCP session

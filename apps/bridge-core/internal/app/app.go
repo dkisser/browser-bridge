@@ -9,9 +9,9 @@ import (
 	"log"
 	"time"
 
-	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/core"
-	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/http"
-	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/ws"
+	"browser-bridge/internal/core"
+	"browser-bridge/internal/http"
+	"browser-bridge/internal/ws"
 )
 
 // Default ports: WEBSOCKET_PORT / LOCAL_WS_PORT in packages/shared/src/

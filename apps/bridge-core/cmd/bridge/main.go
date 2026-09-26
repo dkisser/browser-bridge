@@ -8,7 +8,7 @@ package main
 import (
 	"os"
 
-	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/cli"
+	"browser-bridge/internal/cli"
 )
 
 // version is reported by `bridge --version` and by the MCP server when the

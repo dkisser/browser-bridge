@@ -19,8 +19,8 @@ import (
 	"github.com/coder/websocket"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/app"
-	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/core"
+	"browser-bridge/internal/app"
+	"browser-bridge/internal/core"
 )
 
 const (

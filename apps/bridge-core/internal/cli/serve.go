@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dkisser/browser-bridge/apps/bridge-core/internal/app"
+	"browser-bridge/internal/app"
 )
 
 // serveCommandName names the hidden control-plane subcommand; spawnCore
