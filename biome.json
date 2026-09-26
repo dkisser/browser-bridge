@@ -6,7 +6,14 @@
   },
   "files": {
     "ignoreUnknown": false,
-    "includes": ["**", "!**/dist", "!node_modules", "!**/.superpowers"]
+    "includes": [
+      "**",
+      "!**/dist",
+      "!node_modules",
+      "!**/.superpowers",
+      "!.worktrees",
+      "!**/testdata"
+    ]
   },
   "formatter": {
     "enabled": true,

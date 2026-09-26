@@ -1,7 +1,7 @@
+import { afterEach, describe, expect, it } from 'bun:test';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'bun:test';
 
 const REPO_ROOT = join(import.meta.dir, '..', '..', '..');
 const SCRIPT = join(REPO_ROOT, 'apps/extension/scripts/dev-watch.sh');
