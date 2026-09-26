@@ -21,6 +21,11 @@ import (
 // InboundRouter is the slice of core.Router the inbound server calls.
 type InboundRouter interface {
 	HandleInboundCommand(envelope core.Envelope, sender core.TextSender)
+	// RemoveClient drops every inbound route pointing at sender when the
+	// client connection ends; without it a kill -9 / unexpected close pins
+	// the sender in inboundByID until the extension finally answers (which
+	// can be never).
+	RemoveClient(sender core.TextSender)
 }
 
 type InboundOptions struct {
@@ -165,6 +170,11 @@ func (s *InboundServer) ServeHTTP(w nethttp.ResponseWriter, r *nethttp.Request) 
 
 func (s *InboundServer) serveConn(c *clientConn) {
 	defer func() {
+		// Tell the router first: any inbound route pointing at this client
+		// is gone (the client side is closing), so without RemoveClient
+		// each kill -9 / unexpected close pins one entry in inboundByID
+		// until the extension answers (which can be never).
+		s.router.RemoveClient(c)
 		s.mu.Lock()
 		delete(s.conns, c)
 		s.mu.Unlock()
@@ -302,6 +312,13 @@ func (s *InboundServer) forwardToOthers(sender *clientConn, text string) {
 	}
 	s.mu.Unlock()
 	for _, c := range others {
+		// Skip peers that have already disconnected — the original TS
+		// filtered on `cliWs.readyState === 1`. Without this, every
+		// mid-shutdown fan-out produces a "ws write failed" log line
+		// that breaks alerting that filters on those messages.
+		if c.IsClosed() {
+			continue
+		}
 		c.Send(text)
 	}
 }

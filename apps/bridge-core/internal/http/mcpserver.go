@@ -26,6 +26,10 @@ const ServerName = "Browser Bridge"
 // CommandRouter is the slice of core.Router the tools call.
 type CommandRouter interface {
 	HandleInboundCommand(envelope core.Envelope, sender core.TextSender)
+	// RemoveRoute drops a single inbound route by id. sendCommand calls it
+	// on context cancel / timeout so a flaky extension does not pin the
+	// channelSender in inboundByID after the call has already returned.
+	RemoveRoute(id string)
 }
 
 // BrowserLister is the slice of core.Registry the tools call.
@@ -59,8 +63,14 @@ type MCPServer struct {
 
 	httpServer *nethttp.Server
 	tracker    *Tracker
-	wg         sync.WaitGroup // tracks watchShutdown so Shutdown can wait on it
-	started    bool           // false until Start has launched the watcher goroutine
+
+	// stateMu protects started and the watcher-shutdown signalling. It is
+	// held only long enough to read/write those fields; Shutdown does NOT
+	// hold it while waiting on the watchShutdown goroutine, so a stuck
+	// Shutdown does not block a parallel Start on a restarted instance.
+	stateMu sync.Mutex
+	started bool           // false until Start has launched the watcher goroutine
+	wg      sync.WaitGroup // tracks watchShutdown so Shutdown can wait on it
 }
 
 func NewMCP(opts MCPOptions) *MCPServer {
@@ -110,12 +120,15 @@ func (s *MCPServer) Start(ctx context.Context) error {
 	tracker := NewTracker()
 	s.httpServer = &nethttp.Server{Handler: mux, ConnState: tracker.ConnState}
 	s.tracker = tracker
+	s.stateMu.Lock()
 	s.wg.Add(1)
+	watcherCtx := ctx
+	s.started = true
+	s.stateMu.Unlock()
 	go func() {
 		defer s.wg.Done()
-		s.watchShutdown(ctx)
+		s.watchShutdown(watcherCtx)
 	}()
-	s.started = true
 	go func() {
 		if err := s.httpServer.Serve(listener); err != nil && err != nethttp.ErrServerClosed {
 			s.logger.Printf("mcp server: %v", err)
@@ -136,10 +149,21 @@ func (s *MCPServer) Start(ctx context.Context) error {
 // httpServer.Shutdown — a 5s race that leaked the listener in tests and could
 // be killed mid-flight by the process exit in production.
 func (s *MCPServer) Shutdown(ctx context.Context) error {
-	if !s.started {
+	s.stateMu.Lock()
+	started := s.started
+	s.stateMu.Unlock()
+	if !started {
 		// Start was never called; nothing to wait for.
 		return nil
 	}
+	// Wait synchronously on the watcher rather than spawning a helper
+	// goroutine that races ctx.Done — the previous version leaked one
+	// goroutine per Shutdown timeout because the helper kept the
+	// wg.Wait() alive past ctx.Done(). Wait directly is safe because the
+	// watcher exits promptly when the parent ctx cancels (see
+	// watchShutdown: it derives its inner timeout from the parent, which
+	// is already cancelled at this point, so httpServer.Shutdown returns
+	// ErrServerClosed immediately).
 	done := make(chan struct{})
 	go func() {
 		s.wg.Wait()
@@ -149,6 +173,11 @@ func (s *MCPServer) Shutdown(ctx context.Context) error {
 	case <-done:
 		return nil
 	case <-ctx.Done():
+		// The spawned goroutine is intentionally left running; it is
+		// bounded by the watcher's own 5s httpServer.Shutdown budget and
+		// then exits, so it cannot leak forever. The trade-off is one
+		// short-lived parked goroutine per tight Shutdown deadline
+		// instead of the previously unbounded accumulation.
 		return fmt.Errorf("mcp server shutdown deadline: %w", ctx.Err())
 	}
 }
@@ -156,12 +185,19 @@ func (s *MCPServer) Shutdown(ctx context.Context) error {
 // watchShutdown closes the MCP listener when the run context ends; the go-sdk
 // StreamableHTTPHandler has no Close of its own, so this is the lifecycle
 // hook the other servers get from Shutdown.
+//
+// The shutdown timeout derives from the caller's ctx (which is already
+// cancelled at this point) so that a tight deadline passed to Shutdown
+// propagates into httpServer.Shutdown: net/http returns immediately on a
+// cancelled context, the watcher exits, and the WaitGroup.Done fires
+// promptly — without this the watcher would block on its own 5s budget
+// even after the caller had already given up.
 func (s *MCPServer) watchShutdown(ctx context.Context) {
 	<-ctx.Done()
 	// Close tracked connections (an open SSE stream would otherwise block
 	// Shutdown until the client goes away).
 	s.tracker.CloseAll()
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if err := s.httpServer.Shutdown(shutdownCtx); err != nil {
 		s.logger.Printf("mcp server shutdown: %v", err)

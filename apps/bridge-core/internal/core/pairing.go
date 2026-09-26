@@ -190,8 +190,15 @@ func (m *PairingManager) Verify(token string) bool {
 	if err != nil {
 		return false
 	}
-	// ConstantTimeCompare returns 0 on length mismatch, covering the TS
-	// length guard before timingSafeEqual.
+	// Length must match before timingSafeEqual / ConstantTimeCompare: a
+	// truncated or corrupted stored hash (len != 32 bytes) would otherwise
+	// run ConstantTimeCompare over actual[:] (32 bytes) anyway, leaking a
+	// timing signal that the stored hash is shorter than the SHA-256
+	// actual. The TS pair-store does the same length guard before its
+	// timingSafeEqual call; mirror that discipline.
+	if len(expected) != len(actual) {
+		return false
+	}
 	return subtle.ConstantTimeCompare(actual[:], expected) == 1
 }
 

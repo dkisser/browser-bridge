@@ -193,9 +193,20 @@ type screenshotArgs struct {
 	TimeoutMS *int  `json:"timeout_ms,omitempty"`
 }
 
-// dataURLPrefix is the strip pattern from executeScreenshot in
-// src/mcp/tools/screenshot.ts: /^data:image\/[a-zA-Z]+;base64,/.
-var dataURLPrefix = regexp.MustCompile(`^data:image/[a-zA-Z]+;base64,`)
+// dataURLPrefix captures the MIME subtype from the data URL head in
+// executeScreenshot (src/mcp/tools/screenshot.ts). The TS regex strips the
+// prefix; we capture group 1 to set ImageContent.MIMEType correctly — the
+// underlying bytes can be JPEG / WebP / PNG and reporting "image/png" for
+// any of them breaks downstream clients that validate the MIME or save the
+// bytes under the declared extension.
+var dataURLPrefix = regexp.MustCompile(`^data:image/([a-zA-Z]+);base64,`)
+
+// defaultScreenshotMIMEType is the fallback when the extension returns a
+// data URL with an unrecognised subtype. PNG is the most common format the
+// extension captures; if the head is missing entirely the bytes are
+// rejected upstream with "Screenshot failed: browser returned no image
+// data".
+const defaultScreenshotMIMEType = "image/png"
 
 // executeScreenshot is executeScreenshot in src/mcp/tools/screenshot.ts,
 // returning MCP image content. The TS passes the base64 payload through
@@ -214,15 +225,20 @@ func (s *MCPServer) executeScreenshot(ctx context.Context, req *mcp.CallToolRequ
 		DataURL string `json:"dataUrl"`
 	}
 	_ = json.Unmarshal(result.Data, &data)
-	encoded := dataURLPrefix.ReplaceAllString(data.DataURL, "")
-	if encoded == "" {
+	match := dataURLPrefix.FindStringSubmatch(data.DataURL)
+	if match == nil {
 		return toolError("screenshot", "Screenshot failed: browser returned no image data"), nil, nil
 	}
+	mimeType := "image/" + strings.ToLower(match[1])
+	if mimeType == "" || mimeType == "image/" {
+		mimeType = defaultScreenshotMIMEType
+	}
+	encoded := strings.TrimPrefix(data.DataURL, match[0])
 	raw, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
 		return toolError("screenshot", fmt.Sprintf("Screenshot failed: invalid base64 image data: %v", err)), nil, nil
 	}
 	return &mcp.CallToolResult{
-		Content: []mcp.Content{&mcp.ImageContent{Data: raw, MIMEType: "image/png"}},
+		Content: []mcp.Content{&mcp.ImageContent{Data: raw, MIMEType: mimeType}},
 	}, nil, nil
 }

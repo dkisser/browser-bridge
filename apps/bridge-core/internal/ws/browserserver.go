@@ -128,6 +128,12 @@ func (s *BrowserServer) HasExtension() bool {
 }
 
 // SendToExtension writes a frame to the tracked extension connection.
+// Returns false when there is no tracked connection, AND when the
+// underlying Write fails (peer already gone, kernel sent RST, etc.). The
+// caller (the router) uses the false return to drop inboundByID[id]; the
+// previous implementation always returned true on Write, which left the
+// route pinned waiting for a response that the extension would never
+// produce.
 func (s *BrowserServer) SendToExtension(text string) bool {
 	s.mu.Lock()
 	ext := s.ext
@@ -135,8 +141,7 @@ func (s *BrowserServer) SendToExtension(text string) bool {
 	if ext == nil {
 		return false
 	}
-	ext.Send(text)
-	return true
+	return ext.TrySend(text)
 }
 
 func (s *BrowserServer) ServeHTTP(w nethttp.ResponseWriter, r *nethttp.Request) {

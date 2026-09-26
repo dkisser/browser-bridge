@@ -136,20 +136,26 @@ func Run(ctx context.Context, cfg Config) error {
 
 	<-ctx.Done()
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := in.Shutdown(shutdownCtx); err != nil {
-		logger.Printf("inbound shutdown: %v", err)
+	// Each server gets its own 5s budget. A single shared context gets
+	// carved up between the three Shutdown calls and the second / third
+	// one can land on a budget that's already nearly spent; if
+	// inbound.Shutdown burns 4s on tracked keep-alive closes, browser and
+	// MCP shutdown race the deadline. The browserserver and mcpserver each
+	// do their own http.Server.Shutdown, which already takes a 5s timeout,
+	// so the budget is the natural one for each.
+	shutdownOne := func(name string, fn func(context.Context) error) {
+		sctx, scancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer scancel()
+		if err := fn(sctx); err != nil {
+			logger.Printf("%s shutdown: %v", name, err)
+		}
 	}
-	if err := browser.Shutdown(shutdownCtx); err != nil {
-		logger.Printf("browser shutdown: %v", err)
-	}
+	shutdownOne("inbound", in.Shutdown)
+	shutdownOne("browser", browser.Shutdown)
 	// Wait for the MCP server's watcher goroutine to finish closing the
 	// underlying http.Server. Returning before that race leaves the listener
 	// and tracked connections to the process exit.
-	if err := mcpSrv.Shutdown(shutdownCtx); err != nil {
-		logger.Printf("mcp shutdown: %v", err)
-	}
+	shutdownOne("mcp", mcpSrv.Shutdown)
 	return nil
 }
 

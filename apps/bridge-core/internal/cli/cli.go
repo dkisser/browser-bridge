@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -101,12 +102,88 @@ func Execute(version string) int {
 		case errors.Is(err, ErrSilent):
 			// status/doctor findings were the output; exit 1 silently.
 		default:
-			// Flag-parse and unknown-command errors land here.
-			fmt.Fprintln(root.ErrOrStderr(), "Error:", err)
+			// Cobra builds the message as "unknown command %q for %q" for
+			// typos and uninstalled verbs. Map that to the BB-E101 code
+			// the bash router emitted so release scripts, install docs,
+			// and install tests that grep for BB-E### stay consistent.
+			// JSON mode is detected from the raw args because Cobra does
+			// not parse flags before bailing on an unknown subcommand.
+			jsonMode := argsHaveJSON(os.Args[1:])
+			formatted := TranslateError(root, err, jsonMode)
+			if jsonMode {
+				fmt.Fprintln(root.OutOrStdout(), formatted)
+			} else {
+				fmt.Fprintln(root.ErrOrStderr(), "Error:", formatted)
+			}
 		}
 		return 1
 	}
 	return 0
+}
+
+// translateError re-formats Cobra's built-in error texts into the
+// BB-E###-style messages the bash router used, so existing release scripts
+// and install tests that grep for the codes keep working. The
+// unknown-command path used to print Cobra's bare
+//
+//	Error: unknown command "foo" for "bridge"
+//
+// which broke those consumers. Today the only re-format we need is the
+// unknown-command case; flag-parse errors are passed through verbatim.
+//
+// Exported so tests can drive the formatting without going through
+// Execute, which builds its own root command and so cannot share the
+// caller-supplied stderr capture.
+//
+// jsonMode is passed in explicitly because Cobra's flag.Changed is false
+// on the unknown-command path — Cobra bails before parsing flags when
+// args[0] looks like a verb that doesn't match a registered subcommand.
+// Scanning args for --json / --json=true is the only reliable way to
+// pick the JSON-mode branch.
+func TranslateError(root *cobra.Command, err error, jsonMode bool) string {
+	const unknownPrefix = "unknown command "
+	if msg := err.Error(); strings.HasPrefix(msg, unknownPrefix) {
+		name := extractUnknownCmdName(msg)
+		if name == "" {
+			return err.Error()
+		}
+		if jsonMode {
+			raw, _ := json.Marshal(errorObject{Status: "error", Error: "BB-E101", Message: fmt.Sprintf("unknown command '%s'. Run 'bridge --help' for help.", name)})
+			return string(raw)
+		}
+		return fmt.Sprintf("BB-E101: unknown command '%s'. Run 'bridge --help' for help.", name)
+	}
+	return err.Error()
+}
+
+// argsHaveJSON scans argv for --json or --json=true|false. Used by the
+// unknown-command error path because Cobra's flag.Changed is not yet set
+// when the unknown-command branch is taken.
+func argsHaveJSON(args []string) bool {
+	for _, a := range args {
+		if a == "--json" {
+			return true
+		}
+		if strings.HasPrefix(a, "--json=") {
+			v := strings.TrimPrefix(a, "--json=")
+			return v == "true" || v == "1"
+		}
+	}
+	return false
+}
+
+// extractUnknownCmdName pulls "foo" out of `unknown command "foo" for "bridge"`.
+// Returns "" when the message does not match the expected shape, in which
+// case the caller falls back to the raw error text.
+func extractUnknownCmdName(msg string) string {
+	rest := strings.TrimPrefix(msg, "unknown command ")
+	end := strings.Index(rest, " for ")
+	if end < 0 {
+		return ""
+	}
+	name := rest[:end]
+	name = strings.Trim(name, `"`)
+	return name
 }
 
 // printData is output() in the TS CLI: --json pretty-prints with a 2-space

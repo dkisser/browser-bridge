@@ -9,9 +9,10 @@ import "sync"
 // evicted either. Without this cap an MCP client that reconnects and re-pins
 // browsers for hours grows the map without bound. 1024 is well past any
 // realistic per-launch session count; once exceeded we evict a single
-// arbitrary entry per insert. Eviction is approximate-LRU — we do not track
-// access order — but the cap only kicks in under sustained churn and the map
-// is small enough that the choice is not observable to clients.
+// arbitrary entry per insert. Eviction is approximate — we do not track
+// access order, so a hot pinned session can be the one evicted — but the
+// cap only kicks in under sustained churn and the affected caller can
+// always re-pin via set_browser.
 const sessionStoreCap = 1024
 
 // sessionStore is createBrowserSessionStore in src/mcp/browser-session.ts:

@@ -109,6 +109,31 @@ func TestVerifyAcceptsPairedTokenAndRejectsOthers(t *testing.T) {
 	}
 }
 
+// TestVerifyRejectsTruncatedHash pins the length guard added before the
+// constant-time compare: a corrupted or truncated stored hash (len != 32
+// bytes) used to leak a small timing signal via ConstantTimeCompare, which
+// runs over the actual[:] (32 bytes) regardless. The guard short-circuits
+// to false before the compare runs.
+func TestVerifyRejectsTruncatedHash(t *testing.T) {
+	m, _, _ := makeManager(t)
+	code, _ := m.Start()
+	result, err := m.Confirm(code)
+	if err != nil || !result.OK {
+		t.Fatalf("pairing failed: %+v, %v", result, err)
+	}
+	// Build a fresh manager with a truncated stored hash by closing over a
+	// fresh hash reader/writer pair. The closure keeps makeManager
+	// untouched.
+	truncatedHash := "deadbeefdeadbeef" // 16 hex chars = 8 bytes
+	m2 := NewPairingManager(
+		func() string { return truncatedHash },
+		func(_ string) error { return nil },
+	)
+	if m2.Verify(result.Token) {
+		t.Fatal("verify accepted a token against a truncated (8-byte) hash")
+	}
+}
+
 func TestConfirmWithoutPendingCodeIsInvalid(t *testing.T) {
 	m, _, _ := makeManager(t)
 	result, err := m.Confirm("ABCDEFGH")

@@ -32,13 +32,19 @@ func Logs(ctx context.Context, e *Env, w io.Writer) error {
 	}
 
 	// Follow: poll for growth (and truncation/rotation) like tail -f does.
+	// Reuse a single ticker instead of `time.After` per iteration — the
+	// latter allocates a fresh *time.Timer on every cycle and leaves the
+	// previous one alive until it fires, growing the runtime timer-set
+	// under sustained idle.
 	pending := ""
 	buf := make([]byte, 32<<10)
+	ticker := time.NewTicker(e.pollInterval)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-time.After(e.pollInterval):
+		case <-ticker.C:
 		}
 		st, err := f.Stat()
 		if err != nil {

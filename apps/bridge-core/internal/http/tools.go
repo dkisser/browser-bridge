@@ -113,9 +113,25 @@ func (s channelSender) Send(text string) {
 // timeout text matches the TS client's.
 func (s *MCPServer) sendCommand(ctx context.Context, browserID, command string, params map[string]any, timeout time.Duration) (core.ResponsePayload, error) {
 	// TS: payload.tabId = typeof params.tabId === 'number' ? params.tabId : 0.
-	tabID, _ := params["tabId"].(int)
+	// We accept int and json.Number — Go's encoding/json unmarshals JSON
+	// numbers into float64 by default, and a future caller round-tripping
+	// args through a generic map[string]any would otherwise silently coerce
+	// tabId to 0 on the wire.
 	if params == nil {
 		params = map[string]any{}
+	}
+	tabID := 0
+	switch v := params["tabId"].(type) {
+	case int:
+		tabID = v
+	case int64:
+		tabID = int(v)
+	case float64:
+		tabID = int(v)
+	case json.Number:
+		if n, convErr := v.Int64(); convErr == nil {
+			tabID = int(n)
+		}
 	}
 	payload, err := json.Marshal(struct {
 		Command string         `json:"command"`
@@ -131,32 +147,47 @@ func (s *MCPServer) sendCommand(ctx context.Context, browserID, command string, 
 	}
 
 	ch := make(chan string, 1)
-	s.router.HandleInboundCommand(core.Envelope{
+	envelope := core.Envelope{
 		ID:        core.NewID(),
 		Type:      core.TypeCommand,
 		BrowserID: browserID,
 		Payload:   payload,
 		Timestamp: time.Now().UnixMilli(),
-	}, channelSender{ch: ch})
+	}
+	s.router.HandleInboundCommand(envelope, channelSender{ch: ch})
 
 	select {
 	case text := <-ch:
-		envelope, err := core.Decode(text)
+		// The router has already removed the route on the response path
+		// (HandleBrowserResponse calls takeInbound), so do not call
+		// RemoveRoute here.
+		decoded, err := core.Decode(text)
 		if err != nil {
 			return core.ResponsePayload{}, fmt.Errorf("decode response envelope: %w", err)
 		}
-		if len(envelope.Payload) == 0 || bytes.Equal(envelope.Payload, []byte("null")) {
+		if len(decoded.Payload) == 0 || bytes.Equal(decoded.Payload, []byte("null")) {
 			// envelope.payload ?? { status: 'error', error: 'Empty response' }
 			return core.ResponsePayload{Status: "error", Error: "Empty response"}, nil
 		}
 		var result core.ResponsePayload
-		if err := json.Unmarshal(envelope.Payload, &result); err != nil {
+		if err := json.Unmarshal(decoded.Payload, &result); err != nil {
 			return core.ResponsePayload{}, fmt.Errorf("decode response payload: %w", err)
 		}
 		return result, nil
 	case <-ctx.Done():
+		// The router's own success-path TTL (defaultRouteTTL) is 30s and
+		// would eventually clean this up, but a long-lived daemon that
+		// accumulates slow MCP calls while the user has already given up
+		// on this one would still leak the entry for up to 30s. Drop it
+		// here so the leak window is bounded by the caller's context, not
+		// the router's policy.
+		s.router.RemoveRoute(envelope.ID)
 		return core.ResponsePayload{}, fmt.Errorf("command %s: %w", command, ctx.Err())
 	case <-time.After(timeout):
+		// Same reasoning as ctx.Done: the router will clean up via its
+		// own TTL, but the caller has already failed — release the slot
+		// now.
+		s.router.RemoveRoute(envelope.ID)
 		return core.ResponsePayload{}, fmt.Errorf("timeout: no response for command %s within %dms", command, timeout.Milliseconds())
 	}
 }

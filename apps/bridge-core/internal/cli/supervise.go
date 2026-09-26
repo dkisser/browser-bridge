@@ -122,12 +122,15 @@ func (e *Env) supervisorWatch(ctx context.Context, r Runner, logf func(string, .
 				}
 			}
 		} else {
+			ticker := time.NewTicker(time.Second)
 			select {
 			case <-ctx.Done():
+				ticker.Stop()
 				e.supervisorShutdown(r, logf)
 				return nil
-			case <-time.After(time.Second):
+			case <-ticker.C:
 			}
+			ticker.Stop()
 			pid, ok := readPid(e.PidFile())
 			if ok && pidAlive(ctx, r, pid) {
 				restarts = 0

@@ -19,6 +19,11 @@ import (
 )
 
 // runCLI executes the root command with args and captures both streams.
+// Unknown-command errors are re-routed through TranslateError so the
+// BB-E101 contract that Execute enforces is also exercised here — tests
+// get the same string the binary would emit. JSON mode writes the
+// formatted object to stdout (matching Execute), human mode writes the
+// "Error: <code>: <msg>" line to stderr.
 func runCLI(t *testing.T, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
 	root := New("test")
@@ -26,7 +31,16 @@ func runCLI(t *testing.T, args ...string) (stdout, stderr string, err error) {
 	root.SetOut(&outBuf)
 	root.SetErr(&errBuf)
 	root.SetArgs(args)
+	jsonMode := argsHaveJSON(args)
 	err = root.Execute()
+	if err != nil && !errors.Is(err, ErrReported) && !errors.Is(err, ErrSilent) {
+		formatted := TranslateError(root, err, jsonMode)
+		if jsonMode {
+			fmt.Fprintln(&outBuf, formatted)
+		} else {
+			fmt.Fprintln(&errBuf, "Error:", formatted)
+		}
+	}
 	return outBuf.String(), errBuf.String(), err
 }
 
@@ -404,5 +418,56 @@ func TestBridgeHost(t *testing.T) {
 	want := "bridge-host: not yet implemented. See docs/superpowers/specs/2026-06-15-distribution-design.md\n"
 	if stderr != want {
 		t.Errorf("stderr = %q, want %q", stderr, want)
+	}
+}
+
+// TestUnknownCommandEmitsBBE101 pins the BB-E101 code the bash router
+// emitted for typos and uninstalled verbs. The Go CLI used to print
+// Cobra's bare "unknown command %q for %q" — that broke release scripts,
+// install docs, and install tests that grep for the BB-E### code.
+func TestUnknownCommandEmitsBBE101(t *testing.T) {
+	_, stderr, err := runCLI(t, "totally-not-a-command")
+	if err == nil {
+		t.Fatal("expected an error for an unknown command")
+	}
+	want := "Error: BB-E101: unknown command 'totally-not-a-command'. Run 'bridge --help' for help.\n"
+	if stderr != want {
+		t.Errorf("stderr = %q, want %q", stderr, want)
+	}
+}
+
+// TestUnknownCommandJSONEmitsBBE101Object covers the --json path: BB-E101
+// still surfaces, but as a compact JSON object on stdout, matching the
+// {status, error, message} shape the rest of the CLI emits in --json mode.
+func TestUnknownCommandJSONEmitsBBE101Object(t *testing.T) {
+	stdout, _, err := runCLI(t, "--json", "totally-not-a-command")
+	if err == nil {
+		t.Fatal("expected an error for an unknown command")
+	}
+	var obj map[string]any
+	if uerr := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &obj); uerr != nil {
+		t.Fatalf("stdout %q is not JSON: %v", stdout, uerr)
+	}
+	if obj["status"] != "error" || obj["error"] != "BB-E101" {
+		t.Errorf("status/error = %v/%v, want error/BB-E101", obj["status"], obj["error"])
+	}
+	if msg, _ := obj["message"].(string); !strings.Contains(msg, "totally-not-a-command") {
+		t.Errorf("message = %q, want it to mention the command name", msg)
+	}
+}
+
+// TestTranslateErrorPassesFlagParseThrough covers the pass-through case:
+// only "unknown command" gets reformatted to BB-E101; flag-parse errors
+// keep their original Cobra text so flag typos don't get a misleading code.
+func TestTranslateErrorPassesFlagParseThrough(t *testing.T) {
+	_, stderr, err := runCLI(t, "--not-a-flag")
+	if err == nil {
+		t.Fatal("expected an error for an unknown flag")
+	}
+	if strings.Contains(stderr, "BB-E101") {
+		t.Errorf("stderr contains BB-E101 for a flag error; should be raw: %q", stderr)
+	}
+	if !strings.Contains(stderr, "Error:") {
+		t.Errorf("stderr = %q, want it to start with Error:", stderr)
 	}
 }

@@ -435,3 +435,146 @@ func TestHandleInboundCommandHappyPathKeepsRouteUntilResponse(t *testing.T) {
 		t.Fatal("c2 route should still be live — only c1 was answered")
 	}
 }
+
+// TestRemoveClientDropsAllRoutesForSender closes the leak that existed
+// before the inbound-side disconnect hook: a CLI process killed between
+// submitting a command and receiving the response used to pin its sender
+// in inboundByID until the extension answered (which could be never).
+// RemoveClient drops every route pointing at the sender.
+func TestRemoveClientDropsAllRoutesForSender(t *testing.T) {
+	r, st, browser, _ := makeRouter(t)
+	st.SetStatus(StatusOnline)
+	browser.online = true
+	browser.deliver = true
+
+	client := &fakeSender{}
+	other := &fakeSender{}
+	r.HandleInboundCommand(commandEnvelope(st.BrowserID(), "c1"), client)
+	r.HandleInboundCommand(commandEnvelope(st.BrowserID(), "c2"), client)
+	r.HandleInboundCommand(commandEnvelope(st.BrowserID(), "c3"), other)
+
+	r.RemoveClient(client)
+
+	if r.lookupInbound("c1") != nil {
+		t.Fatal("c1 route should be cleared after RemoveClient(client)")
+	}
+	if r.lookupInbound("c2") != nil {
+		t.Fatal("c2 route should be cleared after RemoveClient(client)")
+	}
+	if r.lookupInbound("c3") == nil {
+		t.Fatal("c3 belongs to a different client and must not be cleared")
+	}
+}
+
+// TestRemoveRouteClearsSingleEntry verifies the single-id cleanup that
+// sendCommand calls on context cancel / timeout. Pre-fix the router relied
+// on HandleBrowserResponse being the only cleanup; a slow call that already
+// returned left its sender pinned until the extension answered.
+func TestRemoveRouteClearsSingleEntry(t *testing.T) {
+	r, st, browser, _ := makeRouter(t)
+	st.SetStatus(StatusOnline)
+	browser.online = true
+	browser.deliver = true
+
+	sender := &fakeSender{}
+	r.HandleInboundCommand(commandEnvelope(st.BrowserID(), "c1"), sender)
+	if r.lookupInbound("c1") == nil {
+		t.Fatal("setup: c1 should be tracked")
+	}
+
+	r.RemoveRoute("c1")
+	if r.lookupInbound("c1") != nil {
+		t.Fatal("RemoveRoute(c1) should have cleared the entry")
+	}
+
+	// A late response now must route nowhere.
+	r.HandleBrowserResponse(Envelope{
+		ID:        "c1",
+		Type:      TypeResponse,
+		BrowserID: st.BrowserID(),
+		Payload:   json.RawMessage(`{"status":"ok"}`),
+		Timestamp: time.Now().UnixMilli(),
+	})
+	if got := sender.sentMessages(); len(got) != 0 {
+		t.Fatalf("sender got %v, want nothing", got)
+	}
+}
+
+// TestSuccessPathTTLTimeoutFiresSwTimeout covers the success-with-no-
+// response leak: SendToExtension returns true (the frame was accepted),
+// but the extension never answers. Without a per-route deadline the
+// sender is pinned forever; with the deadline the sender gets a sw_timeout
+// and the route is cleared.
+func TestSuccessPathTTLTimeoutFiresSwTimeout(t *testing.T) {
+	r, st, browser := makeRouterWithRouteTTL(t, 30*time.Millisecond)
+	st.SetStatus(StatusOnline)
+	browser.online = true
+	browser.deliver = true
+
+	sender := &fakeSender{}
+	r.HandleInboundCommand(commandEnvelope(st.BrowserID(), "c1"), sender)
+
+	// Wait for the TTL to expire. AfterFunc runs in its own goroutine;
+	// poll until the sender sees the sw_timeout or the test budget runs
+	// out.
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if msgs := sender.sentMessages(); len(msgs) > 0 {
+			payload := decodePayload(t, msgs[0])
+			if payload.Status != "error" || payload.Error != "sw_timeout" {
+				t.Fatalf("payload = %+v, want sw_timeout", payload)
+			}
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if r.lookupInbound("c1") != nil {
+		t.Fatal("c1 route should be cleared after the TTL fired")
+	}
+}
+
+// TestHandleBrowserResponseCancelsTTL verifies that a response cancels the
+// pending TTL — without this the timer would still fire and try to send a
+// stale sw_timeout to a sender that already received its response.
+func TestHandleBrowserResponseCancelsTTL(t *testing.T) {
+	r, st, browser := makeRouterWithRouteTTL(t, 50*time.Millisecond)
+	st.SetStatus(StatusOnline)
+	browser.online = true
+	browser.deliver = true
+
+	sender := &fakeSender{}
+	r.HandleInboundCommand(commandEnvelope(st.BrowserID(), "c1"), sender)
+
+	r.HandleBrowserResponse(Envelope{
+		ID:        "c1",
+		Type:      TypeResponse,
+		BrowserID: st.BrowserID(),
+		Payload:   json.RawMessage(`{"status":"ok"}`),
+		Timestamp: time.Now().UnixMilli(),
+	})
+
+	// Drain the response that the sender just got.
+	got := sender.sentMessages()
+	if len(got) != 1 {
+		t.Fatalf("sender got %d messages, want 1 response", len(got))
+	}
+
+	// Wait past the TTL; no sw_timeout should follow.
+	time.Sleep(150 * time.Millisecond)
+	if msgs := sender.sentMessages(); len(msgs) != 1 {
+		t.Fatalf("sender got %d messages, want only the original response (no late sw_timeout)", len(msgs))
+	}
+}
+
+// makeRouterWithRouteTTL is like makeRouter but overrides the router's
+// success-path TTL for tests that need a short window.
+func makeRouterWithRouteTTL(t *testing.T, ttl time.Duration) (*Router, *StateManager, *fakeBrowser) {
+	t.Helper()
+	t.Setenv("BB_HOME", t.TempDir())
+	st, err := NewStateManager()
+	if err != nil {
+		t.Fatalf("NewStateManager: %v", err)
+	}
+	browser := &fakeBrowser{deliver: true}
+	return NewRouter(st, browser, &fakeRegistry{}, log.Default(), WithRouteTTL(ttl)), st, browser
+}

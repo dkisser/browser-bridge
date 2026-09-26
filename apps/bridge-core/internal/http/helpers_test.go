@@ -71,6 +71,12 @@ func (f *fakeRouter) HandleInboundCommand(envelope core.Envelope, sender core.Te
 	sender.Send(text)
 }
 
+// RemoveRoute satisfies CommandRouter — the production router uses it to
+// drop an in-flight route when sendCommand times out or its context is
+// canceled. The fake no-ops because the script already serializes every
+// command synchronously above.
+func (f *fakeRouter) RemoveRoute(_ string) {}
+
 func (f *fakeRouter) captured() []capturedCommand {
 	f.mu.Lock()
 	defer f.mu.Unlock()

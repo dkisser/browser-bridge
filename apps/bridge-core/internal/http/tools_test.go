@@ -586,6 +586,7 @@ func TestScreenshot(t *testing.T) {
 		name      string
 		args      map[string]any
 		data      string
+		wantMIME  string
 		wantImage []byte // nil = expect an error result
 		wantText  string
 	}{
@@ -593,14 +594,28 @@ func TestScreenshot(t *testing.T) {
 			name:      "dataUrl renders image content",
 			args:      map[string]any{"tab_id": 1, "fullPage": true},
 			data:      `{"dataUrl":"data:image/png;base64,aGVsbG8="}`,
+			wantMIME:  "image/png",
 			wantImage: []byte("hello"),
 		},
 		{
-			name:      "missing dataUrl is an error",
+			name:      "jpeg dataUrl reports image/jpeg, not image/png",
 			args:      map[string]any{"tab_id": 1},
-			data:      `{}`,
-			wantImage: nil,
-			wantText:  "Tool 'screenshot' execution failed: Screenshot failed: browser returned no image data",
+			data:      `{"dataUrl":"data:image/jpeg;base64,aGVsbG8="}`,
+			wantMIME:  "image/jpeg",
+			wantImage: []byte("hello"),
+		},
+		{
+			name:      "webp dataUrl reports image/webp",
+			args:      map[string]any{"tab_id": 1},
+			data:      `{"dataUrl":"data:image/webp;base64,aGVsbG8="}`,
+			wantMIME:  "image/webp",
+			wantImage: []byte("hello"),
+		},
+		{
+			name:     "missing dataUrl is an error",
+			args:     map[string]any{"tab_id": 1},
+			data:     `{}`,
+			wantText: "Tool 'screenshot' execution failed: Screenshot failed: browser returned no image data",
 		},
 	}
 	for _, tt := range tests {
@@ -629,8 +644,8 @@ func TestScreenshot(t *testing.T) {
 			if !ok {
 				t.Fatalf("content[0] = %T, want image", result.Content[0])
 			}
-			if image.MIMEType != "image/png" {
-				t.Errorf("mimeType = %q, want image/png", image.MIMEType)
+			if image.MIMEType != tt.wantMIME {
+				t.Errorf("mimeType = %q, want %q", image.MIMEType, tt.wantMIME)
 			}
 			if !reflect.DeepEqual(image.Data, tt.wantImage) {
 				t.Errorf("image data = %q, want %q", image.Data, tt.wantImage)
