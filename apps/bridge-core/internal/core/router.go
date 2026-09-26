@@ -68,10 +68,22 @@ func (r *Router) HandleInboundCommand(envelope Envelope, sender TextSender) {
 	}
 
 	if r.browser.HasExtension() {
-		if text, err := Encode(envelope.Type, envelope.Payload, envelope.ID, envelope.BrowserID); err != nil {
+		text, err := Encode(envelope.Type, envelope.Payload, envelope.ID, envelope.BrowserID)
+		if err != nil {
 			r.logger.Printf("encode command envelope: %v", err)
-		} else {
-			r.browser.SendToExtension(text)
+			// Without this the entry leaks forever — the response path
+			// (HandleBrowserResponse) is the only normal cleanup, so an
+			// Encode failure here pins a sender in inboundByID until the
+			// process restarts.
+			r.removeInbound(envelope.ID)
+			return
+		}
+		if sent := r.browser.SendToExtension(text); !sent {
+			// The extension disappeared between HasExtension and
+			// SendToExtension (SendToExtension returns false on no tracked
+			// connection). The response path will never fire, so we have to
+			// drop the route ourselves or the sender is pinned forever.
+			r.removeInbound(envelope.ID)
 		}
 		return
 	}

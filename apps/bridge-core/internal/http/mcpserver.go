@@ -12,6 +12,7 @@ import (
 	nethttp "net/http"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -58,6 +59,8 @@ type MCPServer struct {
 
 	httpServer *nethttp.Server
 	tracker    *Tracker
+	wg         sync.WaitGroup // tracks watchShutdown so Shutdown can wait on it
+	started    bool           // false until Start has launched the watcher goroutine
 }
 
 func NewMCP(opts MCPOptions) *MCPServer {
@@ -107,14 +110,47 @@ func (s *MCPServer) Start(ctx context.Context) error {
 	tracker := NewTracker()
 	s.httpServer = &nethttp.Server{Handler: mux, ConnState: tracker.ConnState}
 	s.tracker = tracker
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.watchShutdown(ctx)
+	}()
+	s.started = true
 	go func() {
 		if err := s.httpServer.Serve(listener); err != nil && err != nethttp.ErrServerClosed {
 			s.logger.Printf("mcp server: %v", err)
 		}
 	}()
-	go s.watchShutdown(ctx)
 	s.logger.Printf("MCP server listening on http://localhost:%d/mcp", s.port)
 	return nil
+}
+
+// Shutdown blocks until the watchShutdown goroutine has finished closing
+// the underlying HTTP server, mirroring the contract of ws.InboundServer and
+// ws.BrowserServer. The caller is expected to cancel the context passed to
+// Start before invoking Shutdown; without that the goroutine never wakes up
+// from <-ctx.Done() and Shutdown returns when its context expires.
+//
+// Without this method the caller (app.Run) used to return the moment the run
+// context was canceled, while watchShutdown was still inside
+// httpServer.Shutdown — a 5s race that leaked the listener in tests and could
+// be killed mid-flight by the process exit in production.
+func (s *MCPServer) Shutdown(ctx context.Context) error {
+	if !s.started {
+		// Start was never called; nothing to wait for.
+		return nil
+	}
+	done := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("mcp server shutdown deadline: %w", ctx.Err())
+	}
 }
 
 // watchShutdown closes the MCP listener when the run context ends; the go-sdk

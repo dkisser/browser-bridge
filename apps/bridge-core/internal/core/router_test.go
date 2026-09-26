@@ -11,9 +11,10 @@ import (
 // fakeBrowser is the TS test's `browser` double: only the members the router
 // touches.
 type fakeBrowser struct {
-	mu     sync.Mutex
-	online bool
-	sent   []string
+	mu      sync.Mutex
+	online  bool
+	sent    []string
+	deliver bool // default true; set false to simulate the extension disappearing mid-flight
 }
 
 func (f *fakeBrowser) HasExtension() bool {
@@ -26,7 +27,7 @@ func (f *fakeBrowser) SendToExtension(text string) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.sent = append(f.sent, text)
-	return true
+	return f.deliver
 }
 
 func (f *fakeBrowser) sentMessages() []string {
@@ -72,7 +73,7 @@ func makeRouter(t *testing.T, stateOpts ...StateOption) (*Router, *StateManager,
 	if err != nil {
 		t.Fatalf("NewStateManager: %v", err)
 	}
-	browser := &fakeBrowser{}
+	browser := &fakeBrowser{deliver: true}
 	reg := &fakeRegistry{}
 	return NewRouter(st, browser, reg, log.Default()), st, browser, reg
 }
@@ -361,3 +362,76 @@ func TestBrowserEventsUpdateRegistry(t *testing.T) {
 type senderFunc func(text string)
 
 func (f senderFunc) Send(text string) { f(text) }
+
+// TestHandleInboundCommandRemovesRouteWhenSendToExtensionFails closes the
+// leak that existed before the fix: when HasExtension was true but
+// SendToExtension returned false (extension dropped between the two checks),
+// the entry stayed in inboundByID forever because the response path would
+// never fire — the sender was pinned until the process restarted. The fix
+// removes the route whenever SendToExtension reports it could not deliver,
+// so a late response from a different code path routes nowhere.
+func TestHandleInboundCommandRemovesRouteWhenSendToExtensionFails(t *testing.T) {
+	r, st, browser, _ := makeRouter(t)
+	st.SetStatus(StatusOnline)
+	browser.online = true   // HasExtension -> true
+	browser.deliver = false // SendToExtension -> false (extension disconnected)
+
+	sender := &fakeSender{}
+	r.HandleInboundCommand(commandEnvelope(st.BrowserID(), "c1"), sender)
+
+	// SendToExtension was supposed to record the frame (it does, even on
+	// failure — that is intentional, for debugging) but report delivery
+	// failure. The inbound route must have been removed.
+	if got := r.lookupInbound("c1"); got != nil {
+		t.Fatal("inboundByID[c1] is still set after a failed SendToExtension")
+	}
+
+	// A late response must route nowhere because the route was cleared at
+	// dispatch time. Pre-fix this would have re-pinned the sender.
+	r.HandleBrowserResponse(Envelope{
+		ID:        "c1",
+		Type:      TypeResponse,
+		BrowserID: st.BrowserID(),
+		Payload:   json.RawMessage(`{"status":"ok"}`),
+		Timestamp: time.Now().UnixMilli(),
+	})
+	if got := sender.sentMessages(); len(got) != 0 {
+		t.Fatalf("sender got %v, want nothing — route should have been cleared", got)
+	}
+}
+
+// TestHandleInboundCommandHappyPathKeepsRouteUntilResponse documents the
+// happy path: when SendToExtension succeeds, the route stays so the response
+// can be routed back to the exact sender. This is the existing behavior and
+// pins the fix to the failure path only — we are not removing the lookup on
+// success.
+func TestHandleInboundCommandHappyPathKeepsRouteUntilResponse(t *testing.T) {
+	r, st, browser, _ := makeRouter(t)
+	st.SetStatus(StatusOnline)
+	browser.online = true
+	browser.deliver = true
+
+	first := &fakeSender{}
+	second := &fakeSender{}
+	r.HandleInboundCommand(commandEnvelope(st.BrowserID(), "c1"), first)
+	r.HandleInboundCommand(commandEnvelope(st.BrowserID(), "c2"), second)
+
+	// Both routes must be live while the extension has the commands.
+	if r.lookupInbound("c1") == nil || r.lookupInbound("c2") == nil {
+		t.Fatal("routes were cleared prematurely on the happy path")
+	}
+
+	r.HandleBrowserResponse(Envelope{
+		ID:        "c1",
+		Type:      TypeResponse,
+		BrowserID: st.BrowserID(),
+		Payload:   json.RawMessage(`{"status":"ok"}`),
+		Timestamp: time.Now().UnixMilli(),
+	})
+	if r.lookupInbound("c1") != nil {
+		t.Fatal("c1 route should be cleared after the response")
+	}
+	if r.lookupInbound("c2") == nil {
+		t.Fatal("c2 route should still be live — only c1 was answered")
+	}
+}

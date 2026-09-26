@@ -144,8 +144,12 @@ func Run(ctx context.Context, cfg Config) error {
 	if err := browser.Shutdown(shutdownCtx); err != nil {
 		logger.Printf("browser shutdown: %v", err)
 	}
-	// The MCP server follows ctx via its own watcher (no WS connections of
-	// its own to close).
+	// Wait for the MCP server's watcher goroutine to finish closing the
+	// underlying http.Server. Returning before that race leaves the listener
+	// and tracked connections to the process exit.
+	if err := mcpSrv.Shutdown(shutdownCtx); err != nil {
+		logger.Printf("mcp shutdown: %v", err)
+	}
 	return nil
 }
 
