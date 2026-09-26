@@ -4,6 +4,17 @@ All notable changes to Browser Bridge are documented here. The format follows [K
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-26
+
+### Changed
+- **Breaking for existing installs**: the control plane and CLI have been reimplemented in Go on a single binary (ADR-0012 + ADR-0013). `bridge-core` (the standalone Bun-built daemon) is gone — its functionality lives behind a hidden `bridge serve` subcommand inside `bridge`, so the public CLI surface is unchanged. The runtime binary drops from ~26.2 MB (two Bun builds) to ~17.7 MB (one static Go binary), and the previous failure mode of a partial update leaving a mixed-version CLI/daemon pair behind is no longer possible. The published Chrome extension is wire-compatible with the new binary unchanged. See `docs/adr/0012-control-plane-and-cli-in-go.md` and `docs/adr/0013-single-bridge-binary.md`.
+- **Breaking for existing installs**: the bash service lifecycle router (`install/bridge.sh.tmpl`) and its `install/launchagent.plist.tmpl` are gone. `bridge service up|down|restart|status|logs|update|doctor|version|uninstall` are now Go subcommands, so the BB-E### codes, log/pid filenames (`bridge-core.log`, `bridge-core.pid`), and the supervisor design from ADR-0005 (foreground `bridge service up --foreground` LaunchAgent, `KeepAlive`, `ThrottleInterval`, pidfile ownership) are preserved, but `install.sh` no longer templates any bash — it ships the compiled binary plus the `install.sh` driver only. `install/tests/bridge.bats` is retired (replaced by the Go unit/integration suites); `install/tests/install.bats` continues to drive the bash install flow end-to-end against a mock release server.
+- Tooling: the package-level scripts now cover both Bun and Go (`bun run check` runs `biome` + `gofmt` + `go vet` + `golangci-lint` + `tsc --noEmit` + `bun test` + `go test -race ./...`; `bun run build:binaries` invokes `go build` with `CGO_ENABLED=0` for darwin/linux × amd64/arm64). Go module path is shortened to `browser-bridge`. CI was bumped to `golangci-lint-action@v7` because v6 rejects golangci-lint v2.
+
+### Fixed
+- The MCP server on port 3003 is no longer at risk of disappearing from a built artifact: Go binaries are statically linked with no runtime module loading, which eliminates the `xsschema` dynamic-import failure class (transitive optional peers loaded by `fastmcp` had to be hoisted into `dependencies` to survive `bun build --compile`). After upgrading, port 3003 is present iff the binary itself is.
+- `install/tests/install.bats` on the Linux CI runner no longer sees a platform mismatch: when the test mocks `uname -s` to Darwin, the bridge binary now reads `BB_GOOS=$(uname -s)` from the env (gated behind `BB_TESTING=1`, so production installs are unaffected) and walks the corresponding `service up` path. On Linux the post-install auto-start now spawns `bridge service up --foreground` detached via `nohup` so the supervisor writes `supervisor.pid` and `bridge-core.pid` exactly as the launchd path does on macOS, and `wait_for_supervisor` polls for the supervisor pidfile so a port-conflict failure surfaces the same message it does on macOS.
+
 ## [0.3.2] - 2026-09-24
 
 ### Fixed
