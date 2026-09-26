@@ -76,7 +76,7 @@ That’s it. The command travels from CLI → bridge-core → Chrome extension �
 
 ### 3. Use it from any agent
 
-The `bridge` CLI is just one consumer of the bridge protocol. Browser Bridge ships with a ready-to-use Claude Code skill in [`./skills`](./skills/browser-bridge-user/SKILL.md), and anything that can open a WebSocket — for example, an MCP server you build, a custom SDK, or another agent framework — can send commands the same way.
+The `bridge` CLI is just one consumer of the bridge protocol. Browser Bridge ships with a ready-to-use Claude Code skill in [`./skills`](./skills/browser-bridge/SKILL.md), and anything that can open a WebSocket — for example, an MCP server you build, a custom SDK, or another agent framework — can send commands the same way.
 
 For step-by-step usage, see [Use via CLI](#-use-via-cli) and [Use via MCP](#-use-via-mcp) below.
 

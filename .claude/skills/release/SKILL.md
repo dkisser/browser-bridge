@@ -14,6 +14,7 @@ description: |
 - `release-binaries.yml`：macOS **arm64** 运行时 tarball + sha256（x64 runner 已被禁用，x86_64 资产需要本地构建（步骤 4）后手动上传（步骤 6））
 - `release-extension.yml`：扩展 zip + sha256
 - `release-installer.yml`：自包含 `install.sh`
+- `release-skills.yml`：技能 tarball `browser-bridge-skills-<tag>.tar.gz` + sha256（内容是单个顶层 `browser-bridge/` 目录，来自 `skills/browser-bridge` — ADR-0015）
 
 工作流会先校验根 `package.json` 版本与 tag 一致（BB-E030）、CHANGELOG 有对应条目（BB-E031），不一致则 Release 失败——所以步骤 3 必须做对再推。
 
@@ -55,6 +56,7 @@ bun run build:binaries        # 顺便验证编译产物可用（Go 静态二进
 ```bash
 VERSION="v${VER}" bash .github/scripts/build-tarball.sh        # → 仓库根目录 tarball + .sha256（当前架构）
 VERSION="v${VER}" bash .github/scripts/build-extension-zip.sh  # → 仓库根目录 zip + .sha256
+VERSION="v${VER}" bash .github/scripts/build-skills-tarball.sh # → 仓库根目录 skills tarball + .sha256
 bash .github/scripts/build-installer.sh dist/install.sh        # → dist/install.sh（自包含安装器）
 ```
 
@@ -84,18 +86,18 @@ git add package.json CHANGELOG.md
 git commit -m "chore: release v${VER}"
 git tag -a "v${VER}" -m "v${VER}"
 git push origin "$(git branch --show-current)"
-git push origin "v${VER}"     # 触发 release-binaries / release-extension / release-installer 三个工作流
+git push origin "v${VER}"     # 触发 release-binaries / release-extension / release-installer / release-skills 四个工作流
 ```
 
 ### 6. 监控工作流，写 Release Note
 
-push 后 tag 触发的三个工作流会自动创建 GitHub Release 并上传资产，但 **Release Note 是自动生成的占位内容，需要补上**。步骤：
+push 后 tag 触发的四个工作流会自动创建 GitHub Release 并上传资产，但 **Release Note 是自动生成的占位内容，需要补上**。步骤：
 
 1. 等待工作流完成（GitHub 上 Release 已创建）：
 
    ```bash
    gh run list --workflow=release-binaries.yml --limit 3
-   gh run watch <run-id> --exit-status        # 三个 workflow 都要绿
+   gh run watch <run-id> --exit-status        # 四个 workflow 都要绿
    ```
 
 2. 从 CHANGELOG 提取该版本小节写成 Release Note（去掉小节标题行，正文到下一个 `## [` 为止）：
@@ -113,7 +115,7 @@ push 后 tag 触发的三个工作流会自动创建 GitHub Release 并上传资
    gh release upload "v${VER}" "browser-bridge-macos-x64-v${VER}.tar.gz" "browser-bridge-macos-x64-v${VER}.tar.gz.sha256" --clobber
    ```
 
-4. 验证并汇报：`gh release view "v${VER}"`——确认资产齐全（arm64 tarball+sha256、x64 tarball（如有）、extension zip+sha256、install.sh）、Release Note 已生效。汇报内容：版本号、commit/tag、Release 页面链接、各工作流结果、本地产物路径。
+4. 验证并汇报：`gh release view "v${VER}"`——确认资产齐全（arm64 tarball+sha256、x64 tarball（如有）、extension zip+sha256、install.sh、skills tarball+sha256，共 7 个文件）、Release Note 已生效。汇报内容：版本号、commit/tag、Release 页面链接、各工作流结果、本地产物路径。
 
 ## 升级兼容约定（改 install.sh / update 流程前必读）
 

@@ -131,7 +131,7 @@
     "name": "refresh"
   },
   {
-    "description": "List all tabs in the selected browser.",
+    "description": "List all tabs in the selected browser. Each entry's inAgentGroup field marks membership in the 'browser-bridge' tab group.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -147,7 +147,7 @@
     "name": "tab_list"
   },
   {
-    "description": "Open a new tab in the selected browser. Defaults to opening in the background (active=false).",
+    "description": "Open a new tab in the selected browser. Defaults to opening in the background (active=false). New tabs are automatically placed in the 'browser-bridge' tab group.",
     "inputSchema": {
       "type": "object",
       "properties": {

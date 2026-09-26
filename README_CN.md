@@ -74,7 +74,7 @@ bridge --browser <browser-id> --tab <tab-id> wait:navigation
 
 ### 3. 从任意 Agent 使用
 
-`bridge` CLI 只是 bridge 协议的一种消费者。Browser Bridge 在 [`./skills`](./skills/browser-bridge-user/SKILL.md) 中内置了开箱即用的 Claude Code skill；任何能打开 WebSocket 的客户端——例如你自己构建的 MCP server、自定义 SDK 或其他 Agent 框架——都可以用同样的方式发送命令。
+`bridge` CLI 只是 bridge 协议的一种消费者。Browser Bridge 在 [`./skills`](./skills/browser-bridge/SKILL.md) 中内置了开箱即用的 Claude Code skill；任何能打开 WebSocket 的客户端——例如你自己构建的 MCP server、自定义 SDK 或其他 Agent 框架——都可以用同样的方式发送命令。
 
 详细用法见下方的 [通过 CLI 使用](#-通过-cli-使用) 和 [通过 MCP 使用](#-通过-mcp-使用)。
 

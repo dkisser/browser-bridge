@@ -14,6 +14,7 @@ import {
   type PolicyContext,
   SENSITIVE_FIELD_RECHECK_ERROR,
 } from '@browser-bridge/shared';
+import { addTabToAgentGroup, queryAgentGroupIds } from './agent-group';
 import {
   type ChromeLike,
   ContentScriptUnavailableError,
@@ -272,13 +273,17 @@ async function handleCommand(
     }
 
     case 'tab:list': {
-      const tabs = await chrome.tabs.query({});
+      const [tabs, agentGroupIds] = await Promise.all([
+        chrome.tabs.query({}),
+        queryAgentGroupIds(),
+      ]);
       return tabs.map((t) => ({
         id: t.id,
         url: t.url,
         title: t.title,
         active: t.active,
         windowId: t.windowId,
+        inAgentGroup: agentGroupIds.has(t.groupId),
       }));
     }
 
@@ -292,6 +297,9 @@ async function handleCommand(
         await updatePolicyState((fresh) => ({
           agentTabs: [...fresh.agentTabs, newTab.id as number],
         }));
+        // Visual grouping (ADR-0014); never fails the command — on error the
+        // tab stays ungrouped.
+        await addTabToAgentGroup(newTab.id, newTab.windowId);
       }
       return { id: newTab.id, url: newTab.url };
     }

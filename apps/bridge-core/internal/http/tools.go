@@ -228,12 +228,12 @@ func (s *MCPServer) registerTools(mcpServer *mcp.Server) {
 	}, s.executeRefresh)
 	mcp.AddTool(mcpServer, &mcp.Tool{
 		Name:        "tab_list",
-		Description: "List all tabs in the selected browser.",
+		Description: "List all tabs in the selected browser. Each entry's inAgentGroup field marks membership in the 'browser-bridge' tab group.",
 		InputSchema: toolInputSchemas["tab_list"],
 	}, s.executeTabList)
 	mcp.AddTool(mcpServer, &mcp.Tool{
 		Name:        "tab_new",
-		Description: "Open a new tab in the selected browser. Defaults to opening in the background (active=false).",
+		Description: "Open a new tab in the selected browser. Defaults to opening in the background (active=false). New tabs are automatically placed in the 'browser-bridge' tab group.",
 		InputSchema: toolInputSchemas["tab_new"],
 	}, s.executeTabNew)
 	mcp.AddTool(mcpServer, &mcp.Tool{

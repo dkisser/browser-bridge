@@ -1,7 +1,7 @@
 ---
-name: browser-bridge-use
+name: browser-bridge
 description: |
-  Use this skill whenever the user needs to control a real web browser — searching, navigating, clicking, filling forms, reading or scraping page content, taking screenshots, or managing tabs. Typical requests: "open Gmail", "check my GitHub notifications", "search for X and open the first result", "fill out this form", "take a screenshot of this page", "get the text of this article".
+  Use this skill to control a real web browser through browser-bridge — searching, navigating, clicking, filling forms, reading or scraping page content, taking screenshots, or managing tabs. Typical requests: "open Gmail", "check my GitHub notifications", "search for X and open the first result", "fill out this form", "take a screenshot of this page", "get the text of this article".
 
   Prefer it over writing custom browser automation scripts or using generic web search when the task needs the user's real login state, dynamic JavaScript, or visual layout.
 ---
@@ -45,8 +45,8 @@ Every tab-scoped tool takes `tab_id: number` (MCP) / `--tab <id>` (CLI), plus an
 |---|---|---|
 | `list_browsers` | `bridge browser:list` | call first |
 | `set_browser` | `--browser <id>` flag | pin one browser when several are online |
-| `tab_list` | `tab:list` | source of valid `tab_id`s |
-| `tab_new(url?, active?, auto_close?)` | `tab:new [url]` | background by default; returns the new id |
+| `tab_list` | `tab:list` | source of valid `tab_id`s; each entry reports `inAgentGroup` |
+| `tab_new(url?, active?, auto_close?)` | `tab:new [url]` | background by default; returns the new id; the tab joins the 'browser-bridge' tab group |
 | `tab_close` / `tab_switch` | `tab:close <id>` / `tab:switch <id>` | |
 
 ### Navigation
@@ -83,6 +83,8 @@ Every tab-scoped tool takes `tab_id: number` (MCP) / `--tab <id>` (CLI), plus an
 ## Working with tabs
 
 Create a fresh tab per workflow with `tab_new` (CLI: `tab:new`) and pass its `tab_id` to every page-level call; close it with `tab_close` when done. This keeps the user's active tab untouched and lets you run several tab workflows in parallel.
+
+Tabs opened via `tab_new` are automatically grouped per window into the 'browser-bridge' tab group (orange) — purely visual organization, no action or judgment needed from you, and the user's own tabs are never grouped or moved. `tab_list` reports `inAgentGroup: true` for each tab in that group.
 
 ## Snapshot first: pick the follow-up by goal
 
