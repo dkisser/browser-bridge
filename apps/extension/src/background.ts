@@ -308,11 +308,14 @@ async function handleCommand(
         await updatePolicyState((fresh) => ({
           agentTabs: [...fresh.agentTabs, newTab.id as number],
         }));
-        // Visual grouping (ADR-0014); cosmetic fire-and-forget. addTabToAgentGroup
-        // swallows its own errors (a failed group never fails tab:new), and
-        // serialization through the per-window queue would otherwise block
-        // the response on chrome.tabs.group latency.
-        void addTabToAgentGroup(newTab.id, newTab.windowId);
+        // Visual grouping (ADR-0014). Awaited (not fire-and-forget) so that
+        // an immediate follow-up tab:list sees the freshly-created tab in
+        // the agent group — otherwise the tab is returned with
+        // inAgentGroup=false until the chrome.tabs.group IPC round-trip
+        // completes, and any agent that gates behavior on inAgentGroup
+        // makes the wrong decision. addTabToAgentGroup still swallows its
+        // own errors so a failed group never fails tab:new.
+        await addTabToAgentGroup(newTab.id, newTab.windowId);
       }
       return { id: newTab.id, url: newTab.url };
     }

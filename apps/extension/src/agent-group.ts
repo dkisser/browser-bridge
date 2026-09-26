@@ -145,3 +145,12 @@ export async function queryAgentGroupIds(): Promise<Set<number>> {
   });
   return new Set(groups.map((group) => group.id));
 }
+
+// Prune queue entries for windows Chrome has closed. Without this listener
+// the Map grows for the lifetime of the service worker (Chrome may keep
+// the SW alive for hours, not just the documented ~30s idle); each entry
+// holds a WindowGroupQueue with a tail promise — a slow leak proportional
+// to the user's window turnover.
+chrome.windows.onRemoved.addListener((windowId: number) => {
+  groupQueuesByWindow.delete(windowId);
+});

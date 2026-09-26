@@ -1155,10 +1155,17 @@ EOF
   start_mock_http 18787
   bash_path=$(find_modern_bash)
 
+  # Point TMPDIR at a controlled location so we can assert no mktemp
+  # leakage after download_skills's BB-E211 die(). Default $TMPDIR leaks
+  # mktemp dirs invisibly across CI runs.
+  local controlled_tmpdir="$BB_TEST_TMP/flat-tmpdir"
+  mkdir -p "$controlled_tmpdir"
+
   sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_flat_skills.sh"
-  cat >> "$BB_TEST_TMP/test_flat_skills.sh" <<'SCRIPT'
+  cat >> "$BB_TEST_TMP/test_flat_skills.sh" <<SCRIPT
 BB_INSTALL_ARCH=arm64
 ORG='127.0.0.1:18787'
+TMPDIR='$controlled_tmpdir'
 main
 SCRIPT
 
@@ -1178,7 +1185,15 @@ SCRIPT
   [[ ! -e "$HOME/.claude/skills/flat-no-wrapper/SKILL.md" ]]
   [[ ! -e "$HOME/.claude/skills/extract/SKILL.md" ]]
 
-  rm -rf "$stage"
+  # download_skills sets mktemp -d under $TMPDIR and traps EXIT (not
+  # RETURN — die() bypasses RETURN) to rm -rf the dir. With the wrong
+  # trap shape, every BB-E211 invocation leaks a tmp.XXX directory; with
+  # the EXIT trap, the dir is gone before main() resumes.
+  local leaked
+  leaked=$(find "$controlled_tmpdir" -maxdepth 1 -mindepth 1 -name 'tmp.*' -type d 2>/dev/null | wc -l | tr -d ' ')
+  [ "$leaked" -eq 0 ]
+
+  rm -rf "$stage" "$controlled_tmpdir"
 }
 
 # ---------------------------------------------------------------------------

@@ -340,7 +340,13 @@ download_skills() {
   local tarball="browser-bridge-skills-${version}.tar.gz"
   local tmpdir
   tmpdir=$(mktemp -d)
-  trap 'rm -rf "$tmpdir"' RETURN
+  # EXIT (not RETURN) trap: download_skills may die() — e.g. BB-E203 on a
+  # 404, BB-E204 on sha256 mismatch, BB-E211 on a malformed tarball — and
+  # die() exits the shell, which means a RETURN trap would never fire and
+  # the mktemp dir would leak. EXIT fires on every shell exit including
+  # die(), and is idempotent (re-cleaning an already-removed tmpdir is a
+  # no-op).
+  trap 'rm -rf "$tmpdir"' EXIT
 
   info "Downloading $tarball"
   curl -fsSL "${base}/${tarball}" -o "${tmpdir}/${tarball}" \
@@ -374,7 +380,10 @@ download_skills() {
     die "BB-E211: skills tarball is missing its top-level wrapper directory: ${base}/${tarball} (saw ${#entries[@]} entries at the root; expected exactly one wrapper directory)"
   fi
   install_skills "$tmpdir/extract" "$dest"
-  trap - RETURN
+  # Done; clean up explicitly. The EXIT trap also fires on normal return
+  # for safety, but the rm -rf is idempotent.
+  rm -rf "$tmpdir"
+  trap - EXIT
 }
 
 parse_install_args() {

@@ -200,6 +200,23 @@ export async function updateBadge(): Promise<void> {
   }
 }
 
+// Module-local mirror of PolicyState.agentGroupAvailable, populated lazily
+// from chrome.storage on first use and refreshed whenever the persisted
+// value differs from a setter call. Without this mirror,
+// setAgentGroupAvailability(true) on every successful chrome.tabGroups.query
+// would pay a chrome.storage.local.get + equality check on the hot path.
+// First call after SW start reads from storage (so SW restarts pick up a
+// previously-recorded permission denial); subsequent calls resolve purely
+// from memory until the value actually changes.
+let agentGroupAvailableCache: boolean | null = null;
+
+async function loadAgentGroupAvailableCache(): Promise<boolean> {
+  if (agentGroupAvailableCache !== null) return agentGroupAvailableCache;
+  const state = await getPolicyState();
+  agentGroupAvailableCache = state.agentGroupAvailable;
+  return agentGroupAvailableCache;
+}
+
 // Flip the agentGroupAvailable bit and refresh the badge. No-ops when the
 // value is already in the desired state — avoids a write+badge churn on
 // every chrome.tabGroups.query call when the permission is healthy.
@@ -213,8 +230,9 @@ export async function setAgentGroupAvailability(
       error,
     );
   }
-  const state = await getPolicyState();
-  if (state.agentGroupAvailable === available) return;
+  const cached = await loadAgentGroupAvailableCache();
+  if (cached === available) return;
+  agentGroupAvailableCache = available;
   await updatePolicyState((fresh) => ({
     ...fresh,
     agentGroupAvailable: available,
