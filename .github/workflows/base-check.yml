@@ -33,10 +33,14 @@ jobs:
       # artefacts (an intermittent checksum mismatch previously failed
       # base-check on otherwise-clean PRs).
       - name: Install golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v7
         with:
           version: v2.13.2
-          cache: false
+          # go.mod lives under apps/bridge-core; without this the action
+          # runs in the repo root where there is no module and the linter
+          # exits with "pattern ./...: directory prefix . does not contain
+          # main module or its selected dependencies".
+          working-directory: apps/bridge-core
 
       # Lint (biome + gofmt + go vet + golangci-lint), type check, and all
       # tests (bun + go test -race) — one umbrella over both toolchains.
