@@ -257,7 +257,14 @@ SCRIPT
   bash_path=$(find_modern_bash)
   run "$bash_path" -c "
     set -euo pipefail
-    source <(sed -n '/^print_next_steps()/,/^}/p' '$INSTALL_SH')
+    # Extract print_next_steps's definition into this subshell. Matches
+    # the function header up to the FIRST line that is just '}' — robust
+    # only because the function body has no nested '{', '}' (no case
+    # branches with braces, no ${var/pat/replace} substitutions, no
+    # blocks). If a future contributor adds any of those, this sed stops
+    # at the first internal '}' and the extracted source is truncated;
+    # switch to brace-counting extraction (e.g. awk) when that happens.
+    source <(sed -n '/^print_next_steps() {/,/^}$/p' "$INSTALL_SH")
     BB_HOME='$BB_HOME'
     BB_EXTENSION_DIR='$BB_EXTENSION_DIR'
     print_next_steps v9.9.9
@@ -274,7 +281,14 @@ SCRIPT
   bash_path=$(find_modern_bash)
   run "$bash_path" -c "
     set -euo pipefail
-    source <(sed -n '/^print_next_steps()/,/^}/p' '$INSTALL_SH')
+    # Extract print_next_steps's definition into this subshell. Matches
+    # the function header up to the FIRST line that is just '}' — robust
+    # only because the function body has no nested '{', '}' (no case
+    # branches with braces, no ${var/pat/replace} substitutions, no
+    # blocks). If a future contributor adds any of those, this sed stops
+    # at the first internal '}' and the extracted source is truncated;
+    # switch to brace-counting extraction (e.g. awk) when that happens.
+    source <(sed -n '/^print_next_steps() {/,/^}$/p' "$INSTALL_SH")
     BB_HOME='$BB_HOME'
     BB_EXTENSION_DIR='$BB_EXTENSION_DIR'
     AUTOSTART=true SKILLS_STATUS=installed SKILLS_INSTALLED_DIRS='$HOME/.agents/skills
@@ -296,7 +310,14 @@ $HOME/.claude/skills' print_next_steps v9.9.9
   bash_path=$(find_modern_bash)
   run "$bash_path" -c "
     set -euo pipefail
-    source <(sed -n '/^print_next_steps()/,/^}/p' '$INSTALL_SH')
+    # Extract print_next_steps's definition into this subshell. Matches
+    # the function header up to the FIRST line that is just '}' — robust
+    # only because the function body has no nested '{', '}' (no case
+    # branches with braces, no ${var/pat/replace} substitutions, no
+    # blocks). If a future contributor adds any of those, this sed stops
+    # at the first internal '}' and the extracted source is truncated;
+    # switch to brace-counting extraction (e.g. awk) when that happens.
+    source <(sed -n '/^print_next_steps() {/,/^}$/p' "$INSTALL_SH")
     BB_HOME='$BB_HOME'
     BB_EXTENSION_DIR='$BB_EXTENSION_DIR'
     AUTOSTART=false SKILLS_STATUS=failed print_next_steps v9.9.9
@@ -309,7 +330,14 @@ $HOME/.claude/skills' print_next_steps v9.9.9
   bash_path=$(find_modern_bash)
   run "$bash_path" -c "
     set -euo pipefail
-    source <(sed -n '/^print_next_steps()/,/^}/p' '$INSTALL_SH')
+    # Extract print_next_steps's definition into this subshell. Matches
+    # the function header up to the FIRST line that is just '}' — robust
+    # only because the function body has no nested '{', '}' (no case
+    # branches with braces, no ${var/pat/replace} substitutions, no
+    # blocks). If a future contributor adds any of those, this sed stops
+    # at the first internal '}' and the extracted source is truncated;
+    # switch to brace-counting extraction (e.g. awk) when that happens.
+    source <(sed -n '/^print_next_steps() {/,/^}$/p' "$INSTALL_SH")
     BB_HOME='$BB_HOME'
     BB_EXTENSION_DIR='$BB_EXTENSION_DIR'
     AUTOSTART=false SKILLS_STATUS=skipped-opt-out print_next_steps v9.9.9
@@ -322,7 +350,14 @@ $HOME/.claude/skills' print_next_steps v9.9.9
   bash_path=$(find_modern_bash)
   run "$bash_path" -c "
     set -euo pipefail
-    source <(sed -n '/^print_next_steps()/,/^}/p' '$INSTALL_SH')
+    # Extract print_next_steps's definition into this subshell. Matches
+    # the function header up to the FIRST line that is just '}' — robust
+    # only because the function body has no nested '{', '}' (no case
+    # branches with braces, no ${var/pat/replace} substitutions, no
+    # blocks). If a future contributor adds any of those, this sed stops
+    # at the first internal '}' and the extracted source is truncated;
+    # switch to brace-counting extraction (e.g. awk) when that happens.
+    source <(sed -n '/^print_next_steps() {/,/^}$/p' "$INSTALL_SH")
     BB_HOME='$BB_HOME'
     BB_EXTENSION_DIR='$BB_EXTENSION_DIR'
     AUTOSTART=false SKILLS_STATUS=skipped-no-target print_next_steps v9.9.9
@@ -335,7 +370,14 @@ $HOME/.claude/skills' print_next_steps v9.9.9
   bash_path=$(find_modern_bash)
   run "$bash_path" -c "
     set -euo pipefail
-    source <(sed -n '/^print_next_steps()/,/^}/p' '$INSTALL_SH')
+    # Extract print_next_steps's definition into this subshell. Matches
+    # the function header up to the FIRST line that is just '}' — robust
+    # only because the function body has no nested '{', '}' (no case
+    # branches with braces, no ${var/pat/replace} substitutions, no
+    # blocks). If a future contributor adds any of those, this sed stops
+    # at the first internal '}' and the extracted source is truncated;
+    # switch to brace-counting extraction (e.g. awk) when that happens.
+    source <(sed -n '/^print_next_steps() {/,/^}$/p' "$INSTALL_SH")
     BB_HOME='$BB_HOME'
     BB_EXTENSION_DIR='$BB_EXTENSION_DIR'
     print_next_steps v9.9.9

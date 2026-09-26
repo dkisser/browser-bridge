@@ -10,6 +10,7 @@ NAME="browser-bridge-skills-${VERSION}"
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SKILLS_SRC="${SKILLS_SRC:-$root/skills/browser-bridge}"
 
+[[ -d "$SKILLS_SRC" ]] || { echo "Skill source is not a directory: $SKILLS_SRC" >&2; exit 1; }
 [[ -f "$SKILLS_SRC/SKILL.md" ]] || { echo "Skill source missing SKILL.md: $SKILLS_SRC" >&2; exit 1; }
 
 STAGE="$(mktemp -d)"
