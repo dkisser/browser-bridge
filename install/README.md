@@ -32,7 +32,7 @@ To pin a version: `BB_VERSION=v1.2.3 curl ... | bash`.
 4. Extracts the extension into `~/.browser-bridge/extension/` and exposes it through a symlink at `~/Browser-Bridge/extension/` for easy Chrome loading.
 5. Detects the macOS architecture (arm64 or x64).
 6. Downloads the matching runtime tarball (`browser-bridge-macos-{arch}-{version}.tar.gz`) and its `.sha256`; aborts on mismatch.
-7. Extracts the single `bridge` binary (CLI + service lifecycle + hidden `serve` control-plane subcommand, ADR-0013) into `~/.browser-bridge/bin/`, removing stale binaries left by earlier layouts (`ws-server`, `local-proxy`, `bridge-cmd`, the two-binary-era `bridge-core`). On upgrade from a pre-merge install, force-reinitializes `~/.browser-bridge/config.json` (new browserId + cleared pairing hash) so the next extension reconnect is forced through pairing.
+7. Extracts the single `bridge` binary (CLI + service lifecycle + hidden `serve` control-plane subcommand, ADR-0013) into `~/.browser-bridge/bin/`, removing stale binaries left by earlier layouts (`ws-server`, `local-proxy`, `bridge-cmd`, the two-binary-era `bridge-core`). `config.json` (browserId + pairing hash) is preserved across upgrades: the Go state loader keeps the known fields and drops ghost fields from older schemas on save, so updating no longer un-pairs the extension.
 8. Symlinks `~/.browser-bridge/bin/bridge` into `~/.local/bin/bridge` (the LaunchAgent plist is embedded in the binary since ADR-0012; nothing is templated at install time).
 9. Writes the resolved version to `~/.browser-bridge/version`.
 10. Stops any already-running bridge services, then starts them again after installation.

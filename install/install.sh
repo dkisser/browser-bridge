@@ -251,11 +251,12 @@ download_runtime() {
   # the two-Go-binary era is superseded by `bridge serve`; drop the leftover
   # so a stale daemon binary cannot linger in $BB_HOME/bin.
   rm -f "$BB_HOME/bin/bridge-core" 2>/dev/null || true
-  # bridge-core resolves its config dir from BB_HOME, falling back to
-  # ~/.browser-bridge. Remove both: the current location, and the default
-  # location a pre-merge build always used (which is a different path when
-  # BB_HOME is a custom prefix, so the re-pair would otherwise not happen).
-  rm -f "$BB_HOME/config.json" "$HOME/.browser-bridge/config.json" 2>/dev/null || true
+  # The pre-merge config wipe used to live here (delete $BB_HOME/config.json
+  # to force re-pairing). It was a one-time ADR-0011 migration but ran on
+  # EVERY runtime download, silently unpairing the extension on each version
+  # upgrade. Removed: the Go StateManager (internal/core/state.go) loads the
+  # old config fine — same browserId/extensionTokenHash fields, ghost fields
+  # dropped on save — so upgrades must preserve the pairing state.
 
   mkdir -p "$BB_HOME/bin"
   mv "$extracted/bin/bridge" "$BB_HOME/bin/"
