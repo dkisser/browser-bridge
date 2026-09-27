@@ -12,7 +12,8 @@
       "!node_modules",
       "!**/.superpowers",
       "!.worktrees",
-      "!**/testdata"
+      "!**/testdata",
+      "!docs/design"
     ]
   },
   "formatter": {

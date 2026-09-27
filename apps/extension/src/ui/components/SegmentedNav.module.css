@@ -1,0 +1,64 @@
+/* visionOS floating segmented control. */
+
+.nav {
+  flex: 0 0 auto;
+  display: flex;
+  gap: var(--space-xs);
+  padding: var(--space-xs);
+  border-radius: var(--radius-control);
+  background: var(--segmented-track);
+  -webkit-backdrop-filter: var(--glass-canvas-blur);
+  backdrop-filter: var(--glass-canvas-blur);
+  border: 1px solid var(--hairline-soft);
+}
+
+.tab {
+  flex: 1 1 0;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  padding: 6px var(--space-sm);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  border: none;
+  border-radius: var(--radius-chip);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
+}
+
+.tab:hover {
+  color: var(--text);
+}
+
+.tab.active {
+  background: var(--segmented-thumb);
+  box-shadow: var(--segmented-thumb-shadow);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.tab:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+.badge {
+  display: inline-block;
+  min-width: 16px;
+  padding: 0 5px;
+  border-radius: var(--radius-pill);
+  background: var(--red);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+}

@@ -1,0 +1,257 @@
+/* Shared panel styles: section headings, approval cards, list rows. */
+
+.panelHeading {
+  margin: 0 0 var(--space-sm);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 14px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+/* --- Approval / download cards --- */
+
+.card {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-card);
+  background: var(--glass-card-bg);
+  -webkit-backdrop-filter: var(--glass-card-blur);
+  backdrop-filter: var(--glass-card-blur);
+  border: 1px solid var(--glass-card-border);
+  box-shadow: var(--glass-card-shadow);
+  padding: var(--space-md);
+}
+
+.card + .card {
+  margin-top: var(--space-sm);
+}
+
+.card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--rim-gradient);
+  pointer-events: none;
+}
+
+.cardTitle {
+  font-size: 13px;
+  font-weight: 600;
+  word-break: break-all;
+  color: var(--text);
+}
+
+.cardMsg {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-muted);
+  margin-top: var(--space-xs);
+  word-break: break-word;
+}
+
+.cardActions {
+  display: flex;
+  gap: var(--space-xs);
+  margin-top: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+/* Allow Once / Dismiss: frosted neutral per design.md. */
+.actionNeutral {
+  padding: 5px var(--space-sm);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--glass-chip-border);
+  background: var(--glass-chip-bg);
+  -webkit-backdrop-filter: var(--glass-chip-blur);
+  backdrop-filter: var(--glass-chip-blur);
+  box-shadow: var(--glass-chip-highlight, none);
+  color: var(--text);
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.actionNeutral:hover {
+  background: var(--glass-chip-bg-hover);
+}
+
+.actionNeutral:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* Always / Session: vivid emerald fill, white contrast text. */
+.actionApprove {
+  padding: 5px var(--space-sm);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--emerald);
+  background: var(--emerald);
+  color: #fff;
+  cursor: pointer;
+  transition: filter 0.15s ease;
+}
+
+.actionApprove:hover {
+  filter: brightness(1.05);
+}
+
+.actionApprove:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* Deny: translucent wash with red typography. */
+.actionDanger {
+  padding: 5px var(--space-sm);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: var(--radius-control);
+  border: 1px solid color-mix(in srgb, var(--red) 25%, transparent);
+  background: var(--red-soft);
+  color: var(--red);
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.actionDanger:hover {
+  background: color-mix(in srgb, var(--red) 20%, transparent);
+}
+
+.actionDanger:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* --- Origins / blocklist rows --- */
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-chip);
+  background: var(--glass-card-bg);
+  border: 1px solid var(--hairline-soft);
+  -webkit-backdrop-filter: var(--glass-canvas-blur);
+  backdrop-filter: var(--glass-canvas-blur);
+}
+
+.row + .row {
+  margin-top: var(--space-xs);
+}
+
+.rowLabel {
+  font-size: 12px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.rowLabelDenied {
+  font-size: 12px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--red);
+}
+
+.rowButton {
+  flex: 0 0 auto;
+  font-size: 11px;
+  padding: 4px var(--space-sm);
+  font-weight: 500;
+  font-family: inherit;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--glass-chip-border);
+  background: var(--glass-chip-bg);
+  -webkit-backdrop-filter: var(--glass-chip-blur);
+  backdrop-filter: var(--glass-chip-blur);
+  box-shadow: var(--glass-chip-highlight, none);
+  color: var(--text);
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.rowButton:hover {
+  background: var(--glass-chip-bg-hover);
+}
+
+.rowButton:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* --- Blocklist input row --- */
+
+.addRow {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+/* Separates the blocklist input zone from the entries zone below it. */
+.divider {
+  margin: var(--space-md) 0;
+  border-top: 1px solid var(--hairline-soft);
+}
+
+.addRow input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px var(--space-sm);
+  font-size: 12px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--text);
+}
+
+.addRow input::placeholder {
+  color: var(--input-placeholder);
+}
+
+.addRow input:focus-visible {
+  outline: none;
+  border-color: var(--primary);
+  background: var(--input-focus-bg);
+  box-shadow: var(--input-focus-ring);
+}
+
+.addButton {
+  padding: 5px var(--space-sm);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--glass-chip-border);
+  background: var(--glass-chip-bg);
+  -webkit-backdrop-filter: var(--glass-chip-blur);
+  backdrop-filter: var(--glass-chip-blur);
+  box-shadow: var(--glass-chip-highlight, none);
+  color: var(--text);
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.addButton:hover {
+  background: var(--glass-chip-bg-hover);
+}
+
+.addButton:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
