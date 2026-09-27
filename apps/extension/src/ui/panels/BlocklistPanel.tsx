@@ -1,5 +1,6 @@
 import { type KeyboardEvent, useState } from 'react';
 import { EmptyState } from '../components/EmptyState';
+import { toErrorMessage } from '../format';
 import { addBlockEntry, removeBlockEntry } from '../policy-actions';
 import styles from './panels.module.css';
 
@@ -70,8 +71,4 @@ export function BlocklistPanel({
       )}
     </div>
   );
-}
-
-function toErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

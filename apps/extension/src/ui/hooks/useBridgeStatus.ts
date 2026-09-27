@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { fetchStatus, queryBrowserConnection } from '../bridge-api';
+import { toErrorMessage } from '../format';
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -68,8 +69,4 @@ export function useBridgeStatus(
   }, [setMessage, clearTransientMessage]);
 
   return { browserConnected, browserId };
-}
-
-function toErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

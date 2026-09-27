@@ -1,5 +1,5 @@
 import type { Denial, Grant } from '@browser-bridge/shared';
-import { removeDenial, updateBadge, updatePolicyState } from '../policy-state';
+import { denialKey, updateBadge, updatePolicyState } from '../policy-state';
 
 const GRANT_TTL_MS = 5 * 60 * 1000;
 
@@ -31,18 +31,29 @@ export function denialCardButtons(denial: Denial): [DenialAction, string][] {
   }
 }
 
+// Resolves the target denial by stable key (reason|origin|command) inside
+// the serialized update — the array index from render time may no longer
+// point at the same denial if a new one was prepended between render and
+// click. Passing the key keeps the action bound to the card the user saw.
 export async function handleDenialAction(
   action: DenialAction,
-  index: number,
+  targetKey: string,
 ): Promise<void> {
   if (action === 'dismiss') {
-    await removeDenial(index);
+    await updatePolicyState((state) => ({
+      recentDenials: state.recentDenials.filter(
+        (d) => denialKey(d) !== targetKey,
+      ),
+    }));
     await updateBadge();
     return;
   }
   await updatePolicyState((state) => {
+    const index = state.recentDenials.findIndex(
+      (d) => denialKey(d) === targetKey,
+    );
+    if (index === -1) return null;
     const denial = state.recentDenials[index];
-    if (!denial) return null;
     const remaining = state.recentDenials.filter((_, i) => i !== index);
     switch (action) {
       case 'approve-session':

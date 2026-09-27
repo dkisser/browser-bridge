@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { getPolicyState, type PolicyState } from '../../policy-state';
+import { toErrorMessage } from '../format';
 
 export interface PolicyStateResult {
   state: PolicyState | null;
@@ -39,11 +40,23 @@ export function usePolicyState(
       area: string,
     ): void => {
       if (area === 'local' && changes.policyState) {
-        void getPolicyState().then((next) => {
-          if (cancelled) return;
-          setState(next);
-          setError(null);
-        });
+        void getPolicyState()
+          .then((next) => {
+            if (cancelled) return;
+            setState(next);
+            setError(null);
+          })
+          .catch((err: unknown) => {
+            if (cancelled) return;
+            // Keep the previous state on a failed re-read; surface the
+            // error via the standard channel and the onError callback.
+            // Without this, a rejected re-read would leave stale state,
+            // leave the prior error in place, and emit an unhandled
+            // promise rejection.
+            const message = toErrorMessage(err);
+            setError(message);
+            onError(message);
+          });
       }
     };
     chrome.storage.onChanged.addListener(listener);
@@ -54,8 +67,4 @@ export function usePolicyState(
   }, [onError]);
 
   return { state, error };
-}
-
-function toErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

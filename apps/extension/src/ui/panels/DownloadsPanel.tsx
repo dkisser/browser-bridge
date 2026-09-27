@@ -1,5 +1,6 @@
 import type { PendingDownload } from '../../policy-state';
 import { EmptyState } from '../components/EmptyState';
+import { toErrorMessage } from '../format';
 import { handleDownloadAction } from '../policy-actions';
 import styles from './panels.module.css';
 
@@ -52,8 +53,4 @@ export function DownloadsPanel({
       )}
     </div>
   );
-}
-
-function toErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

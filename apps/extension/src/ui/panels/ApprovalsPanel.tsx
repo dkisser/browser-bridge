@@ -6,7 +6,7 @@ import styles from './panels.module.css';
 
 interface ApprovalsPanelProps {
   denials: Denial[];
-  onDenialAction: (action: DenialAction, index: number) => void;
+  onDenialAction: (action: DenialAction, targetKey: string) => void;
 }
 
 export function ApprovalsPanel({
@@ -18,15 +18,18 @@ export function ApprovalsPanel({
       {denials.length === 0 ? (
         <EmptyState text="Nothing waiting for approval." />
       ) : (
-        denials.map((denial, index) => (
+        denials.map((denial) => (
           <DenialCard
             // denialKey (reason|origin|command) is the same stable id used
             // by recordDenial to dedupe; it survives prepends so the existing
-            // card instance is reused and a click during reconcile cannot
-            // resolve against the wrong denial.
+            // card instance is reused. The onClick handler passes the same
+            // key so handleDenialAction resolves the target inside the
+            // serialized update — a positional index would point at the
+            // wrong denial if a new one was prepended between render and
+            // click.
             key={denialKey(denial)}
             denial={denial}
-            onAction={(action) => onDenialAction(action, index)}
+            onAction={(action) => onDenialAction(action, denialKey(denial))}
           />
         ))
       )}
