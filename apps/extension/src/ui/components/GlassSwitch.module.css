@@ -1,0 +1,74 @@
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  cursor: pointer;
+  user-select: none;
+}
+
+.label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.track {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  border-radius: var(--radius-pill);
+  background: var(--switch-track-off);
+  transition:
+    background-color 0.2s ease,
+    box-shadow 0.2s ease;
+  flex: 0 0 auto;
+}
+
+.thumb {
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  transition: transform 0.2s ease;
+}
+
+.input:checked + .track {
+  background: var(--switch-track-on);
+}
+
+.input:checked + .track .thumb {
+  transform: translateX(18px);
+}
+
+/* Takeover engaged: red/amber breathing glow per dark design.md. */
+.input:checked + .track.engaged {
+  background: var(--amber);
+  animation: breathe 2.8s ease-in-out infinite;
+}
+
+.input:focus-visible + .track {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 16px rgba(255, 69, 58, 0.4);
+  }
+  50% {
+    box-shadow:
+      0 0 16px rgba(255, 69, 58, 0.4),
+      0 0 28px rgba(255, 159, 10, 0.35);
+  }
+}

@@ -1,0 +1,7 @@
+.empty {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-faint);
+  text-align: center;
+  padding: var(--space-lg) var(--space-sm);
+}

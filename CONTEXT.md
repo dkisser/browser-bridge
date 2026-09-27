@@ -73,7 +73,7 @@ The browser-managed right-side panel of the extension, opened by clicking the ex
 _Avoid_: popup, drawer, side drawer, sidebar
 
 **State bar**:
-The top strip of the side panel, always visible. Shows the Browser connection dot, the browser UID, the Takeover switch, and a link to settings.
+The top region of the side panel, always visible. Shows the Browser connection dot, the browser UID, the Takeover switch, and a link to settings. Rendered as the takeover hero card in the side panel — the same connection+takeover content (dot, UID, switch, settings entry) now presented inside a single elevated glass card together with the pairing drawer.
 _Avoid_: header, toolbar
 
 **Side panel tab**:

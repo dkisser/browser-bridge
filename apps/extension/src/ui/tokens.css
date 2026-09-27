@@ -1,0 +1,175 @@
+/* Design tokens for the extension UI.
+ *
+ * Two themes governed by prefers-color-scheme:
+ * - dark:  Liquid Bridge Glass  (docs/design/liquid-bridge-glass.design.md)
+ * - light: Liquid Glass Light   (docs/design/liquid-glass-light.design.md)
+ *
+ * Reconciliation rule (pre-agreed): design.md prose wins for functional
+ * accent/status colors and for the elevation recipe (backdrop blur tiers,
+ * rgba white layers, specular borders/shadows); design.md frontmatter
+ * namedColors win for surface/container neutrals. Where the Stitch reference
+ * HTML conflicts with the design.md (slate/rose Tailwind colors, emerald
+ * takeover glow), design.md wins: red/amber breathing glow for takeover.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* Fonts: system stacks only. */
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto,
+    sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Functional accents — Liquid Glass Light prose. */
+  --primary: #007aff;
+  --primary-hover: #2b95ff;
+  --indigo: #5856d6;
+  --emerald: #34c759;
+  --red: #ba1a1a;
+  --red-soft: rgba(186, 26, 26, 0.1);
+  --amber: #ff9500;
+
+  /* Surface neutrals — frontmatter namedColors. */
+  --surface: #fcf8fb;
+  --surface-lowest: #ffffff;
+  --surface-low: #f6f3f5;
+  --surface-container: #f0edef;
+  --surface-high: #eae7ea;
+  --surface-highest: #e4e2e4;
+  --on-surface: #1b1b1d;
+  --on-surface-variant: #414755;
+  --outline: #717786;
+  --outline-variant: #c1c6d7;
+
+  /* Content tones — light prose label tokens. */
+  --canvas: #f5f5f7;
+  --text: #1d1d1f;
+  --text-muted: rgba(29, 29, 31, 0.64);
+  --text-faint: rgba(29, 29, 31, 0.4);
+  /* The side panel has no page content behind it, so the glass sits on the
+     opaque canvas: pure-white borders/shadows from the spec would be
+     invisible. Add a faint neutral ring to give cards their outline. */
+  --hairline: rgba(0, 0, 0, 0.08);
+  --hairline-soft: rgba(0, 0, 0, 0.07);
+
+  /* Glass elevation — light prose glass stratum hierarchy. */
+  --glass-canvas: rgba(255, 255, 255, 0.55);
+  --glass-canvas-blur: blur(32px) saturate(180%);
+  --glass-card-bg: rgba(255, 255, 255, 0.72);
+  --glass-card-blur: blur(44px) saturate(190%);
+  --glass-card-border: rgba(255, 255, 255, 0.8);
+  --glass-card-shadow:
+    0 0 0 1px rgba(29, 29, 31, 0.06), 0 12px 32px -12px rgba(0, 0, 0, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  --glass-chip-bg: rgba(255, 255, 255, 0.7);
+  --glass-chip-bg-hover: rgba(255, 255, 255, 0.9);
+  --glass-chip-border: rgba(29, 29, 31, 0.08);
+  --glass-chip-blur: blur(16px);
+  --rim-gradient: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.85) 0%,
+    rgba(255, 255, 255, 0.25) 100%
+  );
+
+  /* Controls. */
+  --input-bg: rgba(0, 0, 0, 0.04);
+  --input-border: rgba(0, 0, 0, 0.06);
+  --input-placeholder: rgba(29, 29, 31, 0.38);
+  --input-focus-bg: rgba(255, 255, 255, 0.95);
+  --input-focus-ring: 0 0 0 3px rgba(0, 122, 255, 0.25);
+  --segmented-track: rgba(0, 0, 0, 0.05);
+  --segmented-thumb: rgba(255, 255, 255, 0.95);
+  --segmented-thumb-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  --switch-track-off: rgba(29, 29, 31, 0.2);
+  --switch-track-on: #007aff;
+
+  /* Radius scale — light prose shapes. */
+  --radius-chip: 8px;
+  --radius-control: 12px;
+  --radius-card: 16px;
+  --radius-window: 24px;
+  --radius-pill: 9999px;
+
+  /* Spacing scale — 8pt rhythm. */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 24px;
+  --gutter: 12px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+
+    /* Functional accents — Liquid Bridge Glass prose. */
+    --primary: #0a84ff;
+    --primary-hover: #339aff;
+    --indigo: #aac7ff;
+    --emerald: #30d158;
+    --red: #ff453a;
+    --red-soft: rgba(255, 69, 58, 0.12);
+    --amber: #ff9f0a;
+
+    /* Surface neutrals — frontmatter namedColors. */
+    --surface: #131315;
+    --surface-lowest: #0e0e10;
+    --surface-low: #1b1b1d;
+    --surface-container: #1f1f21;
+    --surface-high: #2a2a2c;
+    --surface-highest: #353437;
+    --on-surface: #e4e2e4;
+    --on-surface-variant: #c0c6d6;
+    --outline: #8b91a0;
+    --outline-variant: #414754;
+
+    /* Content tones — dark prose. */
+    --canvas: rgba(20, 20, 22, 0.65);
+    --text: #e4e2e4;
+    --text-muted: #c0c6d6;
+    --text-faint: rgba(228, 226, 228, 0.55);
+    --hairline: rgba(255, 255, 255, 0.08);
+    --hairline-soft: rgba(255, 255, 255, 0.05);
+
+    /* Glass elevation — dark prose elevation recipe. */
+    --glass-canvas: rgba(20, 20, 22, 0.65);
+    --glass-canvas-blur: blur(40px) saturate(190%);
+    --glass-card-bg: rgba(255, 255, 255, 0.05);
+    --glass-card-blur: blur(40px) saturate(190%);
+    --glass-card-border: rgba(255, 255, 255, 0.12);
+    --glass-card-border-bottom: rgba(255, 255, 255, 0.04);
+    --glass-card-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.32);
+    --glass-chip-bg: rgba(255, 255, 255, 0.1);
+    --glass-chip-bg-hover: rgba(255, 255, 255, 0.18);
+    --glass-chip-border: rgba(255, 255, 255, 0.12);
+    --glass-chip-blur: none;
+    --glass-chip-highlight: inset 0 1px 1px 0 rgba(255, 255, 255, 0.25);
+    --rim-gradient: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.16) 50%,
+      transparent 100%
+    );
+
+    /* Controls. */
+    --input-bg: rgba(255, 255, 255, 0.06);
+    --input-border: rgba(255, 255, 255, 0.1);
+    --input-placeholder: var(--text-faint);
+    --input-focus-bg: rgba(255, 255, 255, 0.1);
+    --input-focus-ring: 0 0 0 3px rgba(10, 132, 255, 0.35);
+    --segmented-track: rgba(0, 0, 0, 0.25);
+    --segmented-thumb: rgba(255, 255, 255, 0.14);
+    --segmented-thumb-shadow: inset 0 1px 1px 0 rgba(255, 255, 255, 0.25);
+    --switch-track-off: rgba(255, 255, 255, 0.14);
+    --switch-track-on: #30d158;
+
+    /* Radius scale — dark prose shapes. */
+    --radius-chip: 8px;
+    --radius-control: 10px;
+    --radius-card: 16px;
+    --radius-window: 16px;
+    --radius-pill: 9999px;
+  }
+}

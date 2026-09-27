@@ -16,6 +16,12 @@ For project structure, commands, architecture, and conventions, see [README.md](
 - **CLI entry**: `apps/bridge-core/cmd/bridge` (cobra) is the CLI. Root scripts drive it: `bun run cli` = `go -C apps/bridge-core run ./cmd/bridge`, `bun run build:cli` = `go build` to `dist/bridge`.
 - **Command result contracts are typed**: per-command `data` shapes live in `packages/shared/src/types.ts` (`CommandResultMap`). Extension handlers (`handleCommand`, `executeCommand`) are annotated against them, MCP tools read `data` through them, and test mocks must be constructed from them. `ResponsePayload.data` stays `unknown` at the wire level on purpose — do not bypass the contract types.
 
+## Extension UI design
+
+- **Design docs are mandatory**: any UI work in `apps/extension/` (sidepanel, settings, offscreen, content UI) must follow the two design-system specs in `docs/design/`: `liquid-bridge-glass.design.md` (dark mode, "Liquid Bridge Glass") and `liquid-glass-light.design.md` (light mode, "Liquid Glass Light"). They define the color tokens, typography scale, spacing, glassmorphism elevation tiers, and component specs. Do not introduce off-spec colors, fonts, or components.
+- **Reference screens**: `docs/design/liquid-glass-extension-english.html` / `.jpg` (dark) and `docs/design/liquid-glass-extension-light.html` / `.png` (light) are the Stitch-generated reference implementations/screenshots for the extension panel — treat them as the visual ground truth when restyling existing UI.
+- **UI stack**: the extension UI (sidepanel + settings) is React 19 + CSS Modules, mounted from `src/sidepanel.tsx` / `src/settings.tsx` under `src/ui/`. Shared design tokens live in `apps/extension/src/ui/tokens.css` (CSS custom properties, dark + light via `prefers-color-scheme`), governed by the two docs/design design.md specs above.
+
 ## Testing
 
 - Use `bun run test` for the Bun unit/integration test suite.

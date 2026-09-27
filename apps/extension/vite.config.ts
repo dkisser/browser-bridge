@@ -8,6 +8,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { resolve } from 'node:path';
+import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 
 const LOGO_PATH = '../../docs/assets/logo.png';
@@ -53,6 +54,7 @@ export default defineConfig({
     },
   },
   plugins: [
+    react(),
     {
       name: 'flatten-html',
       closeBundle() {

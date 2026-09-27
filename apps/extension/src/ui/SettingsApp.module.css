@@ -1,0 +1,65 @@
+.main {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 28px 24px;
+}
+
+.title {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0 0 4px;
+  color: var(--text);
+}
+
+.subtitle {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 0 0 24px;
+}
+
+.configList {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-card);
+  background: var(--glass-card-bg);
+  -webkit-backdrop-filter: var(--glass-card-blur);
+  backdrop-filter: var(--glass-card-blur);
+  border: 1px solid var(--glass-card-border);
+  box-shadow: var(--glass-card-shadow);
+}
+
+.configRow {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: 16px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--hairline-soft);
+}
+
+.configRow:last-child {
+  border-bottom: none;
+}
+
+.configLabel {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.configValue {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  word-break: break-all;
+  color: var(--text);
+}
+
+.note {
+  margin-top: 24px;
+  padding: 12px 16px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--hairline-soft);
+  background: var(--glass-chip-bg);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-muted);
+}

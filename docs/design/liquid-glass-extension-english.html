@@ -1,0 +1,551 @@
+<!DOCTYPE html><html class="dark" lang="en" style=""><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>Browser Bridge - AI Agent Takeover &amp; Governance Center</title>
+<!-- Tailwind CSS CDN with plugins -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Tailwind Configuration -->
+<script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['-apple-system', 'BlinkMacSystemFont', '"SF Pro Text"', '"SF Pro Display"', '"PingFang SC"', '"Hiragino Sans GB"', '"Segoe UI"', 'Roboto', 'sans-serif'],
+            mono: ['"SF Mono"', 'ui-monospace', 'Menlo', 'Monaco', 'Consolas', 'monospace']
+          },
+          colors: {
+            apple: {
+              blue: '#0071e3',
+              cyan: '#0a84ff',
+              green: '#30d158',
+              yellow: '#ffd60a',
+              red: '#ff453a',
+              rose: '#ff375f',
+              glass: 'rgba(255, 255, 255, 0.72)',
+              glassDark: 'rgba(26, 28, 35, 0.78)'
+            }
+          },
+          boxShadow: {
+            'specular-light': 'inset 0 1px 1px 0 rgba(255, 255, 255, 0.8), 0 8px 32px 0 rgba(0, 0, 0, 0.08)',
+            'specular-dark': 'inset 0 1px 1px 0 rgba(255, 255, 255, 0.15), inset 0 0 16px 0 rgba(255, 255, 255, 0.02), 0 12px 40px 0 rgba(0, 0, 0, 0.45)',
+            'pill-active': '0 2px 10px rgba(0, 0, 0, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.3)',
+            'glow-cyan': '0 0 24px -4px rgba(10, 132, 255, 0.45)',
+            'glow-emerald': '0 0 24px -4px rgba(48, 209, 88, 0.4)'
+          },
+          backdropBlur: {
+            'ultra': '32px'
+          }
+        }
+      }
+    }
+  </script>
+<!-- BEGIN: Custom Glassmorphism Styles -->
+<style data-purpose="liquid-glass-fx">
+    /* Apple Liquid Glass spec & rim highlights */
+    .liquid-glass-sidebar {
+      backdrop-filter: blur(28px) saturate(180%);
+      -webkit-backdrop-filter: blur(28px) saturate(180%);
+    }
+
+    .specular-card {
+      position: relative;
+      overflow: hidden;
+    }
+    .specular-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.4) 50%, transparent 100%);
+      pointer-events: none;
+    }
+    .dark .specular-card::before {
+      background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.2) 50%, transparent 100%);
+    }
+
+    /* Subtle pulse animation for Takeover Mode */
+    @keyframes pulse-ring {
+      0% { transform: scale(0.95); opacity: 0.8; }
+      50% { transform: scale(1.15); opacity: 0.3; }
+      100% { transform: scale(0.95); opacity: 0.8; }
+    }
+    .animate-pulse-ring {
+      animation: pulse-ring 2.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+  </style>
+<!-- END: Custom Glassmorphism Styles -->
+</head>
+<body class="bg-slate-100 dark:bg-[#0c0d12] text-slate-800 dark:text-slate-100 font-sans antialiased overflow-hidden h-screen select-none transition-colors duration-300">
+<!-- BEGIN: Main Browser Environment Shell -->
+<div class="flex h-screen w-screen overflow-hidden">
+<!-- LEFT & CENTER: Simulated Browser Workspace (Background Page Canvas) -->
+<main class="flex-1 flex flex-col h-full bg-[#f6f7f9] dark:bg-[#121319] overflow-hidden transition-all duration-300 relative border-r border-black/5 dark:border-white/5">
+<!-- Top Chrome Tabstrip & Toolbar -->
+<header class="h-12 bg-white/70 dark:bg-[#16171f]/80 backdrop-blur-md border-b border-black/5 dark:border-white/5 flex items-center px-4 justify-between select-none z-10">
+<div class="flex items-center space-x-3">
+<!-- Window Controls (macOS style) -->
+<div class="flex space-x-2">
+<span class="w-3 h-3 rounded-full bg-[#ff5f57] border border-black/10 inline-block"></span>
+<span class="w-3 h-3 rounded-full bg-[#febc2e] border border-black/10 inline-block"></span>
+<span class="w-3 h-3 rounded-full bg-[#28c840] border border-black/10 inline-block"></span>
+</div>
+<!-- Tab pill -->
+<div class="flex items-center space-x-2 px-3.5 py-1.5 bg-white dark:bg-[#20222e] rounded-lg text-xs font-medium text-slate-700 dark:text-slate-200 shadow-sm border border-black/5 dark:border-white/10">
+<svg class="w-3.5 h-3.5 text-blue-500" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+<path d="M13 10V3L4 14h7v7l9-11h-7z" stroke-linecap="round" stroke-linejoin="round"></path>
+</svg>
+<span class="truncate max-w-[160px]">Stitch - AI Design Studio</span>
+<span class="text-slate-400 hover:text-slate-600 dark:hover:text-white cursor-pointer ml-1">×</span>
+</div>
+</div>
+<!-- Address Bar -->
+<div class="flex-1 max-w-lg mx-6">
+<div class="w-full bg-slate-200/60 dark:bg-[#0c0d12]/70 border border-black/5 dark:border-white/10 rounded-full px-4 py-1.5 flex items-center text-xs text-slate-600 dark:text-slate-400">
+<svg class="w-3.5 h-3.5 mr-2 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<rect height="11" rx="2" ry="2" width="18" x="3" y="11"></rect>
+<path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+</svg>
+<span class="text-slate-900 dark:text-slate-200 font-medium">stitch.design.local</span>
+<span class="text-slate-400 dark:text-slate-600">/workspace/ai-agent-sandbox</span>
+</div>
+</div>
+<!-- Right Quick Toggles -->
+<div class="flex items-center space-x-3">
+<!-- Light/Dark Switcher -->
+<button class="p-2 rounded-xl bg-slate-200/70 dark:bg-white/10 hover:bg-slate-300 dark:hover:bg-white/20 transition-all text-slate-700 dark:text-amber-300" data-purpose="theme-toggle" id="themeToggleBtn" title="Toggle theme">
+<svg class="w-4 h-4 hidden dark:block" fill="none" id="themeIconSun" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<svg class="w-4 h-4 block dark:hidden text-slate-700" fill="none" id="themeIconMoon" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</button>
+</div>
+</header>
+<!-- Simulated Web Content (Watermark/Wireframe representation) -->
+<section class="flex-1 p-10 overflow-y-auto opacity-75">
+<div class="max-w-3xl mx-auto space-y-6">
+<div class="h-8 w-48 bg-slate-300 dark:bg-white/10 rounded-lg animate-pulse"></div>
+<div class="p-8 rounded-2xl border border-black/5 dark:border-white/5 bg-white/40 dark:bg-white/[0.02] backdrop-blur-sm space-y-4">
+<div class="flex items-center space-x-3 text-sm text-blue-600 dark:text-blue-400 font-medium">
+<span class="flex h-2.5 w-2.5 rounded-full bg-blue-500 animate-ping"></span>
+<span class="">AI Agent is autonomously browsing and executing tasks...</span>
+</div>
+<p class="text-sm text-slate-500 dark:text-slate-400 leading-relaxed">
+              Connected to local Browser Bridge pipeline. When the Agent attempts to access untrusted external domains or invoke sensitive scripts, a native Liquid Glass approval prompt is triggered in real time.
+            </p>
+<div class="grid grid-cols-3 gap-3 pt-2">
+<div class="h-20 bg-slate-200/70 dark:bg-white/5 rounded-xl"></div>
+<div class="h-20 bg-slate-200/70 dark:bg-white/5 rounded-xl"></div>
+<div class="h-20 bg-slate-200/70 dark:bg-white/5 rounded-xl"></div>
+</div>
+</div>
+</div>
+</section>
+</main>
+<!-- BEGIN: Docked Apple Liquid Glass Browser Bridge Sidebar -->
+<aside class="liquid-glass-sidebar w-[410px] h-full flex flex-col relative z-20 bg-white/75 dark:bg-[#13151f]/85 border-l border-white/40 dark:border-white/[0.12] shadow-[-12px_0_36px_rgba(0,0,0,0.06)] dark:shadow-[-20px_0_50px_rgba(0,0,0,0.5)] transition-all duration-300 backdrop-blur-2xl" id="browserBridgeSidebar">
+<!-- Panel Header Bar -->
+<header class="px-5 pt-4 pb-3 flex items-center justify-between border-b border-black/[0.06] dark:border-white/[0.08]">
+<div class="flex items-center space-x-2.5">
+<!-- Glass Bridge Icon -->
+<div class="w-8 h-8 rounded-xl bg-gradient-to-tr from-cyan-500 via-blue-500 to-indigo-600 p-[1px] shadow-sm flex items-center justify-center">
+<div class="w-full h-full bg-white/20 dark:bg-black/20 rounded-[11px] flex items-center justify-center backdrop-blur-sm">
+<svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" viewBox="0 0 24 24">
+<path d="M4 19C4 13 8 9 12 9s8 4 8 10"></path>
+<path d="M2 19h20"></path>
+<path d="M12 9V3"></path>
+<circle cx="12" cy="3" r="1"></circle>
+</svg>
+</div>
+</div>
+<div>
+<h1 class="text-sm font-semibold tracking-tight text-slate-900 dark:text-white flex items-center space-x-1.5">
+<span class="">Browser Bridge</span>
+</h1>
+<p class="text-[11px] text-slate-500 dark:text-slate-400 font-medium">Intelligent Takeover &amp; Approval Guard</p>
+</div>
+</div>
+<!-- Window Actions (Pin & Close) -->
+<div class="flex items-center space-x-1">
+<button class="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-black/5 dark:hover:bg-white/10 transition" title="Pin sidebar">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"></path>
+</svg>
+</button>
+<button class="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition" title="Close panel">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M6 18L18 6M6 6l12 12" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</button>
+</div>
+</header>
+<!-- Scrollable Control Surface -->
+<div class="flex-1 overflow-y-auto px-5 py-4 space-y-4 scrollbar-thin">
+<!-- BEGIN: Prominent Takeover Hero Control (Isolated & Tactile) -->
+<section class="specular-card rounded-2xl p-4 transition-all duration-300 border border-white/60 dark:border-white/[0.12] bg-gradient-to-b from-white/90 to-white/40 dark:from-white/[0.09] dark:to-white/[0.03] shadow-specular-light dark:shadow-specular-dark" data-purpose="takeover-hero-card">
+<div class="flex items-center justify-between">
+<div class="space-y-1">
+<div class="flex items-center space-x-2">
+<span class="text-[10px] tracking-widest uppercase font-semibold text-slate-400 dark:text-slate-400">TAKEOVER CONTROL</span>
+<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono bg-black/5 dark:bg-white/10 text-slate-600 dark:text-slate-300">⌘K</span>
+</div>
+<h2 class="text-base font-bold text-slate-900 dark:text-white flex items-center space-x-2" id="takeoverStatusTitle">
+<span class="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-glow-emerald animate-pulse" id="takeoverDot"></span>
+<span id="takeoverText" class="">Human Takeover Active</span>
+</h2>
+<p class="text-xs text-slate-500 dark:text-slate-400" id="takeoverSubText">AI control suspended. Direct user browser control active</p>
+</div>
+<label class="relative inline-flex items-center cursor-pointer select-none">
+<input checked="" class="sr-only peer" id="takeoverToggleInput" type="checkbox">
+<div class="w-14 h-8 bg-slate-300 dark:bg-slate-700/80 peer-focus:outline-none rounded-full peer peer-checked:bg-gradient-to-r peer-checked:from-emerald-500 peer-checked:to-teal-500 transition-colors duration-300 shadow-inner"></div>
+<div class="absolute left-1 top-1 bg-white dark:bg-white w-6 h-6 rounded-full transition-transform duration-300 ease-out transform peer-checked:translate-x-6 shadow-md flex items-center justify-center">
+<svg class="w-3.5 h-3.5 text-emerald-600" fill="none" id="takeoverSwitchIcon" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+<path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"></path>
+</svg>
+</div>
+</label>
+</div>
+<div class="mt-3.5 pt-3 border-t border-black/[0.05] dark:border-white/[0.08] space-y-2.5 text-xs"><div class="flex items-center justify-between"><div class="flex items-center space-x-2 text-slate-600 dark:text-slate-300"><span class="flex h-2 w-2 relative"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" id="socketPingDot"></span><span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" id="socketSolidDot"></span></span><span class="font-mono text-[11px] flex items-center space-x-1.5" id="bridgeSubStatus"><span class="">Bridge Socket:</span> <b class="font-semibold text-emerald-600 dark:text-emerald-400" id="socketStatusText">Connected</b></span><button id="reconnectPairBtn" onclick="togglePairDrawer()" title="Pair with bridge-core" class="p-1.5 rounded-lg bg-blue-500/10 text-blue-500 hover:bg-blue-500/20 dark:bg-white/10 dark:text-blue-400 dark:hover:bg-white/20 transition-all cursor-pointer flex items-center justify-center"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></button></div><div class="flex items-center space-x-1.5"><span class="font-mono text-[10px] text-slate-400 dark:text-slate-500 bg-black/5 dark:bg-white/5 px-2 py-0.5 rounded border border-black/5 dark:border-white/5 cursor-pointer select-all" title="Device ID">b-3b7d792a</span></div></div><div class="mt-3 pt-3 border-t border-black/[0.05] dark:border-white/[0.08] space-y-3 block" id="pairingDrawerGroup"><div class="flex items-center justify-between text-xs"><span class="text-[10px] tracking-wider uppercase font-semibold text-slate-400 dark:text-slate-400">PAIRED STATE</span><span class="text-[10px] font-mono text-slate-400 dark:text-slate-500 bg-black/5 dark:bg-white/5 px-2 py-0.5 rounded border border-black/5 dark:border-white/5">bridge-core</span></div><div class="space-y-1"><h4 class="text-sm font-medium text-slate-900 dark:text-white">Pair with bridge-core</h4><p class="text-xs text-slate-500 dark:text-slate-400 leading-normal">Run <code class="px-1.5 py-0.5 rounded font-mono text-[10px] bg-black/5 dark:bg-black/40 text-slate-800 dark:text-slate-200 border border-black/5 dark:border-white/5 select-all">bridge pair</code> in a terminal to get a code.</p></div><div class="flex items-center space-x-2 pt-1"><div class="relative flex-1"><input class="w-full text-xs font-mono px-3 py-2 rounded-lg bg-white/70 dark:bg-black/40 border border-black/10 dark:border-white/10 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-blue-500 transition-all" id="pairCodeInput" placeholder="Pairing code" type="text" value=""></div><button class="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-sm shadow-blue-500/30 transition whitespace-nowrap cursor-pointer" id="submitPairBtn" onclick="handlePairSubmit()">Pair</button></div></div></div>
+</section>
+<!-- END: Prominent Takeover Hero Control -->
+<!-- BEGIN: Apple Blurred Segmented Control -->
+<nav class="p-1.5 rounded-xl bg-slate-200/80 dark:bg-black/40 backdrop-blur-md flex space-x-1.5 border border-black/5 dark:border-white/5" data-purpose="tab-navigation">
+<button class="tab-btn flex-1 py-1.5 px-3 text-xs font-semibold rounded-lg transition-all duration-200 text-slate-900 dark:text-white bg-white dark:bg-white/15 shadow-pill-active flex items-center justify-center gap-2" data-tab-target="tab-approvals">
+<span class="">Approvals</span>
+<span class="px-2 py-0.5 rounded-full text-[10px] font-mono bg-rose-500 text-white font-bold leading-normal" id="badgeCount">2</span>
+</button>
+<button class="tab-btn flex-1 py-1.5 px-2.5 text-xs font-medium rounded-lg text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-all duration-200 flex items-center justify-center space-x-1" data-tab-target="tab-origins">
+<span class="">Origins</span>
+</button>
+<button class="tab-btn flex-1 py-1.5 px-2.5 text-xs font-medium rounded-lg text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-all duration-200 flex items-center justify-center space-x-1" data-tab-target="tab-blocklist">
+<span class="">Blocklist</span>
+</button>
+<button class="tab-btn flex-1 py-1.5 px-2.5 text-xs font-medium rounded-lg text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-all duration-200 flex items-center justify-center space-x-1" data-tab-target="tab-downloads">
+<span class="">Downloads</span>
+</button>
+</nav>
+<!-- END: Apple Blurred Segmented Control -->
+<!-- TAB CONTENT 1: Approvals Panel (Active by default) -->
+<div class="tab-pane space-y-3 block" id="tab-approvals">
+<div class="flex items-center justify-between px-1">
+<span class="text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+              PENDING REQUESTS (<span id="pendingNumText" class="">2</span>)
+            </span>
+<span class="text-[11px] text-blue-600 dark:text-blue-400 cursor-pointer hover:underline" onclick="clearAllApprovals()">Dismiss all</span>
+</div>
+<!-- Request Card 1 (Yahoo Finance) -->
+<article class="approval-card specular-card rounded-2xl p-4 bg-white/80 dark:bg-white/[0.06] border border-white/60 dark:border-white/10 shadow-sm transition-all hover:scale-[1.01] hover:border-blue-400/40">
+<div class="flex items-start justify-between">
+<div class="flex items-center space-x-2">
+<span class="w-6 h-6 rounded-lg bg-indigo-500/10 dark:bg-indigo-400/20 text-indigo-500 dark:text-indigo-400 flex items-center justify-center font-bold text-xs">Y!</span>
+<div>
+<h3 class="text-xs font-bold text-slate-900 dark:text-white font-mono break-all">https://finance.yahoo.com</h3>
+
+</div>
+</div>
+<span class="px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/20">Medium</span>
+</div>
+<!-- Intent Body -->
+<div class="mt-3 p-2.5 rounded-xl bg-slate-100/80 dark:bg-black/30 border border-black/[0.03] dark:border-white/[0.05] text-xs text-slate-700 dark:text-slate-300">
+<span class="font-medium text-slate-900 dark:text-white">Requested action:</span>
+<span class="">Read web DOM structure and extract recent quarterly financial report data</span>
+</div>
+<!-- Tactile Apple-Style Actions -->
+<div class="mt-3.5 grid grid-cols-3 gap-2 text-xs">
+<!-- Allow Once -->
+<button class="px-2.5 py-1.5 rounded-xl bg-slate-200/80 dark:bg-white/10 hover:bg-slate-300 dark:hover:bg-white/20 text-slate-800 dark:text-slate-200 font-medium transition text-center" onclick="dismissCard(this)">
+                Allow once
+              </button>
+<!-- Always Allow -->
+<button class="px-2.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold transition text-center shadow-sm shadow-blue-500/30" onclick="dismissCard(this, 'white')">
+                Always trust
+              </button>
+<!-- Deny -->
+<button class="px-2.5 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 font-medium border border-rose-500/20 transition text-center" onclick="dismissCard(this)">
+                Deny
+              </button>
+</div>
+</article>
+<!-- Request Card 2 (GitHub API) -->
+<article class="approval-card specular-card rounded-2xl p-4 bg-white/80 dark:bg-white/[0.06] border border-white/60 dark:border-white/10 shadow-sm transition-all hover:scale-[1.01] hover:border-blue-400/40">
+<div class="flex items-start justify-between">
+<div class="flex items-center space-x-2">
+<span class="w-6 h-6 rounded-lg bg-slate-800 text-white flex items-center justify-center font-bold text-xs">GH</span>
+<div>
+<h3 class="text-xs font-bold text-slate-900 dark:text-white font-mono break-all">https://api.github.com/graphql</h3>
+
+</div>
+</div>
+<span class="px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/20">Low</span>
+</div>
+<!-- Intent Body -->
+<div class="mt-3 p-2.5 rounded-xl bg-slate-100/80 dark:bg-black/30 border border-black/[0.03] dark:border-white/[0.05] text-xs text-slate-700 dark:text-slate-300">
+<span class="font-medium text-slate-900 dark:text-white">Requested action:</span>
+<span class="">Fetch open issues list and label distribution from repository</span>
+</div>
+<!-- Tactile Apple-Style Actions -->
+<div class="mt-3.5 grid grid-cols-3 gap-2 text-xs">
+<button class="px-2.5 py-1.5 rounded-xl bg-slate-200/80 dark:bg-white/10 hover:bg-slate-300 dark:hover:bg-white/20 text-slate-800 dark:text-slate-200 font-medium transition text-center" onclick="dismissCard(this)">
+                Allow once
+              </button>
+<button class="px-2.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold transition text-center shadow-sm shadow-blue-500/30" onclick="dismissCard(this, 'white')">
+                Always trust
+              </button>
+<button class="px-2.5 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 font-medium border border-rose-500/20 transition text-center" onclick="dismissCard(this)">
+                Deny
+              </button>
+</div>
+</article>
+<!-- Empty State (Hidden until cards dismissed) -->
+<div class="hidden text-center py-10 px-4 space-y-2 rounded-2xl border border-dashed border-slate-300 dark:border-white/10" id="approvalsEmptyState">
+<div class="w-10 h-10 mx-auto rounded-full bg-emerald-500/10 text-emerald-500 flex items-center justify-center">
+<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</div>
+<p class="text-xs font-semibold text-slate-800 dark:text-slate-200">No pending requests</p>
+<p class="text-[11px] text-slate-500 dark:text-slate-400">Agent running under supervised security state</p>
+</div>
+<!-- PAIRED STATE Section -->
+
+</div>
+<!-- TAB CONTENT 2: Origins Whitelist Panel -->
+<div class="tab-pane space-y-3 hidden" id="tab-origins">
+<div class="flex items-center justify-between px-1">
+<span class="text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">TRUSTED ORIGINS</span>
+<span class="text-[11px] text-slate-400 font-mono">4 total</span>
+</div>
+<div class="space-y-2">
+<!-- Origin 1 -->
+<div class="flex items-center justify-between p-3 rounded-xl bg-white/70 dark:bg-white/[0.04] border border-black/5 dark:border-white/10 hover:border-slate-300 transition">
+<div class="truncate mr-2">
+<div class="text-xs font-medium text-slate-900 dark:text-white truncate">https://news.ycombinator.com</div>
+<div class="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">Always Allowed · 42 calls</div>
+</div>
+<button class="px-2 py-1 text-[11px] rounded-lg bg-slate-200/80 dark:bg-white/10 hover:bg-rose-500 hover:text-white dark:hover:bg-rose-500/80 transition text-slate-600 dark:text-slate-300" onclick="removeOrigin(this)">
+                Remove
+              </button>
+</div>
+<!-- Origin 2 -->
+<div class="flex items-center justify-between p-3 rounded-xl bg-white/70 dark:bg-white/[0.04] border border-black/5 dark:border-white/10 hover:border-slate-300 transition">
+<div class="truncate mr-2">
+<div class="text-xs font-medium text-slate-900 dark:text-white truncate">https://techcrunch.com</div>
+<div class="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">Always Allowed · 19 calls</div>
+</div>
+<button class="px-2 py-1 text-[11px] rounded-lg bg-slate-200/80 dark:bg-white/10 hover:bg-rose-500 hover:text-white dark:hover:bg-rose-500/80 transition text-slate-600 dark:text-slate-300" onclick="removeOrigin(this)">
+                Remove
+              </button>
+</div>
+<!-- Origin 3 -->
+<div class="flex items-center justify-between p-3 rounded-xl bg-white/70 dark:bg-white/[0.04] border border-black/5 dark:border-white/10 hover:border-slate-300 transition">
+<div class="truncate mr-2">
+<div class="text-xs font-medium text-slate-900 dark:text-white truncate">https://www.reuters.com</div>
+<div class="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">Always Allowed · 8 calls</div>
+</div>
+<button class="px-2 py-1 text-[11px] rounded-lg bg-slate-200/80 dark:bg-white/10 hover:bg-rose-500 hover:text-white dark:hover:bg-rose-500/80 transition text-slate-600 dark:text-slate-300" onclick="removeOrigin(this)">
+                Remove
+              </button>
+</div>
+<!-- Origin 4 -->
+<div class="flex items-center justify-between p-3 rounded-xl bg-white/70 dark:bg-white/[0.04] border border-black/5 dark:border-white/10 hover:border-slate-300 transition">
+<div class="truncate mr-2">
+<div class="text-xs font-medium text-slate-900 dark:text-white truncate">https://www.theverge.com</div>
+<div class="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">Always Allowed · 14 calls</div>
+</div>
+<button class="px-2 py-1 text-[11px] rounded-lg bg-slate-200/80 dark:bg-white/10 hover:bg-rose-500 hover:text-white dark:hover:bg-rose-500/80 transition text-slate-600 dark:text-slate-300" onclick="removeOrigin(this)">
+                Remove
+              </button>
+</div>
+</div>
+</div>
+<!-- TAB CONTENT 3: Downloads Panel -->
+<div class="tab-pane space-y-3 hidden" id="tab-downloads">
+<div class="flex items-center justify-between px-1">
+<span class="text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">DOWNLOADS</span>
+<span class="text-[11px] text-slate-400 font-mono">Interceptor active</span>
+</div>
+<div class="p-3 rounded-xl bg-white/70 dark:bg-white/[0.04] border border-black/5 dark:border-white/10 text-xs space-y-2">
+<div class="flex justify-between items-center text-slate-700 dark:text-slate-200">
+<span class="font-medium">Auto-block unauthorized binaries</span>
+<span class="px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 font-medium">Enabled</span>
+</div>
+<p class="text-[11px] text-slate-500 dark:text-slate-400">Agent cannot download .exe / .dmg / .sh binaries without explicit approval.</p>
+</div>
+<div class="text-center py-6 px-4 rounded-xl border border-dashed border-slate-300 dark:border-white/10 text-slate-500 dark:text-slate-400 text-xs">
+No pending download requests
+</div>
+</div>
+<!-- TAB CONTENT 4: Blocklist & Logs Panel -->
+<div class="tab-pane space-y-3 hidden" id="tab-blocklist">
+<div class="p-3 rounded-xl bg-white/70 dark:bg-white/[0.04] border border-black/5 dark:border-white/10 text-xs space-y-2">
+<div class="flex justify-between items-center text-slate-500 dark:text-slate-400">
+<span class="">Block Statistics</span>
+<span class="font-mono text-rose-500 font-bold">14 blocked</span>
+</div>
+<p class="text-[11px] text-slate-400">High-risk cross-origin cookie thefts and unauthorized instructions isolated.</p>
+</div>
+<div class="text-[11px] font-mono p-3 rounded-xl bg-black/5 dark:bg-black/40 border border-black/5 dark:border-white/5 space-y-1.5 text-slate-600 dark:text-slate-400">
+<div class="">[14:22:01] Blocked script injection: eval() call blocked</div>
+<div class="">[14:21:40] Approved: github.com/api</div>
+<div class="">[14:19:12] Bridge Socket handshake successful (16ms)</div>
+</div>
+</div>
+</div>
+<!-- Footer Bar: Quick Diagnostic Pill -->
+
+</aside>
+<!-- END: Docked Apple Liquid Glass Browser Bridge Sidebar -->
+</div>
+<!-- END: Main Browser Environment Shell -->
+<!-- BEGIN: Interactive Logic Scripts -->
+<script data-purpose="tab-and-theme-interaction">
+    // Theme Switcher Logic
+    const themeToggleBtn = document.getElementById('themeToggleBtn');
+    themeToggleBtn.addEventListener('click', () => {
+      document.documentElement.classList.toggle('dark');
+    });
+
+    // Segmented Navigation Tab Switcher
+    const tabButtons = document.querySelectorAll('.tab-btn');
+    const tabPanes = document.querySelectorAll('.tab-pane');
+
+    tabButtons.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const targetId = btn.getAttribute('data-tab-target');
+
+        // Reset tab styles
+        tabButtons.forEach(b => {
+          b.classList.remove('bg-white', 'dark:bg-white/15', 'shadow-pill-active', 'text-slate-900', 'dark:text-white', 'font-semibold');
+          b.classList.add('text-slate-600', 'dark:text-slate-400', 'font-medium');
+        });
+
+        // Activate clicked tab
+        btn.classList.add('bg-white', 'dark:bg-white/15', 'shadow-pill-active', 'text-slate-900', 'dark:text-white', 'font-semibold');
+        btn.classList.remove('text-slate-600', 'dark:text-slate-400', 'font-medium');
+
+        // Show corresponding pane
+        tabPanes.forEach(pane => {
+          if (pane.id === targetId) {
+            pane.classList.remove('hidden');
+            pane.classList.add('block');
+          } else {
+            pane.classList.remove('block');
+            pane.classList.add('hidden');
+          }
+        });
+      });
+    });
+
+    // Takeover Master Switch Interactive State
+    const takeoverToggle = document.getElementById('takeoverToggleInput');
+    const takeoverTitle = document.getElementById('takeoverText');
+    const takeoverDot = document.getElementById('takeoverDot');
+    const takeoverSubText = document.getElementById('takeoverSubText');
+    const takeoverSwitchIcon = document.getElementById('takeoverSwitchIcon');
+    const bridgeSubStatus = document.getElementById('bridgeSubStatus');
+
+    function updateTakeoverUI(isActive) {
+      if (isActive) {
+        takeoverTitle.textContent = "Human Takeover Active";
+        takeoverSubText.textContent = "AI control suspended. Direct user browser control active";
+        takeoverDot.className = "w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-glow-emerald animate-pulse";
+        takeoverSwitchIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />';
+        takeoverSwitchIcon.className = "w-3.5 h-3.5 text-emerald-600";
+        bridgeSubStatus.innerHTML = 'Bridge Socket: <b class="font-semibold text-emerald-600 dark:text-emerald-400">Connected</b>';
+      } else {
+        takeoverTitle.textContent = "Autonomous AI Agent Active";
+        takeoverSubText.textContent = "Agent actively executing automated browser workflow";
+        takeoverDot.className = "w-2.5 h-2.5 rounded-full bg-blue-500";
+        takeoverSwitchIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />';
+        takeoverSwitchIcon.className = "w-3.5 h-3.5 text-slate-400";
+        bridgeSubStatus.innerHTML = 'Bridge Socket: <b class="font-semibold text-slate-400">Standby</b>';
+      }
+    }
+
+    takeoverToggle.addEventListener('change', (e) => {
+      updateTakeoverUI(e.target.checked);
+    });
+
+    // Toggle Pairing Drawer
+    function togglePairDrawer() {
+      const drawer = document.getElementById('pairingDrawerGroup');
+      const chevron = document.getElementById('drawerChevronIcon');
+      if (drawer.classList.contains('hidden')) {
+        drawer.classList.remove('hidden');
+        chevron.classList.add('rotate-180');
+      } else {
+        drawer.classList.add('hidden');
+        chevron.classList.remove('rotate-180');
+      }
+    }
+
+    function handlePairSubmit() {
+      const input = document.getElementById('pairCodeInput');
+      if (input.value.trim()) {
+        alert('Pairing verified: ' + input.value.trim());
+        togglePairDrawer();
+      }
+    }
+
+    // Shortcut ⌘K or Ctrl+K
+    window.addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        takeoverToggle.checked = !takeoverToggle.checked;
+        updateTakeoverUI(takeoverToggle.checked);
+      }
+    });
+
+    // Dismiss approval card logic
+    function dismissCard(buttonEl, type = '') {
+      const card = buttonEl.closest('.approval-card');
+      if (!card) return;
+      
+      card.style.transition = 'all 0.25s ease';
+      card.style.opacity = '0';
+      card.style.transform = 'scale(0.95)';
+      
+      setTimeout(() => {
+        card.remove();
+        updateApprovalBadges();
+      }, 250);
+    }
+
+    function clearAllApprovals() {
+      const cards = document.querySelectorAll('.approval-card');
+      cards.forEach(card => card.remove());
+      updateApprovalBadges();
+    }
+
+    function updateApprovalBadges() {
+      const remaining = document.querySelectorAll('.approval-card').length;
+      const badge = document.getElementById('badgeCount');
+      const pendingNumText = document.getElementById('pendingNumText');
+      const emptyState = document.getElementById('approvalsEmptyState');
+
+      if (badge) badge.textContent = remaining;
+      if (pendingNumText) pendingNumText.textContent = remaining;
+
+      if (remaining === 0) {
+        if (badge) badge.classList.add('hidden');
+        if (emptyState) emptyState.classList.remove('hidden');
+      }
+    }
+
+    // Origins Revoke button logic
+    function removeOrigin(btn) {
+      const item = btn.closest('.flex');
+      if (item) {
+        item.style.opacity = '0';
+        setTimeout(() => item.remove(), 200);
+      }
+    }
+  </script>
+<!-- END: Interactive Logic Scripts -->
+
+
+</body></html>

@@ -1,0 +1,295 @@
+/* Takeover hero card: the master safety pod pinned at the panel apex. */
+
+.hero {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-card);
+  background: var(--glass-card-bg);
+  -webkit-backdrop-filter: var(--glass-card-blur);
+  backdrop-filter: var(--glass-card-blur);
+  border: 1px solid var(--glass-card-border);
+  box-shadow: var(--glass-card-shadow);
+  padding: var(--space-md);
+}
+
+/* Specular boundary highlight along the top glass edge. */
+.hero::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--rim-gradient);
+  pointer-events: none;
+}
+
+.topRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.eyebrow {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.stateLine {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-top: var(--space-xs);
+}
+
+.stateDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.stateDotIdle {
+  background: var(--primary);
+}
+
+.stateDotEngaged {
+  background: var(--amber);
+  box-shadow: 0 0 12px rgba(255, 159, 10, 0.5);
+}
+
+.stateText {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.connectionRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-top: var(--space-md);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--hairline-soft);
+  font-size: 11px;
+  min-width: 0;
+}
+
+.dotWrap {
+  position: relative;
+  display: inline-flex;
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+}
+
+.ping {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--emerald);
+  opacity: 0.6;
+  animation: ripple 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+.dot {
+  position: relative;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.dotConnected {
+  background: var(--emerald);
+}
+
+.dotDisconnected {
+  background: var(--red);
+}
+
+.connectionLabel {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.connectionState {
+  font-weight: 600;
+}
+
+.connected {
+  color: var(--emerald);
+}
+
+.disconnected {
+  color: var(--red);
+}
+
+.spacer {
+  flex: 1 1 auto;
+}
+
+.uid {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 14px;
+  color: var(--text-faint);
+  background: var(--glass-chip-bg);
+  border: 1px solid var(--glass-chip-border);
+  border-radius: var(--radius-chip);
+  padding: 2px var(--space-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 45%;
+  user-select: all;
+}
+
+/* Ghost icon button for row-level actions (settings, re-pair): bordered
+   glass chip surfaces on hover. */
+.iconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  padding: 0;
+  border-radius: var(--radius-chip);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease;
+}
+
+.iconButton:hover {
+  color: var(--text);
+  background: var(--glass-chip-bg);
+  border-color: var(--glass-chip-border);
+}
+
+/* Toggled state: the pairing form is open. */
+.iconButtonActive {
+  composes: iconButton;
+  color: var(--text);
+  background: var(--glass-chip-bg);
+  border-color: var(--glass-chip-border);
+}
+
+.iconButton:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+.pairingDrawer {
+  margin-top: var(--space-md);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--hairline-soft);
+}
+
+.pairForm {
+  margin-top: var(--space-sm);
+}
+
+.pairTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.pairHint {
+  margin: var(--space-xs) 0 0;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-muted);
+}
+
+.pairHint code {
+  font-size: 11px;
+  padding: 1px var(--space-xs);
+  border-radius: var(--radius-chip);
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  user-select: all;
+}
+
+.pairRow {
+  display: flex;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+}
+
+.pairRow input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px var(--space-sm);
+  font-size: 12px;
+  font-family: var(--font-mono);
+  border-radius: var(--radius-control);
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--text);
+}
+
+.pairRow input::placeholder {
+  color: var(--input-placeholder);
+}
+
+.pairRow input:focus-visible {
+  outline: none;
+  border-color: var(--primary);
+  background: var(--input-focus-bg);
+  box-shadow: var(--input-focus-ring);
+}
+
+.pairButton {
+  padding: 6px var(--space-md);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  border: none;
+  border-radius: var(--radius-control);
+  background: var(--primary);
+  color: #fff;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  transition:
+    filter 0.15s ease,
+    transform 0.15s ease;
+}
+
+.pairButton:hover {
+  filter: brightness(1.04);
+}
+
+.pairButton:active {
+  transform: scale(0.98);
+}
+
+.pairError {
+  margin-top: var(--space-sm);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--red);
+}
+
+@keyframes ripple {
+  0% {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  75%,
+  100% {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+}
