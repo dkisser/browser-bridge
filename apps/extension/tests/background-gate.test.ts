@@ -8,6 +8,7 @@
 
 import { beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import {
+  type CommandResultMap,
   type CommandType,
   SENSITIVE_FIELD_RECHECK_ERROR,
 } from '@browser-bridge/shared';
@@ -26,9 +27,87 @@ let badgeTextUpdates = 0;
 // seam: ping (listener liveness), preflight (sensitive classification), and
 // command dispatch.
 let preflightResult: { sensitive: boolean } = { sensitive: false };
+
+// Per-command mock data must match `CommandResultMap[CommandType]` — AGENTS.md
+// is explicit that test mocks are constructed from the typed contract, and
+// `handleCommand` is annotated `Promise<CommandResultMap[CommandType]>`. A
+// blanket `{ ok: true }` was a latent bug: any future `expect(result).toEqual<
+// ClickResult>(…)` or downstream typed consumer would hit a confusing mismatch.
+function mockResultFor(
+  cmd: CommandType,
+  params: Record<string, unknown>,
+): CommandResultMap[CommandType] {
+  switch (cmd) {
+    case 'click':
+      return { clicked: stringParam(params, 'selector') };
+    case 'type':
+      return { typed: stringParam(params, 'text') };
+    case 'select':
+      return { selected: stringParam(params, 'value') };
+    case 'scroll':
+      return { scrolled: true };
+    case 'hover':
+      return { hovered: stringParam(params, 'selector') };
+    case 'gettext':
+      return { text: null };
+    case 'gethtml':
+      return { html: '' };
+    case 'snapshot':
+      return {
+        snapshot: '',
+        truncated: false,
+        nodes_total: 0,
+        nodes_emitted: 0,
+        tier: 0,
+      };
+    case 'screenshot':
+      return { dataUrl: '' };
+    case 'pageinfo':
+      return { active: false };
+    case 'navigate':
+    case 'wait:navigation':
+      return { url: undefined, title: undefined };
+    case 'tab:list':
+      return [];
+    case 'tab:new':
+    case 'tab:switch':
+      return {};
+    case 'tab:close':
+    case 'goBack':
+    case 'goForward':
+    case 'refresh':
+      return { ok: true };
+    case 'wait:element':
+      return { found: true, selector: '' };
+    default: {
+      const _exhaustive: never = cmd;
+      return _exhaustive;
+    }
+  }
+}
+
+function stringParam(params: Record<string, unknown>, key: string): string {
+  return typeof params[key] === 'string' ? (params[key] as string) : '';
+}
+
+function defaultContentScriptResponse(
+  message: Record<string, unknown>,
+): Promise<unknown> {
+  const payload = message.payload as
+    | { command?: CommandType; params?: Record<string, unknown> }
+    | undefined;
+  if (!payload?.command) {
+    return Promise.resolve({ status: 'ok', data: { ok: true } });
+  }
+  return Promise.resolve({
+    status: 'ok',
+    data: mockResultFor(payload.command, payload.params ?? {}),
+  });
+}
+
 let contentScriptResponse: (
   message: Record<string, unknown>,
-) => Promise<unknown> = async () => ({ status: 'ok', data: { ok: true } });
+) => Promise<unknown> = defaultContentScriptResponse;
 
 let handleCommand: typeof background.handleCommand;
 
@@ -119,7 +198,7 @@ beforeEach(() => {
   sentToContentScript.length = 0;
   badgeTextUpdates = 0;
   preflightResult = { sensitive: false };
-  contentScriptResponse = async () => ({ status: 'ok', data: { ok: true } });
+  contentScriptResponse = defaultContentScriptResponse;
 });
 
 describe('background policy gate orchestration', () => {
