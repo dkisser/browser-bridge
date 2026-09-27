@@ -567,7 +567,7 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
         const el = resolveSelector(selector);
         return { sensitive: isSensitiveField(el) };
       })
-      .then((sensitive) => sendResponse({ status: 'ok', data: { sensitive } }))
+      .then((data) => sendResponse({ status: 'ok', data }))
       .catch((err) =>
         sendResponse({
           status: 'error',

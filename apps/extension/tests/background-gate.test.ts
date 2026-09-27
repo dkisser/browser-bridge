@@ -166,6 +166,12 @@ beforeAll(async () => {
       sendMessage: async (_tabId: number, message: Record<string, unknown>) => {
         if (message.type === 'ping') return { type: 'pong' };
         if (message.type === 'preflight') {
+          // Mirrors `content.ts:570`'s post-fix wire shape
+          // (`sendResponse({ status: 'ok', data })` where `data` is
+          // `{ sensitive: boolean }`). A regression in content.ts that
+          // re-introduces a nested `data: { sensitive }` shorthand would
+          // not be caught by *this* file — content.ts has no unit test
+          // for the preflight handler, so any future audit should add one.
           return { status: 'ok', data: preflightResult };
         }
         sentToContentScript.push(message);
@@ -288,12 +294,10 @@ describe('background policy gate orchestration', () => {
     // The mock returns the wire shape that `chrome.tabs.sendMessage` would
     // deliver to content-bridge.ts — i.e. the post-`sendResponse` payload,
     // not the raw `String(err)` form. `content.ts:551` sends `err.message`
-    // (not `String(err)`) so the wire carries the bare constant; if it ever
-    // regressed to `String(err)`, the prefix `Error: ` would break the
-    // equality check below and this test would still pass (the SUT would
-    // throw a bare Error instead of PolicyDeniedError). The companion test
-    // `does not treat an Error-prefixed error as a recheck` pins the prefix
-    // invariant from the receiver side.
+    // (not `String(err)`) so the wire carries the bare constant. The
+    // companion test `does not treat an Error-prefixed error as a recheck`
+    // pins the prefix invariant from the receiver side and fails if
+    // `content.ts:551` ever regresses to `String(err)`.
     tabUrls.set(1, 'https://approved.site/form');
     store.set('policyState', {
       origins: { 'https://approved.site': 'always' },
