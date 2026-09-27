@@ -342,3 +342,11 @@ export function humanDenialMessage(d: Denial): string {
       return `Command "${d.command}" is not recognized by the installed Browser Bridge policy. Update the extension and the local proxy to matching versions, then retry.`;
   }
 }
+
+// Stable per-denial key (reason|origin|command). Lives in the shared
+// package so both the extension (React keys in ApprovalsPanel, target
+// resolution in handleDenialAction) and any other consumer can reuse the
+// same definition without each one inventing its own.
+export function denialKey(denial: Denial): string {
+  return `${denial.reason}|${denial.origin ?? ''}|${denial.command}`;
+}

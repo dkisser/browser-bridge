@@ -23,7 +23,12 @@ export type {
   PolicyContext,
   PolicyDecision,
 } from './policy';
-export { evaluatePolicy, humanDenialMessage, originOf } from './policy';
+export {
+  denialKey,
+  evaluatePolicy,
+  humanDenialMessage,
+  originOf,
+} from './policy';
 export type {
   SnapshotFilter,
   SnapshotMeta,

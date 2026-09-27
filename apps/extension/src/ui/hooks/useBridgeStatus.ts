@@ -40,10 +40,20 @@ export function useBridgeStatus(
       }
     };
 
-    void chrome.runtime.sendMessage({ type: 'connect' }).catch(() => {});
-    void refreshConnection().catch((error: unknown) =>
-      setMessage(toErrorMessage(error)),
-    );
+    // Sequence the connect handshake before the first ping: the background's
+    // ping handler reads the offscreen document's WebSocket connection
+    // state, which only flips to 'connected' after the WS handshake settles
+    // (tens of ms). Without the await, the first poll almost always reports
+    // browserConnected=false and the hero flashes Disconnected on every
+    // panel open, recovering on the 5 s tick or a visibility-change refresh.
+    void chrome.runtime
+      .sendMessage({ type: 'connect' })
+      .catch(() => {})
+      .then(() => {
+        void refreshConnection().catch((error: unknown) =>
+          setMessage(toErrorMessage(error)),
+        );
+      });
 
     const pollTimer = setInterval(() => {
       if (document.visibilityState !== 'visible') return;

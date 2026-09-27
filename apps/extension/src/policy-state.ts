@@ -3,6 +3,7 @@
 // partial stored objects still yield a complete PolicyState.
 
 import type { Denial, Grant, PolicyDecision } from '@browser-bridge/shared';
+import { denialKey } from '@browser-bridge/shared';
 
 export interface PendingDownload {
   id: number;
@@ -70,6 +71,13 @@ function mergeDeep<T>(defaults: T, stored: unknown): T {
   return (stored === undefined ? defaults : stored) as T;
 }
 
+// Public form of mergeDeep over the policy-state defaults. Lets the
+// chrome.storage listener use the new value it already received instead
+// of issuing a redundant chrome.storage.local.get + merge.
+export function normalizePolicyState(stored: unknown): PolicyState {
+  return mergeDeep(DEFAULT_STATE, stored);
+}
+
 export async function getPolicyState(): Promise<PolicyState> {
   const result = await chrome.storage.local.get(STORAGE_KEY);
   return mergeDeep(DEFAULT_STATE, result[STORAGE_KEY]);
@@ -134,12 +142,11 @@ export async function decideWithState(
   });
 }
 
-// Stable per-denial key. Exported so the side-panel UI can use it as a React
-// key (the panel reorders denials and an index-based key remounts cards on
-// every prepend).
-export function denialKey(denial: Denial): string {
-  return `${denial.reason}|${denial.origin ?? ''}|${denial.command}`;
-}
+// Stable per-denial key. Canonical implementation lives in
+// @browser-bridge/shared (re-exported below for backward compatibility);
+// the local definition was removed when the helper moved out of the
+// storage layer.
+export { denialKey };
 
 export async function recordDenial(denial: Denial): Promise<void> {
   await updatePolicyState((state) => ({

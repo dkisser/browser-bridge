@@ -1,5 +1,8 @@
-import { type Denial, humanDenialMessage } from '@browser-bridge/shared';
-import { denialKey } from '../../policy-state';
+import {
+  type Denial,
+  denialKey,
+  humanDenialMessage,
+} from '@browser-bridge/shared';
 import { EmptyState } from '../components/EmptyState';
 import { type DenialAction, denialCardButtons } from '../policy-actions';
 import styles from './panels.module.css';

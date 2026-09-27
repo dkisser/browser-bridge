@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import {
-  decideWithState,
   getPolicyState,
   recordDenial,
   updatePolicyState,
@@ -156,8 +155,7 @@ describe('handleDenialAction — stable key resolution', () => {
 });
 
 // Quick sanity check that the imports + exports wired by the rename still
-// flow through decideWithState — the existing serialization suite already
-// covers decideWithState, so this just guards against accidental breakage.
+// flow through the serialized write queue.
 describe('handleDenialAction — interaction with policy state', () => {
   beforeEach(() => {
     store.clear();
@@ -255,7 +253,3 @@ describe('handleDenialAction — origin map hygiene', () => {
     expect(after.deniedOrigins['https://b.example']).toBeUndefined();
   });
 });
-
-// Keep decideWithState referenced so biome / tsc don't flag the import as
-// unused if a future edit reorders this file.
-void decideWithState;

@@ -1,5 +1,6 @@
 import type { Denial, Grant } from '@browser-bridge/shared';
-import { denialKey, updateBadge, updatePolicyState } from '../policy-state';
+import { denialKey } from '@browser-bridge/shared';
+import { updateBadge, updatePolicyState } from '../policy-state';
 
 const GRANT_TTL_MS = 5 * 60 * 1000;
 
@@ -153,8 +154,29 @@ export async function handleDownloadAction(
     } else {
       await chrome.downloads.cancel(id);
     }
-  } catch {
-    // The download may have finished or been cancelled already.
+  } catch (error) {
+    // chrome.downloads.resume/cancel rejects when the download is gone
+    // (already completed or canceled via the browser UI before us) — that
+    // is the expected terminal state and the policy-state cleanup below
+    // still runs to drop the pending entry. Unexpected shapes (TypeError
+    // on a malformed id, a torn-down service worker, etc.) get logged at
+    // warn level so they leave a diagnostic trail instead of being
+    // silently swallowed alongside the benign case.
+    if (
+      error instanceof Error &&
+      /^Download .* not found/i.test(error.message)
+    ) {
+      console.debug(
+        'browser-bridge: download action no-op (already terminal)',
+        { action, id, error },
+      );
+    } else {
+      console.warn('browser-bridge: download action failed', {
+        action,
+        id,
+        error,
+      });
+    }
   }
   await updatePolicyState((state) => ({
     pendingDownloads: state.pendingDownloads.filter((d) => d.id !== id),

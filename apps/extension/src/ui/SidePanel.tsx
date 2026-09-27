@@ -56,37 +56,45 @@ export function SidePanel() {
   );
 
   const [activeTab, setActiveTab] = useState<SidePanelTab>('approvals');
-  // Tracks whether the default-view selection has already been applied,
-  // either from a real state read or from the error fallback. Subsequent
-  // state changes re-render panel contents but must not yank the user off
-  // the tab they chose — only an error → recovery transition re-applies.
-  const defaultViewApplied = useRef(false);
-  // Disambiguates the two ways defaultViewApplied could have been set:
-  // once via the error fallback, the flag must be cleared again when
-  // state finally arrives so the default view can re-route from 'approvals'
-  // to whatever selectDefaultView actually returns (e.g. 'downloads' when
-  // pending downloads exist and no denials do).
+  // True once the user has manually picked a tab via SegmentedNav. Once
+  // set, the default-view effect (and its error-recovery branch) must
+  // never overwrite the user's selection. The error fallback below can
+  // still set activeTab while this is false (panel would otherwise be
+  // blank) but never once the user has interacted.
+  const userPickedTab = useRef(false);
+  // Disambiguates whether the default view has been routed via the
+  // error fallback, so the state-driven branch can re-apply selectDefaultView
+  // when the bridge eventually delivers state. Cleared on every successful
+  // state read.
   const defaultedViaError = useRef(false);
+
+  // Wraps setActiveTab so any tab change driven by the user marks the
+  // selection as theirs. The default-view effect below checks this flag
+  // before overwriting.
+  const onActivateTab = useCallback((tab: SidePanelTab): void => {
+    userPickedTab.current = true;
+    setActiveTab(tab);
+  }, []);
 
   useEffect(() => {
     if (state !== null) {
-      // Apply (or re-apply, after recovery from an error fallback) the
-      // default view. After a clean first paint this is a no-op, so
-      // subsequent storage updates do not yank the user's tab choice.
-      if (!defaultViewApplied.current || defaultedViaError.current) {
+      // State is finally available — apply the default view as long as
+      // the user has not picked one themselves. Re-apply on recovery from
+      // the error fallback (no denials → 'origins', paused downloads →
+      // 'downloads', etc.) but stop after one clean first paint so
+      // subsequent storage updates do not yank the user off their tab.
+      if (!userPickedTab.current) {
         setActiveTab(selectDefaultView(state));
-        defaultViewApplied.current = true;
-        defaultedViaError.current = false;
       }
+      defaultedViaError.current = false;
       return;
     }
     if (policyError !== null) {
       // No state available, but the initial read failed — fall back to the
-      // Approvals tab so the panel is never blank. Mark this as an error
-      // fallback so the state-driven branch above can clear the flag once
-      // storage eventually delivers real state.
+      // Approvals tab so the panel is never blank. The state-driven branch
+      // above re-routes to selectDefaultView once storage recovers, as
+      // long as the user has not picked a tab themselves in the meantime.
       setActiveTab('approvals');
-      defaultViewApplied.current = true;
       defaultedViaError.current = true;
     }
   }, [state, policyError]);
@@ -99,23 +107,27 @@ export function SidePanel() {
 
   // --- Takeover: optimistic toggle, reverted on storage write failure ---
   const [takeover, setTakeover] = useState(false);
-  // Tracks the requested value of an in-flight optimistic write so the
-  // state-sync effect below can tell our own write landing (state
-  // matches pending) apart from an external write (state differs from
-  // pending and from the last applied value). Cleared on write failure.
-  const pendingTakeoverValue = useRef<boolean | null>(null);
-  // Last takeover value the UI has been synced to from storage. Lets the
-  // effect suppress redundant setTakeover when our own write lands and
-  // still detect external writes that differ from both pending and the
-  // last applied value.
-  const lastAppliedTakeover = useRef<boolean>(false);
+  // True while at least one storage write is in flight. While true, the
+  // state-sync effect below assumes any state arrival is one of our own
+  // writes (or a write from another surface that our optimistic update
+  // has effectively superseded) and does not touch local state. Without
+  // this gate, out-of-order write landing — or a second tab's write
+  // landing during our pending write — would clobber the user's most
+  // recent click.
+  const hasPendingTakeoverWrite = useRef(false);
+  // Last takeover value the UI has been synced to from storage, used to
+  // detect external writes once no write is in flight.
+  const lastAppliedTakeover = useRef(false);
+  // Generation counter — bumped on every click. Lets the write-failure
+  // handler tell whether a later click has superseded the failing one,
+  // so it does not surface a stale persistent error banner for an
+  // action that is no longer the user's current intent.
+  const writeGen = useRef(0);
+  const lastWriteGen = useRef(0);
+
   useEffect(() => {
     if (state === null) return;
-    if (state.takeover === pendingTakeoverValue.current) {
-      // Our optimistic write just landed; clear the pending flag and fall
-      // through so the lastApplied branch updates the bookkeeping.
-      pendingTakeoverValue.current = null;
-    }
+    if (hasPendingTakeoverWrite.current) return;
     if (state.takeover !== lastAppliedTakeover.current) {
       setTakeover(state.takeover);
       lastAppliedTakeover.current = state.takeover;
@@ -124,18 +136,29 @@ export function SidePanel() {
 
   const handleTakeoverChange = useCallback(
     (desired: boolean): void => {
+      const myGen = ++writeGen.current;
+      lastWriteGen.current = myGen;
       setTakeover(desired);
-      pendingTakeoverValue.current = desired;
-      void setPolicyState({ takeover: desired }).catch((error: unknown) => {
-        // Storage write failed; revert the switch so the UI matches persisted
-        // state and the user is not misled about whether takeover is active.
-        if (pendingTakeoverValue.current === desired) {
-          pendingTakeoverValue.current = null;
-        }
-        setTakeover(!desired);
-        lastAppliedTakeover.current = !desired;
-        setMessage(toErrorMessage(error));
-      });
+      hasPendingTakeoverWrite.current = true;
+      void setPolicyState({ takeover: desired })
+        .then(() => {
+          hasPendingTakeoverWrite.current = false;
+        })
+        .catch((error: unknown) => {
+          hasPendingTakeoverWrite.current = false;
+          if (lastWriteGen.current !== myGen) {
+            // A newer click has already superseded this one. The error
+            // refers to an action that no longer reflects the user's
+            // current intent — do not revert or surface a banner.
+            return;
+          }
+          // Storage write failed and is still the user's latest action —
+          // revert the switch so the UI matches persisted state, and
+          // show the failure.
+          setTakeover(!desired);
+          lastAppliedTakeover.current = !desired;
+          setMessage(toErrorMessage(error));
+        });
     },
     [setMessage],
   );
@@ -199,7 +222,7 @@ export function SidePanel() {
               : tab,
           )}
           activeTab={activeTab}
-          onActivate={setActiveTab}
+          onActivate={onActivateTab}
         />
       </div>
       <div className={styles.panelHost}>

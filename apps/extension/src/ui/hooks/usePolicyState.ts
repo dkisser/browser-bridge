@@ -1,5 +1,9 @@
 import { useEffect, useState } from 'react';
-import { getPolicyState, type PolicyState } from '../../policy-state';
+import {
+  getPolicyState,
+  normalizePolicyState,
+  type PolicyState,
+} from '../../policy-state';
 import { toErrorMessage } from '../format';
 
 export interface PolicyStateResult {
@@ -39,24 +43,20 @@ export function usePolicyState(
       changes: Record<string, chrome.storage.StorageChange>,
       area: string,
     ): void => {
-      if (area === 'local' && changes.policyState) {
-        void getPolicyState()
-          .then((next) => {
-            if (cancelled) return;
-            setState(next);
-            setError(null);
-          })
-          .catch((err: unknown) => {
-            if (cancelled) return;
-            // Keep the previous state on a failed re-read; surface the
-            // error via the standard channel and the onError callback.
-            // Without this, a rejected re-read would leave stale state,
-            // leave the prior error in place, and emit an unhandled
-            // promise rejection.
-            const message = toErrorMessage(err);
-            setError(message);
-            onError(message);
-          });
+      if (area !== 'local' || !changes.policyState) return;
+      if (cancelled) return;
+      // The change event already carries the new stored value — reuse it
+      // directly through normalizePolicyState instead of issuing a
+      // redundant chrome.storage.local.get + merge round-trip on every
+      // storage write.
+      try {
+        const next = normalizePolicyState(changes.policyState.newValue);
+        setState(next);
+        setError(null);
+      } catch (err: unknown) {
+        const message = toErrorMessage(err);
+        setError(message);
+        onError(message);
       }
     };
     chrome.storage.onChanged.addListener(listener);

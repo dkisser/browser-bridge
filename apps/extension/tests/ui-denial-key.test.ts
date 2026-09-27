@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import type { Denial } from '@browser-bridge/shared';
-import { denialKey } from '../src/policy-state';
+import { type Denial, denialKey } from '@browser-bridge/shared';
 
 function denial(partial: Partial<Denial>): Denial {
   return {
