@@ -10,7 +10,11 @@ export interface SegmentedTab {
 
 interface SegmentedNavProps {
   tabs: SegmentedTab[];
-  activeTab: SidePanelTab;
+  // null = no tab is active yet (the panel is still loading). The nav
+  // renders without any tab selected — the user can still click to pick
+  // one, and once `activeTab` becomes non-null the corresponding tab
+  // highlights.
+  activeTab: SidePanelTab | null;
   onActivate: (tab: SidePanelTab) => void;
 }
 

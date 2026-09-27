@@ -163,14 +163,27 @@ export async function handleDownloadAction(
     } else {
       await chrome.downloads.cancel(id);
     }
-  } catch {
+  } catch (error) {
     // chrome.downloads.resume/cancel rejects when the download is gone
-    // (already completed or canceled via the browser UI before us) — that
-    // is the expected terminal state, so swallow silently and let the
-    // policy-state cleanup below drop the pending entry from the list.
-    // Per project coding rules (no console statements in production),
-    // no diagnostic log is emitted here; if a future investigation needs
-    // to surface this, do so via the panel's message line, not console.
+    // (already completed or cancelled via the browser UI before us) —
+    // that is the expected terminal state. Drop the pending entry
+    // silently so the panel does not keep showing a download the user
+    // can no longer act on from here.
+    if (
+      error instanceof Error &&
+      /not found|gone|no longer/i.test(error.message)
+    ) {
+      await updatePolicyState((state) => ({
+        pendingDownloads: state.pendingDownloads.filter((d) => d.id !== id),
+      }));
+      await updateBadge();
+      return;
+    }
+    // Non-terminal failure (host tab closed, lost extension context,
+    // permission revoked, etc.) — the operation did not take effect, so
+    // keep the entry so the user can retry from the panel and re-throw
+    // so the caller's .catch surfaces the failure.
+    throw error;
   }
   await updatePolicyState((state) => ({
     pendingDownloads: state.pendingDownloads.filter((d) => d.id !== id),

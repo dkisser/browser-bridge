@@ -39,7 +39,10 @@ export function TakeoverHero({
     void confirmPairingCode(code).then((error) => {
       if (error === null) {
         setPairCode('');
-        setPairFormOpen(false);
+        // Do not reset pairFormOpen here: once `paired` updates via the
+        // storage listener, showPairForm = !paired || pairFormOpen will
+        // collapse the form automatically. Resetting now would briefly
+        // re-show the empty form before the listener catches up.
       } else {
         setPairError(error);
       }
