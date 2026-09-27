@@ -22,6 +22,7 @@ const store = new Map<string, unknown>();
 const tabUrls = new Map<number, string>();
 const sentToContentScript: Record<string, unknown>[] = [];
 let badgeTextUpdates = 0;
+let lastBadgeText: { text: string } | null = null;
 
 // Test-controlled content script behaviour behind the single tabs.sendMessage
 // seam: ping (listener liveness), preflight (sensitive classification), and
@@ -175,8 +176,9 @@ beforeAll(async () => {
     },
     scripting: { executeScript: async () => {} },
     action: {
-      setBadgeText: async () => {
+      setBadgeText: async (details: { text: string }) => {
         badgeTextUpdates += 1;
+        lastBadgeText = { text: details.text };
       },
       setBadgeBackgroundColor: async () => {},
       setTitle: async () => {},
@@ -197,6 +199,7 @@ beforeEach(() => {
   tabUrls.clear();
   sentToContentScript.length = 0;
   badgeTextUpdates = 0;
+  lastBadgeText = null;
   preflightResult = { sensitive: false };
   contentScriptResponse = defaultContentScriptResponse;
 });
@@ -281,6 +284,16 @@ describe('background policy gate orchestration', () => {
     // allows, then the content script re-classifies at write time and
     // reports the recheck error — the orchestrator must turn that into a
     // recorded policy denial, not a bare error.
+    //
+    // The mock returns the wire shape that `chrome.tabs.sendMessage` would
+    // deliver to content-bridge.ts — i.e. the post-`sendResponse` payload,
+    // not the raw `String(err)` form. `content.ts:551` sends `err.message`
+    // (not `String(err)`) so the wire carries the bare constant; if it ever
+    // regressed to `String(err)`, the prefix `Error: ` would break the
+    // equality check below and this test would still pass (the SUT would
+    // throw a bare Error instead of PolicyDeniedError). The companion test
+    // `does not treat an Error-prefixed error as a recheck` pins the prefix
+    // invariant from the receiver side.
     tabUrls.set(1, 'https://approved.site/form');
     store.set('policyState', {
       origins: { 'https://approved.site': 'always' },
@@ -310,5 +323,45 @@ describe('background policy gate orchestration', () => {
       'approval_required',
     );
     expect(badgeTextUpdates).toBeGreaterThan(0);
+    // The badge text must reflect the denial count (`String(count)` per
+    // policy-state.ts:201) so the side-panel 'X actions need attention' cue
+    // surfaces the right number — not the action title, not empty, not a
+    // hard-coded 'Browser Bridge' label.
+    expect(lastBadgeText).not.toBeNull();
+    expect(lastBadgeText?.text).toBe('1');
+  });
+
+  it('does not treat an Error-prefixed error as a recheck', async () => {
+    // Companion to the recheck test: pins the invariant that the wire
+    // contract requires `err.message` (bare constant), not `String(err)`,
+    // on the content-script -> background boundary. If `content.ts:551`
+    // regresses to `error: String(err)`, the receiver sees `"Error:
+    // bb_sensitive_field_at_execution"` — the equality check at
+    // `background.ts:444` must NOT match, and the orchestrator must surface
+    // a bare (non-PolicyDenied) error instead of mis-recording an
+    // approval_required denial. This test would fail under the regression.
+    tabUrls.set(1, 'https://approved.site/form');
+    store.set('policyState', {
+      origins: { 'https://approved.site': 'always' },
+    });
+    contentScriptResponse = async () => ({
+      status: 'error',
+      error: `Error: ${SENSITIVE_FIELD_RECHECK_ERROR}`,
+    });
+
+    const failure = await handleCommand(
+      makeCommand('type', 1, { selector: '#field', text: 'x' }),
+    ).then(
+      () => null,
+      (err: Error & { denial?: { reason: string } }) => err,
+    );
+
+    expect(failure).not.toBeNull();
+    expect(failure?.name).not.toBe('PolicyDeniedError');
+
+    const stored = store.get('policyState') as {
+      recentDenials?: { reason: string }[];
+    };
+    expect(stored.recentDenials ?? []).toHaveLength(0);
   });
 });
