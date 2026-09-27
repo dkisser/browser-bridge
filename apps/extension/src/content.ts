@@ -548,7 +548,15 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
     Promise.resolve()
       .then(() => executeCommand(payload))
       .then((data) => sendResponse({ status: 'ok', data }))
-      .catch((err) => sendResponse({ status: 'error', error: String(err) }));
+      .catch((err) =>
+        sendResponse({
+          status: 'error',
+          // Send the bare error code on the wire. `String(err)` would prefix
+          // `Error: ` and break `err.message === SENSITIVE_FIELD_RECHECK_ERROR`
+          // matching in background.ts (recheck-rejection path was dead code).
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
     return true;
   }
 
@@ -559,8 +567,13 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
         const el = resolveSelector(selector);
         return { sensitive: isSensitiveField(el) };
       })
-      .then((data) => sendResponse({ status: 'ok', data }))
-      .catch((err) => sendResponse({ status: 'error', error: String(err) }));
+      .then((sensitive) => sendResponse({ status: 'ok', data: { sensitive } }))
+      .catch((err) =>
+        sendResponse({
+          status: 'error',
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
     return true;
   }
 
