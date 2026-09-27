@@ -31,7 +31,11 @@ export function GlassSwitch({
         onChange={(event) => onChange(event.target.checked)}
       />
       <span
-        className={`${styles.track}${checked ? ` ${styles.on}` : ''}${
+        // The "on" visual state is driven by the sibling selector
+        // `.input:checked + .track` in GlassSwitch.module.css, so no class
+        // is added here. The optional `engaged` class adds the takeover
+        // breathing glow on top of the on-state color.
+        className={`${styles.track}${
           engaged && checked ? ` ${styles.engaged}` : ''
         }`}
         aria-hidden="true"

@@ -1,4 +1,5 @@
 import { type Denial, humanDenialMessage } from '@browser-bridge/shared';
+import { denialKey } from '../../policy-state';
 import { EmptyState } from '../components/EmptyState';
 import { type DenialAction, denialCardButtons } from '../policy-actions';
 import styles from './panels.module.css';
@@ -19,8 +20,11 @@ export function ApprovalsPanel({
       ) : (
         denials.map((denial, index) => (
           <DenialCard
-            // biome-ignore lint/suspicious/noArrayIndexKey: denials carry no stable id; the index is their identity in storage and in the original data-index handlers
-            key={`${denial.command}-${index}`}
+            // denialKey (reason|origin|command) is the same stable id used
+            // by recordDenial to dedupe; it survives prepends so the existing
+            // card instance is reused and a click during reconcile cannot
+            // resolve against the wrong denial.
+            key={denialKey(denial)}
             denial={denial}
             onAction={(action) => onDenialAction(action, index)}
           />

@@ -84,16 +84,27 @@ export function SidePanel() {
 
   // --- Takeover: optimistic toggle, reverted on storage write failure ---
   const [takeover, setTakeover] = useState(false);
+  // Tracks an optimistic write so the state-sync effect below does not
+  // clobber the local value while the storage write is in flight. Cleared
+  // when state catches up to our requested value, or on write failure.
+  const pendingTakeover = useRef<boolean | null>(null);
   useEffect(() => {
-    if (state !== null) setTakeover(state.takeover);
+    if (state === null) return;
+    if (pendingTakeover.current === state.takeover) {
+      pendingTakeover.current = null;
+      return;
+    }
+    setTakeover(state.takeover);
   }, [state]);
 
   const handleTakeoverChange = useCallback(
     (desired: boolean): void => {
       setTakeover(desired);
+      pendingTakeover.current = desired;
       void setPolicyState({ takeover: desired }).catch((error: unknown) => {
         // Storage write failed; revert the switch so the UI matches persisted
         // state and the user is not misled about whether takeover is active.
+        pendingTakeover.current = null;
         setTakeover(!desired);
         setMessage(toErrorMessage(error));
       });

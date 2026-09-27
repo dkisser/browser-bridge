@@ -134,7 +134,10 @@ export async function decideWithState(
   });
 }
 
-function denialKey(denial: Denial): string {
+// Stable per-denial key. Exported so the side-panel UI can use it as a React
+// key (the panel reorders denials and an index-based key remounts cards on
+// every prepend).
+export function denialKey(denial: Denial): string {
   return `${denial.reason}|${denial.origin ?? ''}|${denial.command}`;
 }
 

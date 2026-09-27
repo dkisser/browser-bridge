@@ -20,11 +20,17 @@ export function usePolicyState(
     let cancelled = false;
     void getPolicyState()
       .then((initial) => {
-        if (!cancelled) setState(initial);
+        if (cancelled) return;
+        setState(initial);
+        // A later successful read clears any prior initial-read failure,
+        // so the panel can re-apply its default-view selection instead of
+        // being permanently pinned to the 'approvals' fallback tab.
+        setError(null);
       })
       .catch((err: unknown) => {
         const message = toErrorMessage(err);
-        if (!cancelled) setError(message);
+        if (cancelled) return;
+        setError(message);
         onError(message);
       });
 
@@ -34,7 +40,9 @@ export function usePolicyState(
     ): void => {
       if (area === 'local' && changes.policyState) {
         void getPolicyState().then((next) => {
-          if (!cancelled) setState(next);
+          if (cancelled) return;
+          setState(next);
+          setError(null);
         });
       }
     };
