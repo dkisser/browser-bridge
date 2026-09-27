@@ -210,6 +210,16 @@ async function applyPolicyGate(
   return { state, origin, sensitiveApproved };
 }
 
+/**
+ * Internal entry point used by the chrome.runtime.onMessage('command') path
+ * (which wraps `PolicyDeniedError` in the WS-contract `{status:'error',
+ * denial:{...}}` envelope) and by the orchestration-layer test in
+ * `tests/background-gate.test.ts`. Not a public API for side-panel/settings/
+ * content modules — those go through the WS message channel so the denial
+ * envelope reaches the bridge-core consumer intact.
+ *
+ * @internal
+ */
 export async function handleCommand(
   msg: CommandMessage,
 ): Promise<CommandResultMap[CommandType]> {
