@@ -4,6 +4,8 @@ All notable changes to Browser Bridge are documented here. The format follows [K
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-09-27
+
 ### Fixed
 - Version upgrades no longer silently un-pair the extension. `install.sh` used to delete `~/.browser-bridge/config.json` (browserId + pairing hash) on every runtime download — a one-time ADR-0011 migration that ran unconditionally on each `bridge service update`, forcing re-pairing after every upgrade. The config is now preserved: the Go state loader keeps the known fields and drops ghost fields from older schemas on save, so `bridge pair` is only needed once.
 
