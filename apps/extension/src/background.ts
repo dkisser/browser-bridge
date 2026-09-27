@@ -210,7 +210,7 @@ async function applyPolicyGate(
   return { state, origin, sensitiveApproved };
 }
 
-async function handleCommand(
+export async function handleCommand(
   msg: CommandMessage,
 ): Promise<CommandResultMap[CommandType]> {
   const { payload } = msg;
