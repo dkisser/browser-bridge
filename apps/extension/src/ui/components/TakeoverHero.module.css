@@ -61,7 +61,7 @@
 
 .stateDotEngaged {
   background: var(--amber);
-  box-shadow: 0 0 12px rgba(255, 159, 10, 0.5);
+  box-shadow: 0 0 12px var(--takeover-glow-amber);
 }
 
 .stateText {

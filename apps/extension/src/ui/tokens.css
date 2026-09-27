@@ -29,6 +29,12 @@
   --red: #ba1a1a;
   --red-soft: rgba(186, 26, 26, 0.1);
   --amber: #ff9500;
+  /* Takeover-engaged halo tokens — drive the breathing-glow keyframes in
+   * GlassSwitch / TakeoverHero so the halo reads as the same hue under
+   * both light and dark schemes (rgba hardcoded in the dark-mode values
+   * would bleed through under prefers-color-scheme: light). */
+  --takeover-glow-red: rgba(186, 26, 26, 0.4);
+  --takeover-glow-amber: rgba(255, 149, 0, 0.35);
 
   /* Surface neutrals — frontmatter namedColors. */
   --surface: #fcf8fb;
@@ -112,6 +118,10 @@
     --red: #ff453a;
     --red-soft: rgba(255, 69, 58, 0.12);
     --amber: #ff9f0a;
+    /* Takeover-engaged halo tokens — see the light-theme block for the
+     * rationale; the dark values preserve the original red/amber hue. */
+    --takeover-glow-red: rgba(255, 69, 58, 0.4);
+    --takeover-glow-amber: rgba(255, 159, 10, 0.35);
 
     /* Surface neutrals — frontmatter namedColors. */
     --surface: #131315;

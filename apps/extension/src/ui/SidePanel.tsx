@@ -99,31 +99,41 @@ export function SidePanel() {
 
   // --- Takeover: optimistic toggle, reverted on storage write failure ---
   const [takeover, setTakeover] = useState(false);
-  // Tracks every optimistic write currently in progress, indexed by the
-  // requested value. Multiple rapid writes (e.g. ON then OFF) can be in
-  // flight at once, so the state-sync effect below must ignore state
-  // updates for any of them — otherwise the first write landing would
-  // pull the UI back to the previous value while the second write is
-  // still pending, leaving the switch visibly diverged from storage.
-  const pendingTakeoverWrites = useRef<Set<boolean>>(new Set());
+  // Tracks the requested value of an in-flight optimistic write so the
+  // state-sync effect below can tell our own write landing (state
+  // matches pending) apart from an external write (state differs from
+  // pending and from the last applied value). Cleared on write failure.
+  const pendingTakeoverValue = useRef<boolean | null>(null);
+  // Last takeover value the UI has been synced to from storage. Lets the
+  // effect suppress redundant setTakeover when our own write lands and
+  // still detect external writes that differ from both pending and the
+  // last applied value.
+  const lastAppliedTakeover = useRef<boolean>(false);
   useEffect(() => {
     if (state === null) return;
-    if (pendingTakeoverWrites.current.has(state.takeover)) {
-      pendingTakeoverWrites.current.delete(state.takeover);
-      return;
+    if (state.takeover === pendingTakeoverValue.current) {
+      // Our optimistic write just landed; clear the pending flag and fall
+      // through so the lastApplied branch updates the bookkeeping.
+      pendingTakeoverValue.current = null;
     }
-    setTakeover(state.takeover);
+    if (state.takeover !== lastAppliedTakeover.current) {
+      setTakeover(state.takeover);
+      lastAppliedTakeover.current = state.takeover;
+    }
   }, [state]);
 
   const handleTakeoverChange = useCallback(
     (desired: boolean): void => {
       setTakeover(desired);
-      pendingTakeoverWrites.current.add(desired);
+      pendingTakeoverValue.current = desired;
       void setPolicyState({ takeover: desired }).catch((error: unknown) => {
         // Storage write failed; revert the switch so the UI matches persisted
         // state and the user is not misled about whether takeover is active.
-        pendingTakeoverWrites.current.delete(desired);
+        if (pendingTakeoverValue.current === desired) {
+          pendingTakeoverValue.current = null;
+        }
         setTakeover(!desired);
+        lastAppliedTakeover.current = !desired;
         setMessage(toErrorMessage(error));
       });
     },

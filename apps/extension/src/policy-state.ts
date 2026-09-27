@@ -150,12 +150,6 @@ export async function recordDenial(denial: Denial): Promise<void> {
   }));
 }
 
-export async function removeDenial(index: number): Promise<void> {
-  await updatePolicyState((state) => ({
-    recentDenials: state.recentDenials.filter((_, i) => i !== index),
-  }));
-}
-
 // Session-scoped approvals expire with the browser session: drop every
 // 'session'-valued origin entry plus all one-shot grants, agent tabs, and
 // paused downloads.

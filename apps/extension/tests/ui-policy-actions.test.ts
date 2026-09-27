@@ -183,6 +183,79 @@ describe('handleDenialAction — interaction with policy state', () => {
   });
 });
 
+// origins / deniedOrigins must stay mutually exclusive — OriginsPanel
+// renders both maps together and would show the same origin twice if a
+// later action on the same origin did not clear the prior opposite entry.
+describe('handleDenialAction — origin map hygiene', () => {
+  beforeEach(() => {
+    store.clear();
+  });
+
+  it('approve-always on an origin removes any prior deniedOrigins entry', async () => {
+    // Seed: origin is currently in deniedOrigins.
+    await updatePolicyState((state) => ({
+      deniedOrigins: { ...state.deniedOrigins, 'https://a.example': 'always' },
+    }));
+    await recordDenial(clickDenial('https://a.example'));
+    const key = 'origin_not_approved|https://a.example|click';
+
+    await handleDenialAction('approve-always', key);
+
+    const after = await getPolicyState();
+    expect(after.origins['https://a.example']).toBe('always');
+    expect(after.deniedOrigins['https://a.example']).toBeUndefined();
+  });
+
+  it('approve-session on an origin removes any prior deniedOrigins entry', async () => {
+    await updatePolicyState((state) => ({
+      deniedOrigins: { ...state.deniedOrigins, 'https://a.example': 'always' },
+    }));
+    await recordDenial(clickDenial('https://a.example'));
+    const key = 'origin_not_approved|https://a.example|click';
+
+    await handleDenialAction('approve-session', key);
+
+    const after = await getPolicyState();
+    expect(after.origins['https://a.example']).toBe('session');
+    expect(after.deniedOrigins['https://a.example']).toBeUndefined();
+  });
+
+  it('deny-origin on an origin removes any prior origins entry', async () => {
+    await updatePolicyState((state) => ({
+      origins: { ...state.origins, 'https://a.example': 'session' },
+    }));
+    await recordDenial(clickDenial('https://a.example'));
+    const key = 'origin_not_approved|https://a.example|click';
+
+    await handleDenialAction('deny-origin', key);
+
+    const after = await getPolicyState();
+    expect(after.deniedOrigins['https://a.example']).toBe('always');
+    expect(after.origins['https://a.example']).toBeUndefined();
+  });
+
+  it('leaves other origins untouched when clearing the conflict on one', async () => {
+    await updatePolicyState((state) => ({
+      origins: {
+        ...state.origins,
+        'https://a.example': 'always',
+        'https://b.example': 'session',
+      },
+      deniedOrigins: { ...state.deniedOrigins, 'https://a.example': 'always' },
+    }));
+    await recordDenial(clickDenial('https://a.example'));
+    const key = 'origin_not_approved|https://a.example|click';
+
+    await handleDenialAction('approve-always', key);
+
+    const after = await getPolicyState();
+    expect(after.origins['https://a.example']).toBe('always');
+    expect(after.origins['https://b.example']).toBe('session');
+    expect(after.deniedOrigins['https://a.example']).toBeUndefined();
+    expect(after.deniedOrigins['https://b.example']).toBeUndefined();
+  });
+});
+
 // Keep decideWithState referenced so biome / tsc don't flag the import as
 // unused if a future edit reorders this file.
 void decideWithState;

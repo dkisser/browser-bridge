@@ -55,23 +55,47 @@ export async function handleDenialAction(
     if (index === -1) return null;
     const denial = state.recentDenials[index];
     const remaining = state.recentDenials.filter((_, i) => i !== index);
+    // The two maps must stay mutually exclusive — OriginsPanel renders
+    // them together and would otherwise show the same origin twice.
+    const clearedOrigins =
+      denial.origin !== undefined && state.origins[denial.origin] !== undefined
+        ? Object.fromEntries(
+            Object.entries(state.origins).filter(
+              ([origin]) => origin !== denial.origin,
+            ),
+          )
+        : state.origins;
+    const clearedDeniedOrigins =
+      denial.origin !== undefined &&
+      state.deniedOrigins[denial.origin] !== undefined
+        ? Object.fromEntries(
+            Object.entries(state.deniedOrigins).filter(
+              ([origin]) => origin !== denial.origin,
+            ),
+          )
+        : state.deniedOrigins;
     switch (action) {
       case 'approve-session':
       case 'approve-always': {
         if (denial.origin === undefined) return null;
         return {
           origins: {
-            ...state.origins,
+            ...clearedOrigins,
             [denial.origin]:
               action === 'approve-session' ? 'session' : 'always',
           },
+          deniedOrigins: clearedDeniedOrigins,
           recentDenials: remaining,
         };
       }
       case 'deny-origin': {
         if (denial.origin === undefined) return null;
         return {
-          deniedOrigins: { ...state.deniedOrigins, [denial.origin]: 'always' },
+          origins: clearedOrigins,
+          deniedOrigins: {
+            ...clearedDeniedOrigins,
+            [denial.origin]: 'always',
+          },
           recentDenials: remaining,
         };
       }

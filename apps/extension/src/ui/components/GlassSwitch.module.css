@@ -64,11 +64,11 @@
 @keyframes breathe {
   0%,
   100% {
-    box-shadow: 0 0 16px rgba(255, 69, 58, 0.4);
+    box-shadow: 0 0 16px var(--takeover-glow-red);
   }
   50% {
     box-shadow:
-      0 0 16px rgba(255, 69, 58, 0.4),
-      0 0 28px rgba(255, 159, 10, 0.35);
+      0 0 16px var(--takeover-glow-red),
+      0 0 28px var(--takeover-glow-amber);
   }
 }
