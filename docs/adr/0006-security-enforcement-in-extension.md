@@ -12,4 +12,4 @@ The control panel, the policy store, and the enforcement of every gate live in t
 
 - Policy state lives in extension storage, not `~/.browser-bridge/config.json`; the CLI cannot read or edit policy directly (single-profile product, no multi-browser story).
 - The local-proxy "bloat" concern is moot: it keeps only token verification plus the existing HTTP status API.
-- Authorization for non-local deployments (cloud ws-server) is an explicitly deferred branch, not covered by this decision.
+- Authorization for non-local deployments (cloud ws-server) is an explicitly deferred branch, not covered by this decision. The concrete deferred boundaries (M1: WS response fanout without `userId` ownership check; M2: `NoopAuthProvider` placeholder) live in [`0016-deferred-security-boundaries.md`](./0016-deferred-security-boundaries.md); that ADR is the revisit gate, not this one.
