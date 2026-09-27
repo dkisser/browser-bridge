@@ -59,6 +59,10 @@
   background: var(--primary);
 }
 
+.stateDotLoading {
+  background: var(--text-faint);
+}
+
 .stateDotEngaged {
   background: var(--amber);
   box-shadow: 0 0 12px var(--takeover-glow-amber);

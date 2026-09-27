@@ -45,12 +45,25 @@ export function usePolicyState(
     ): void => {
       if (area !== 'local' || !changes.policyState) return;
       if (cancelled) return;
+      const change = changes.policyState;
+      if (change.newValue === undefined) {
+        // The policyState key was deleted out from under us (storage
+        // cleared, external script with the storage permission, a future
+        // migration step). Keep the previous state in place and surface
+        // a persistent error so the user sees that their deliberate
+        // configuration has been wiped, instead of the panel silently
+        // resetting to factory defaults.
+        const message = 'Policy state was cleared from storage';
+        setError(message);
+        onError(message);
+        return;
+      }
       // The change event already carries the new stored value — reuse it
       // directly through normalizePolicyState instead of issuing a
       // redundant chrome.storage.local.get + merge round-trip on every
       // storage write.
       try {
-        const next = normalizePolicyState(changes.policyState.newValue);
+        const next = normalizePolicyState(change.newValue);
         setState(next);
         setError(null);
       } catch (err: unknown) {

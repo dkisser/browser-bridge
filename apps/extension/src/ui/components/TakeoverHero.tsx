@@ -5,7 +5,11 @@ import { GlassSwitch } from './GlassSwitch';
 import styles from './TakeoverHero.module.css';
 
 interface TakeoverHeroProps {
-  takeover: boolean;
+  // null = state not yet loaded (rendering the OFF/ON label would flash
+  // the wrong state on every panel open). The hero renders a neutral
+  // "Loading…" state until the policy read resolves and SidePanel
+  // supplies a real boolean.
+  takeover: boolean | null;
   browserConnected: boolean;
   browserId: string | null;
   paired: boolean;
@@ -55,17 +59,25 @@ export function TakeoverHero({
           <div className={styles.stateLine}>
             <span
               className={`${styles.stateDot} ${
-                takeover ? styles.stateDotEngaged : styles.stateDotIdle
+                takeover === null
+                  ? styles.stateDotLoading
+                  : takeover
+                    ? styles.stateDotEngaged
+                    : styles.stateDotIdle
               }`}
               aria-hidden="true"
             />
             <span className={styles.stateText}>
-              {takeover ? 'Takeover active' : 'Agent Autonomous'}
+              {takeover === null
+                ? 'Loading…'
+                : takeover
+                  ? 'Takeover active'
+                  : 'Agent Autonomous'}
             </span>
           </div>
         </div>
         <GlassSwitch
-          checked={takeover}
+          checked={takeover === true}
           onChange={onTakeoverChange}
           label="Takeover"
           ariaLabel="Human Takeover"

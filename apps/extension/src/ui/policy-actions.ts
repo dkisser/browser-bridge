@@ -78,7 +78,14 @@ export async function handleDenialAction(
     switch (action) {
       case 'approve-session':
       case 'approve-always': {
-        if (denial.origin === undefined) return null;
+        if (denial.origin === undefined) {
+          // These actions require an origin. denialCardButtons never
+          // surfaces them for origin-less denials, but a stale UI
+          // (extension update, script injection) could still invoke
+          // them. Surface the rejection so the caller can show an
+          // error banner instead of silently leaving the card.
+          throw new Error('approve requires a denial with an origin');
+        }
         return {
           origins: {
             ...clearedOrigins,
@@ -90,7 +97,9 @@ export async function handleDenialAction(
         };
       }
       case 'deny-origin': {
-        if (denial.origin === undefined) return null;
+        if (denial.origin === undefined) {
+          throw new Error('deny-origin requires a denial with an origin');
+        }
         return {
           origins: clearedOrigins,
           deniedOrigins: {
@@ -154,29 +163,14 @@ export async function handleDownloadAction(
     } else {
       await chrome.downloads.cancel(id);
     }
-  } catch (error) {
+  } catch {
     // chrome.downloads.resume/cancel rejects when the download is gone
     // (already completed or canceled via the browser UI before us) — that
-    // is the expected terminal state and the policy-state cleanup below
-    // still runs to drop the pending entry. Unexpected shapes (TypeError
-    // on a malformed id, a torn-down service worker, etc.) get logged at
-    // warn level so they leave a diagnostic trail instead of being
-    // silently swallowed alongside the benign case.
-    if (
-      error instanceof Error &&
-      /^Download .* not found/i.test(error.message)
-    ) {
-      console.debug(
-        'browser-bridge: download action no-op (already terminal)',
-        { action, id, error },
-      );
-    } else {
-      console.warn('browser-bridge: download action failed', {
-        action,
-        id,
-        error,
-      });
-    }
+    // is the expected terminal state, so swallow silently and let the
+    // policy-state cleanup below drop the pending entry from the list.
+    // Per project coding rules (no console statements in production),
+    // no diagnostic log is emitted here; if a future investigation needs
+    // to surface this, do so via the panel's message line, not console.
   }
   await updatePolicyState((state) => ({
     pendingDownloads: state.pendingDownloads.filter((d) => d.id !== id),

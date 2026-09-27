@@ -60,7 +60,7 @@ function DenialCard({
           <button
             key={action}
             type="button"
-            className={buttonClass(label)}
+            className={buttonClass(action)}
             onClick={() => onAction(action)}
           >
             {label}
@@ -71,10 +71,14 @@ function DenialCard({
   );
 }
 
-// Action styling follows the design.md approval triad: Reject = red wash,
-// Allow Once = frosted neutral, Always/Session = emerald fill.
-function buttonClass(label: string): string {
-  if (label === 'Deny') return styles.actionDanger;
-  if (label === 'Always' || label === 'Session') return styles.actionApprove;
+// Action styling follows the design.md approval triad: deny-origin =
+// red wash, allow-once = frosted neutral, approve-session / approve-always
+// = emerald fill. Match by action enum (not by visible label string) so
+// copy edits to the button text do not silently break the styling.
+function buttonClass(action: DenialAction): string {
+  if (action === 'deny-origin') return styles.actionDanger;
+  if (action === 'approve-session' || action === 'approve-always') {
+    return styles.actionApprove;
+  }
   return styles.actionNeutral;
 }

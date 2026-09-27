@@ -17,9 +17,39 @@
 }
 
 .message {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
   font-size: 12px;
   line-height: 16px;
   color: var(--red);
+}
+
+.messageText {
+  flex: 1 1 auto;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.messageDismiss {
+  flex: 0 0 auto;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 0 var(--space-xs);
+  font: inherit;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--red);
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.15s ease;
+}
+
+.messageDismiss:hover,
+.messageDismiss:focus-visible {
+  opacity: 1;
+  outline: none;
 }
 
 .panelHost {

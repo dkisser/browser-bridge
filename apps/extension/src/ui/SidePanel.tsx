@@ -62,11 +62,6 @@ export function SidePanel() {
   // still set activeTab while this is false (panel would otherwise be
   // blank) but never once the user has interacted.
   const userPickedTab = useRef(false);
-  // Disambiguates whether the default view has been routed via the
-  // error fallback, so the state-driven branch can re-apply selectDefaultView
-  // when the bridge eventually delivers state. Cleared on every successful
-  // state read.
-  const defaultedViaError = useRef(false);
 
   // Wraps setActiveTab so any tab change driven by the user marks the
   // selection as theirs. The default-view effect below checks this flag
@@ -79,23 +74,20 @@ export function SidePanel() {
   useEffect(() => {
     if (state !== null) {
       // State is finally available — apply the default view as long as
-      // the user has not picked one themselves. Re-apply on recovery from
-      // the error fallback (no denials → 'origins', paused downloads →
-      // 'downloads', etc.) but stop after one clean first paint so
-      // subsequent storage updates do not yank the user off their tab.
+      // the user has not picked one themselves. After one clean first
+      // paint subsequent storage updates must not yank the user off the
+      // tab they chose.
       if (!userPickedTab.current) {
         setActiveTab(selectDefaultView(state));
       }
-      defaultedViaError.current = false;
       return;
     }
     if (policyError !== null) {
       // No state available, but the initial read failed — fall back to the
-      // Approvals tab so the panel is never blank. The state-driven branch
+      // Approvals tab so the panel is never blank.
       // above re-routes to selectDefaultView once storage recovers, as
       // long as the user has not picked a tab themselves in the meantime.
       setActiveTab('approvals');
-      defaultedViaError.current = true;
     }
   }, [state, policyError]);
 
@@ -118,12 +110,13 @@ export function SidePanel() {
   // Last takeover value the UI has been synced to from storage, used to
   // detect external writes once no write is in flight.
   const lastAppliedTakeover = useRef(false);
-  // Generation counter — bumped on every click. Lets the write-failure
-  // handler tell whether a later click has superseded the failing one,
-  // so it does not surface a stale persistent error banner for an
-  // action that is no longer the user's current intent.
+  // Monotonic generation counter, bumped on every click. writeGen.current
+  // is the generation of the *most recent* click; the closure variable
+  // `myGen` captured at the time of a given click is the generation of
+  // *that* click. The catch below compares the two so a failing older
+  // click can tell it has been superseded by a newer one and skip both
+  // the revert and the persistent error banner.
   const writeGen = useRef(0);
-  const lastWriteGen = useRef(0);
 
   useEffect(() => {
     if (state === null) return;
@@ -137,7 +130,6 @@ export function SidePanel() {
   const handleTakeoverChange = useCallback(
     (desired: boolean): void => {
       const myGen = ++writeGen.current;
-      lastWriteGen.current = myGen;
       setTakeover(desired);
       hasPendingTakeoverWrite.current = true;
       void setPolicyState({ takeover: desired })
@@ -146,7 +138,7 @@ export function SidePanel() {
         })
         .catch((error: unknown) => {
           hasPendingTakeoverWrite.current = false;
-          if (lastWriteGen.current !== myGen) {
+          if (writeGen.current !== myGen) {
             // A newer click has already superseded this one. The error
             // refers to an action that no longer reflects the user's
             // current intent — do not revert or surface a banner.
@@ -199,11 +191,18 @@ export function SidePanel() {
 
   const policy: PolicyState | null = state;
 
+  const dismissMessage = useCallback((): void => {
+    // Clears both persistent and transient messages — only invoked from
+    // the explicit dismiss button on the message line, so no risk of
+    // clobbering a transient poll-failure toast mid-cycle.
+    setMessage('', false);
+  }, [setMessage]);
+
   return (
     <div className={styles.app}>
       <div className={styles.topCluster}>
         <TakeoverHero
-          takeover={takeover}
+          takeover={policy === null ? null : takeover}
           browserConnected={browserConnected}
           browserId={browserId}
           paired={policy !== null && policy.pairingToken !== null}
@@ -211,8 +210,16 @@ export function SidePanel() {
           onOpenSettings={handleOpenSettings}
         />
         {message !== '' && (
-          <div className={styles.message} role="status">
-            {message}
+          <div className={styles.message} role="alert">
+            <span className={styles.messageText}>{message}</span>
+            <button
+              type="button"
+              className={styles.messageDismiss}
+              aria-label="Dismiss message"
+              onClick={dismissMessage}
+            >
+              ×
+            </button>
           </div>
         )}
         <SegmentedNav
