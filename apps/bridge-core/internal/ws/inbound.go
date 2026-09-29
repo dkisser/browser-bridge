@@ -107,6 +107,15 @@ func (s *InboundServer) Start(ctx context.Context) error {
 // Shutdown stops accepting connections and closes every open client socket,
 // mirroring Bun's server.stop().
 func (s *InboundServer) Shutdown(ctx context.Context) error {
+	// Start was never called, so there is no cancel func to invoke and no
+	// listener to close. Returning nil is the same contract MCPServer.Shutdown
+	// has (and tests): shutdown-before-start is a no-op, not a crash. The
+	// obvious `defer s.Shutdown(ctx)` after construction is a reasonable thing
+	// for a caller to write, and it used to take the process down with a nil
+	// dereference at s.cancel().
+	if s.cancel == nil {
+		return nil
+	}
 	s.cancel()
 	s.mu.Lock()
 	conns := make([]*clientConn, 0, len(s.conns))
