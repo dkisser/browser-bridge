@@ -25,7 +25,10 @@ const ServerName = "Browser Bridge"
 
 // CommandRouter is the slice of core.Router the tools call.
 type CommandRouter interface {
-	HandleInboundCommand(envelope core.Envelope, sender core.TextSender)
+	// HandleInboundCommand takes per-command options so sendCommand can hand
+	// the router the caller's own deadline; the router's TTL is a leak
+	// backstop and must not expire first.
+	HandleInboundCommand(envelope core.Envelope, sender core.TextSender, opts ...core.InboundOption)
 	// RemoveRoute drops a single inbound route by id. sendCommand calls it
 	// on context cancel / timeout so a flaky extension does not pin the
 	// channelSender in inboundByID after the call has already returned.

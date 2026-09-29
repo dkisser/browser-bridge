@@ -33,8 +33,10 @@ func TestCommandTools(t *testing.T) {
 			args:        map[string]any{"url": "https://example.com", "tab_id": 2},
 			respond:     ok,
 			wantCommand: "navigate",
-			wantParams:  map[string]any{"url": "https://example.com", "tabId": float64(2)},
-			wantText:    "Navigated to https://example.com in tab 2",
+			// The in-page completion budget the extension needs to bound
+			// its own wait for status 'complete'.
+			wantParams: map[string]any{"url": "https://example.com", "tabId": float64(2), "timeout": float64(10000)},
+			wantText:   "Navigated to https://example.com in tab 2",
 		},
 		{
 			name:        "go_back",
@@ -413,13 +415,15 @@ func TestBrowserResolutionErrors(t *testing.T) {
 			wantText: "Tool 'click' execution failed: Browser \"b-9\" is not connected.",
 		},
 		{
-			name: "pinned browser not online",
+			// idle_wait is a legitimate target — that is the state the
+			// command buffer exists for. "Not online" means gone.
+			name: "pinned browser offline",
 			browsers: []core.BrowserConnection{
 				onlineBrowser("b-1"),
-				{BrowserID: "b-2", UserID: "extension", Status: core.StatusIdleWait, LastSeen: 1},
+				{BrowserID: "b-2", UserID: "extension", Status: core.StatusOffline, LastSeen: 1},
 			},
 			pin:      "b-2",
-			wantText: "Tool 'click' execution failed: Browser \"b-2\" is not online (status: idle_wait).",
+			wantText: "Tool 'click' execution failed: Browser \"b-2\" is not online (status: offline).",
 		},
 	}
 	for _, tt := range tests {
@@ -656,5 +660,34 @@ func TestScreenshot(t *testing.T) {
 				t.Errorf("params = %#v, want fullPage true", commands[0].params)
 			}
 		})
+	}
+}
+
+// A command aimed at a browser that is between sockets must reach the router
+// so it can be buffered, not be refused at resolution. Refusing here meant an
+// agent's tool call failed for the whole reconnect window with "No browser
+// connected. Start the extension/local-proxy first." — advice to start an
+// extension that was running — while the CLI path, which skips resolution
+// entirely, kept working. That made the reconnect tolerance, and the buffer
+// behind it, unreachable from the entry point agents actually use.
+func TestCommandReachesAReconnectingBrowser(t *testing.T) {
+	router := &fakeRouter{script: func(capturedCommand) (core.ResponsePayload, bool) {
+		return core.ResponsePayload{Status: "ok"}, true
+	}}
+	browsers := []core.BrowserConnection{
+		{BrowserID: "b-1", UserID: "extension", Status: core.StatusIdleWait, LastSeen: 1},
+	}
+	session := newTestClient(t, newTestServer(router, browsers))
+
+	result := callTool(t, session, "click", map[string]any{"selector": "#a", "tab_id": 1})
+	if result.IsError {
+		t.Fatalf("a reconnecting browser should accept the command for buffering: %s", resultText(t, result))
+	}
+	commands := router.captured()
+	if len(commands) != 1 {
+		t.Fatalf("router saw %d commands, want 1", len(commands))
+	}
+	if commands[0].browserID != "b-1" {
+		t.Errorf("routed to %q, want b-1", commands[0].browserID)
 	}
 }

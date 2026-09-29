@@ -41,7 +41,7 @@ func sendCommand(ctx context.Context, g *globals, command string, params map[str
 		Command: command,
 		TabID:   g.tab,
 		Params:  params,
-	}, time.Duration(g.timeout)*time.Millisecond)
+	}, cliTransportTimeout(g, params))
 	if err != nil {
 		return nil, err
 	}
@@ -59,10 +59,66 @@ func sendCommand(ctx context.Context, g *globals, command string, params map[str
 	return payload.Data, nil
 }
 
-// responseError is the TS `payload.message ?? payload.error ?? fallback`.
+// cliTransportTimeout is how long the CLI waits for a command's response.
+//
+// Normally that is just --timeout. When the command carries an in-page
+// timeout in its params, the extension's own wait is bounded by that, so the
+// transport must outlast it — otherwise the one diagnostic worth seeing
+// arrives after the caller has already stopped listening. Whichever deadline
+// is longer wins, so a deliberately small --timeout is still honoured.
+//
+// The in-page budget is identified by the presence of `timeout` in params
+// rather than declared per command. The MCP layer declares it explicitly
+// (commandSpec.waitBudget), which is the better idiom, but the CLI's wait
+// commands are built by their own constructors rather than the
+// browserCommands table, so a table flag would cover navigate and silently
+// skip both wait commands — the exact drift this constant was deduplicated
+// to prevent. Every CLI command that sets params.timeout (navigate,
+// wait:element, wait:navigation) is bounding the extension's own wait; keep
+// it that way, or give this an explicit per-command field instead.
+func cliTransportTimeout(g *globals, params map[string]any) time.Duration {
+	deadline := time.Duration(g.timeout) * time.Millisecond
+	inPage, ok := params["timeout"].(int)
+	if !ok {
+		return deadline
+	}
+	if extended := time.Duration(inPage)*time.Millisecond + core.InPageTimeoutSlack; extended > deadline {
+		return extended
+	}
+	return deadline
+}
+
+// responseError renders a command failure: the extension's human-readable
+// message when it sent one, then the bare error code, then the caller's
+// fallback — the TS `payload.message ?? payload.error ?? fallback`.
 func responseError(payload core.ResponsePayload, fallback string) string {
 	if payload.Message != "" {
 		return payload.Message
+	}
+	// Identifies what was refused, for the case where a producer sends the
+	// structured denial without a human-readable message. The extension does
+	// not currently — it always fills Message via humanDenialMessage — so
+	// this does not fire today.
+	//
+	// Deliberately *identifying* rather than advisory. humanDenialMessage in
+	// packages/shared/src/policy.ts is the canonical renderer, and some of its
+	// reasons carry security-relevant guidance — the origin_not_approved
+	// message explicitly tells the reader not to work around the gate with
+	// other tools. A second, thinner renderer in Go would drift from that and
+	// quietly drop the guidance; naming the refusal is all this can honestly
+	// do, so the comment points at the real one instead of imitating it.
+	if d := payload.Denied; d != nil {
+		subject := d.Origin
+		if subject == "" {
+			subject = d.Command
+		}
+		if subject == "" {
+			subject = "policy"
+		}
+		if d.Capability != "" {
+			return fmt.Sprintf("Refused: %s (%s, capability %s).", subject, d.Reason, d.Capability)
+		}
+		return fmt.Sprintf("Refused: %s (%s).", subject, d.Reason)
 	}
 	if payload.Error != "" {
 		return payload.Error
@@ -88,20 +144,20 @@ type browserCommand struct {
 	short   string
 	args    cobra.PositionalArgs
 	command string // wire CommandType in packages/shared/src/types.ts
-	params  func(args []string) (map[string]any, error)
+	params  func(g *globals, args []string) (map[string]any, error)
 }
 
-func noParams(_ []string) (map[string]any, error) { return map[string]any{}, nil }
+func noParams(_ *globals, _ []string) (map[string]any, error) { return map[string]any{}, nil }
 
 // selectorParam maps `bridge <cmd> <selector>` to {selector}.
-func selectorParam(args []string) (map[string]any, error) {
+func selectorParam(_ *globals, args []string) (map[string]any, error) {
 	return map[string]any{"selector": args[0]}, nil
 }
 
 // intParam parses a positional integer. The TS CLI passed Number() through
 // (NaN serialized as null); failing fast keeps the error local and legible.
-func intParam(name string) func(args []string) (map[string]any, error) {
-	return func(args []string) (map[string]any, error) {
+func intParam(name string) func(_ *globals, args []string) (map[string]any, error) {
+	return func(_ *globals, args []string) (map[string]any, error) {
 		n, err := strconv.Atoi(args[0])
 		if err != nil {
 			return nil, fmt.Errorf("invalid %s %q", name, args[0])
@@ -123,8 +179,14 @@ var browserCommands = []browserCommand{
 		short:   "Navigate to URL in a specific tab",
 		args:    cobra.ExactArgs(1),
 		command: "navigate",
-		params: func(args []string) (map[string]any, error) {
-			return map[string]any{"url": args[0]}, nil
+		params: func(g *globals, args []string) (map[string]any, error) {
+			// The extension bounds its own wait for the page to reach
+			// 'complete' with this budget, and falls back to a hardcoded 30s
+			// when it is absent. Without it the two entry points disagree:
+			// the CLI's default --timeout is 10s, so the extension would sit
+			// on a listener for 20s after the CLI had already given up, and
+			// `--timeout 60000` would still be capped at 30s.
+			return map[string]any{"url": args[0], "timeout": g.timeout}, nil
 		},
 	},
 	{
@@ -162,7 +224,7 @@ var browserCommands = []browserCommand{
 		short:   "Open a new tab",
 		args:    cobra.MaximumNArgs(1),
 		command: "tab:new",
-		params: func(args []string) (map[string]any, error) {
+		params: func(g *globals, args []string) (map[string]any, error) {
 			params := map[string]any{}
 			if len(args) == 1 {
 				params["url"] = args[0]
@@ -196,7 +258,7 @@ var browserCommands = []browserCommand{
 		short:   "Type text into an element. " + selectorHint,
 		args:    cobra.ExactArgs(2),
 		command: "type",
-		params: func(args []string) (map[string]any, error) {
+		params: func(g *globals, args []string) (map[string]any, error) {
 			return map[string]any{"selector": args[0], "text": args[1]}, nil
 		},
 	},
@@ -205,7 +267,7 @@ var browserCommands = []browserCommand{
 		short:   "Select an option in a dropdown. " + selectorHint,
 		args:    cobra.ExactArgs(2),
 		command: "select",
-		params: func(args []string) (map[string]any, error) {
+		params: func(g *globals, args []string) (map[string]any, error) {
 			return map[string]any{"selector": args[0], "value": args[1]}, nil
 		},
 	},
@@ -214,7 +276,7 @@ var browserCommands = []browserCommand{
 		short:   "Scroll page by x,y pixels",
 		args:    cobra.ExactArgs(2),
 		command: "scroll",
-		params: func(args []string) (map[string]any, error) {
+		params: func(g *globals, args []string) (map[string]any, error) {
 			params := map[string]any{"selector": "page"}
 			for i, key := range []string{"x", "y"} {
 				n, err := strconv.ParseFloat(args[i], 64)
@@ -271,7 +333,7 @@ func registerBrowserCommands(root *cobra.Command, g *globals) {
 			Short:   bc.short,
 			Args:    bc.args,
 			RunE: func(cmd *cobra.Command, args []string) error {
-				params, err := bc.params(args)
+				params, err := bc.params(g, args)
 				if err != nil {
 					return fail(cmd, g, "command_failed", err.Error())
 				}
@@ -281,15 +343,11 @@ func registerBrowserCommands(root *cobra.Command, g *globals) {
 	}
 }
 
-// snapshotResult mirrors SnapshotResult in packages/shared/src/snapshot.ts
-// (only the fields the human-readable output needs).
-type snapshotResult struct {
-	Snapshot     string `json:"snapshot"`
-	NodesEmitted int    `json:"nodes_emitted"`
-	NodesTotal   int    `json:"nodes_total"`
-	Tier         int    `json:"tier"`
-	Truncated    bool   `json:"truncated"`
-}
+// snapshotResult is the shared wire shape (core.SnapshotResult mirrors
+// SnapshotResult in packages/shared/src/snapshot.ts); the CLI only prints a
+// subset of the fields, but decoding the rest is free and keeping one
+// declaration avoids a second copy drifting from the MCP layer's.
+type snapshotResult = core.SnapshotResult
 
 // newSnapshotCommand is the snapshot registration in the TS CLI, including
 // its bespoke human output (snapshot text + stats line).

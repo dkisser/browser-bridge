@@ -42,6 +42,13 @@ export interface PolicyContext {
   // would act on. null means a protected or non-http(s) context — such
   // commands are hard-denied with 'origin_blocked', no approval path.
   origin: string | null;
+  // True for a `tab:new` that carries no url: the command opens a blank tab
+  // and there is no navigation target to gate, so the origin_blocked rule
+  // below must not apply. This is deliberately distinct from "a url was
+  // supplied but parses to a non-http(s) origin" (file://, data:, about:),
+  // which stays hard-denied — a caller that named a target still gets the
+  // protected-context check.
+  blankNewTab?: boolean;
   originState?: 'approved' | 'denied';
   blocklistHit?: boolean;
   isAgentTab?: boolean;
@@ -127,6 +134,21 @@ const PAGE_CONTEXT_COMMANDS = new Set<CommandType>(PAGE_CONTEXT_COMMANDS_ARR);
 const ORIGIN_GATE_COMMANDS = new Set<CommandType>(ORIGIN_GATE_COMMANDS_ARR);
 const UNRESTRICTED_COMMANDS = new Set<CommandType>(UNRESTRICTED_COMMANDS_ARR);
 
+/**
+ * Reports a command that needs no origin lookup before it can be evaluated —
+ * it reads browser-level state rather than acting on a page.
+ *
+ * The extension uses this only to skip the chrome.tabs lookups, never to skip
+ * evaluatePolicy: every command still passes through the policy core so the
+ * takeover gate applies. It used to keep its own copy of the list, and that
+ * second list — not the policy — decided which commands bypassed the gate
+ * entirely, which is how Takeover ended up bypassed for tab:list / pageinfo.
+ * Deriving it from READONLY_COMMANDS_ARR keeps the two from diverging.
+ */
+export function isReadOnlyCommand(command: CommandType): boolean {
+  return READONLY_COMMANDS.has(command);
+}
+
 function denial(
   command: CommandType,
   reason: DenyReason,
@@ -178,6 +200,16 @@ export function evaluatePolicy(
 ): PolicyDecision {
   if (ctx.takeover) {
     return denial(command, 'human_assist_active', ctx);
+  }
+
+  // A url-less `tab:new` opens a blank tab: there is no navigation target, so
+  // the protected-origin rule below has nothing to test. This branch must sit
+  // *after* the takeover check — it is the reason the extension used to skip
+  // evaluatePolicy entirely for this command, which left Takeover (the
+  // human's kill switch) bypassed: a blank tab would keep appearing while the
+  // user believed the agent was locked out.
+  if (command === 'tab:new' && ctx.blankNewTab === true) {
+    return { allow: true };
   }
 
   if (

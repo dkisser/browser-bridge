@@ -7,12 +7,16 @@ import (
 	"time"
 )
 
-// defaultRouteTTL is the upper bound on how long an inbound route can sit in
-// inboundByID after a successful SendToExtension. The TS original had no such
-// bound — the response path was the only cleanup — which leaks one entry
-// every time the extension fails to answer a command it acknowledged. The
-// 30s window matches the launchd-supervised daemon's MCP defaultTimeout (10s)
-// plus a comfortable fudge for slow extensions under heavy load.
+// defaultRouteTTL is the default upper bound on how long an inbound route can
+// sit in inboundByID after a successful SendToExtension. The TS original had
+// no such bound — the response path was the only cleanup — which leaks one
+// entry every time the extension fails to answer a command it acknowledged.
+//
+// It is a *backstop*, not the command's deadline: a sender that owns its own
+// timeout (the MCP layer does) removes its own route via RemoveRoute. Callers
+// that can legitimately wait longer than the backstop pass their own deadline
+// with WithRouteDeadline; see armRouteTimer. 30s comfortably covers the
+// daemon's MCP defaultTimeout (10s) for callers that do not.
 const defaultRouteTTL = 30 * time.Second
 
 // Browser is the browser-server half the router talks to (BrowserServer in
@@ -84,9 +88,52 @@ func (r *Router) BrowserID() string {
 	return r.state.BrowserID()
 }
 
+// InboundOption customizes how one inbound command is dispatched. Variadic so
+// callers that own no deadline (the inbound WebSocket server) keep the
+// defaultRouteTTL backstop without having to say so.
+type InboundOption func(*inboundOptions)
+
+type inboundOptions struct {
+	// routeTTL overrides the backstop for this command only. 0 means
+	// "use the router's default". A value smaller than the default is
+	// raised to it (see armRouteTTL): the backstop exists to protect
+	// senders that never time out, and shortening it is the caller's
+	// business, not the router's.
+	routeTTL time.Duration
+}
+
+// WithRouteDeadline tells the router how long the sender is willing to wait
+// for this command's response, so the TTL backstop does not fire first.
+//
+// This exists because the two used to be independent and the router's was
+// smaller: the MCP schema advertises timeout_ms up to 120s (schemas.go) and
+// sendCommand waits that long, but every route was cut at a flat 30s — so a
+// wait_element/wait_navigation/screenshot asking for 60s was terminated with
+// "Service worker did not respond in time" while the extension was alive and
+// still working on it.
+func WithRouteDeadline(d time.Duration) InboundOption {
+	return func(o *inboundOptions) { o.routeTTL = d }
+}
+
+// RouteDeadline reports the deadline carried by opts, or 0 when none was
+// set. It exists so a test double implementing the router interface can
+// observe what a caller asked for without duplicating the option's effect.
+func RouteDeadline(opts ...InboundOption) time.Duration {
+	var o inboundOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
+	return o.routeTTL
+}
+
 // HandleInboundCommand is router.handleInboundCommand: an inbound client
 // (CLI / MCP) sent a command envelope.
-func (r *Router) HandleInboundCommand(envelope Envelope, sender TextSender) {
+func (r *Router) HandleInboundCommand(envelope Envelope, sender TextSender, opts ...InboundOption) {
+	var o inboundOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
+
 	r.mu.Lock()
 	r.inboundByID[envelope.ID] = sender
 	r.mu.Unlock()
@@ -119,7 +166,7 @@ func (r *Router) HandleInboundCommand(envelope Envelope, sender TextSender) {
 		// Success path: the extension accepted the frame but might never
 		// answer. Arm a deadline so a hung extension cannot pin the sender
 		// forever; HandleBrowserResponse cancels it on the happy path.
-		r.armRouteTimer(envelope.ID, sender, envelope.BrowserID)
+		r.armRouteTimer(envelope.ID, sender, envelope.BrowserID, o.routeTTL)
 		return
 	}
 
@@ -274,16 +321,40 @@ func (r *Router) removeInbound(id string) {
 	}
 }
 
+// routeBackstopMargin is how far past a caller's stated deadline the route
+// backstop is scheduled.
+//
+// The backstop must not merely equal the caller's timeout, it must exceed it.
+// Both timers are armed from the same goroutine with the same instant — the
+// router's time.AfterFunc first, the caller's time.After second — so at
+// equal deadlines the outcome is a race, and when the backstop wins the
+// caller is told "Service worker did not respond in time", blaming a service
+// worker that is in fact still working, instead of its own accurate
+// "timeout: no response for command X within Nms". The margin makes the
+// caller's own deadline deterministically win and leaves the backstop doing
+// only its real job: releasing a route whose sender never cleaned up.
+const routeBackstopMargin = time.Second
+
 // armRouteTimer schedules the TTL cleanup for a successful SendToExtension.
 // On fire the route is removed and the caller is told via sw_timeout, so
 // the inbound client (CLI / MCP) does not hang forever.
-func (r *Router) armRouteTimer(id string, sender TextSender, browserID string) {
+//
+// requested is the sender's own deadline (0 when it has none). The effective
+// TTL is max(default, requested+margin) so the backstop can only ever be
+// *longer* than what the sender asked for: a backstop that fires before the
+// caller's own deadline would report a timeout for a command that is still
+// running, with the wrong explanation.
+func (r *Router) armRouteTimer(id string, sender TextSender, browserID string, requested time.Duration) {
+	ttl := r.routeTTL
+	if requested > 0 && requested+routeBackstopMargin > ttl {
+		ttl = requested + routeBackstopMargin
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if existing, ok := r.inboundTimers[id]; ok {
 		existing.Stop()
 	}
-	r.inboundTimers[id] = time.AfterFunc(r.routeTTL, func() {
+	r.inboundTimers[id] = time.AfterFunc(ttl, func() {
 		r.fireRouteTimeout(id, sender, browserID)
 	})
 }

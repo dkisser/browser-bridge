@@ -67,7 +67,7 @@ function createMock(initial?: Partial<MockState>): {
           tabId,
           message: message as Record<string, unknown>,
         });
-        const msg = message as { type?: string };
+        const msg = message as { type?: string; payload?: unknown };
         if (msg.type === 'ping') {
           if (state.pingAlwaysFails) {
             throw new Error(

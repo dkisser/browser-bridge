@@ -24,6 +24,9 @@ type capturedCommand struct {
 	command   string
 	tabID     int
 	params    map[string]any
+	// routeDeadline is the TTL the caller asked the router to respect via
+	// core.WithRouteDeadline, or 0 when it passed none.
+	routeDeadline time.Duration
 }
 
 // fakeRouter implements CommandRouter: it records every inbound command and
@@ -34,7 +37,7 @@ type fakeRouter struct {
 	script   func(c capturedCommand) (core.ResponsePayload, bool)
 }
 
-func (f *fakeRouter) HandleInboundCommand(envelope core.Envelope, sender core.TextSender) {
+func (f *fakeRouter) HandleInboundCommand(envelope core.Envelope, sender core.TextSender, opts ...core.InboundOption) {
 	var payload struct {
 		Command string         `json:"command"`
 		TabID   int            `json:"tabId"`
@@ -43,11 +46,14 @@ func (f *fakeRouter) HandleInboundCommand(envelope core.Envelope, sender core.Te
 	if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
 		panic(fmt.Sprintf("fake router: undecodable payload %s: %v", envelope.Payload, err))
 	}
+	// core.RouteDeadline reads back what the caller asked for, so the fake
+	// can assert the TTL contract without reimplementing the option.
 	c := capturedCommand{
-		browserID: envelope.BrowserID,
-		command:   payload.Command,
-		tabID:     payload.TabID,
-		params:    payload.Params,
+		browserID:     envelope.BrowserID,
+		command:       payload.Command,
+		tabID:         payload.TabID,
+		params:        payload.Params,
+		routeDeadline: core.RouteDeadline(opts...),
 	}
 	f.mu.Lock()
 	f.commands = append(f.commands, c)

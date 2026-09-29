@@ -70,8 +70,11 @@ func indentJSON(data json.RawMessage, emptyDefault string) (string, error) {
 
 // executePageinfo is executePageinfo in src/mcp/tools/pageinfo.ts.
 func (s *MCPServer) executePageinfo(ctx context.Context, req *mcp.CallToolRequest, args tabIDTimeoutArgs) (*mcp.CallToolResult, any, error) {
-	result, fail := s.dispatch(ctx, req, "pageinfo", "pageinfo",
-		map[string]any{"tabId": args.TabID}, args.TimeoutMS, "pageinfo failed")
+	result, fail := s.dispatch(ctx, req, "pageinfo", commandSpec{
+		name:   "pageinfo",
+		tabID:  args.TabID,
+		params: tabParams{TabID: args.TabID},
+	}, args.TimeoutMS, "pageinfo failed")
 	if fail != nil {
 		return fail, nil, nil
 	}
@@ -84,8 +87,10 @@ func (s *MCPServer) executePageinfo(ctx context.Context, req *mcp.CallToolReques
 
 // executeTabList is executeTabList in src/mcp/tools/tab-list.ts.
 func (s *MCPServer) executeTabList(ctx context.Context, req *mcp.CallToolRequest, args timeoutOnlyArgs) (*mcp.CallToolResult, any, error) {
-	result, fail := s.dispatch(ctx, req, "tab_list", "tab:list",
-		map[string]any{}, args.TimeoutMS, "tab:list failed")
+	result, fail := s.dispatch(ctx, req, "tab_list", commandSpec{
+		name:   "tab:list",
+		params: blankParams{},
+	}, args.TimeoutMS, "tab:list failed")
 	if fail != nil {
 		return fail, nil, nil
 	}
@@ -98,39 +103,45 @@ func (s *MCPServer) executeTabList(ctx context.Context, req *mcp.CallToolRequest
 
 // executeGettext is executeGettext in src/mcp/tools/get-text.ts.
 func (s *MCPServer) executeGettext(ctx context.Context, req *mcp.CallToolRequest, args selectorTabArgs) (*mcp.CallToolResult, any, error) {
-	result, fail := s.dispatch(ctx, req, "get_text", "gettext",
-		map[string]any{"selector": args.Selector, "tabId": args.TabID}, args.TimeoutMS, "gettext failed")
+	result, fail := s.dispatch(ctx, req, "get_text", commandSpec{
+		name:   "gettext",
+		tabID:  args.TabID,
+		params: selectorTabParams{Selector: args.Selector, TabID: args.TabID},
+	}, args.TimeoutMS, "gettext failed")
 	if fail != nil {
 		return fail, nil, nil
 	}
-	var data struct {
-		Text string `json:"text"`
-	}
-	// `data.text ?? ''`: a missing field reads as empty.
+	var data gettextResult
+	// `data.text ?? ''`: a missing or null field reads as empty.
 	_ = json.Unmarshal(result.Data, &data)
-	if jsTrimSpace(data.Text) == "" {
+	text := ""
+	if data.Text != nil {
+		text = *data.Text
+	}
+	if jsTrimSpace(text) == "" {
 		return toolText(selectorMatchedButEmptyMessage(args.Selector)), nil, nil
 	}
-	if n := utf16Length(data.Text); n > maxReadResultChars {
+	if n := utf16Length(text); n > maxReadResultChars {
 		return toolError("get_text", fmt.Sprintf("get_text matched %d chars — almost certainly "+
 			"whole-page text (nav, ads, sidebars included), not the "+
 			"content you want. Take a snapshot to find the content "+
 			"container, then narrow with a selector.", n)), nil, nil
 	}
-	return toolText(data.Text), nil, nil
+	return toolText(text), nil, nil
 }
 
 // executeGethtml is executeGethtml in src/mcp/tools/get-html.ts. Where the TS
 // crashes on a missing data field, a missing html reads as "" here.
 func (s *MCPServer) executeGethtml(ctx context.Context, req *mcp.CallToolRequest, args selectorTabArgs) (*mcp.CallToolResult, any, error) {
-	result, fail := s.dispatch(ctx, req, "get_html", "gethtml",
-		map[string]any{"selector": args.Selector, "tabId": args.TabID}, args.TimeoutMS, "gethtml failed")
+	result, fail := s.dispatch(ctx, req, "get_html", commandSpec{
+		name:   "gethtml",
+		tabID:  args.TabID,
+		params: selectorTabParams{Selector: args.Selector, TabID: args.TabID},
+	}, args.TimeoutMS, "gethtml failed")
 	if fail != nil {
 		return fail, nil, nil
 	}
-	var data struct {
-		HTML string `json:"html"`
-	}
+	var data gethtmlResult
 	_ = json.Unmarshal(result.Data, &data)
 	if n := utf16Length(data.HTML); n > maxReadResultChars {
 		return toolError("get_html", fmt.Sprintf("get_html matched %d chars — almost certainly "+
@@ -159,25 +170,20 @@ func (s *MCPServer) executeSnapshot(ctx context.Context, req *mcp.CallToolReques
 	if args.MaxChars != nil {
 		maxChars = *args.MaxChars
 	}
-	params := map[string]any{
-		"filter":    filter,
-		"max_chars": maxChars,
-		"tabId":     args.TabID,
-	}
-	if args.Selector != nil {
-		params["selector"] = *args.Selector
-	}
-	result, fail := s.dispatch(ctx, req, "snapshot", "snapshot", params, args.TimeoutMS, "snapshot failed")
+	result, fail := s.dispatch(ctx, req, "snapshot", commandSpec{
+		name:  "snapshot",
+		tabID: args.TabID,
+		params: snapshotParams{
+			Selector: args.Selector,
+			Filter:   filter,
+			MaxChars: maxChars,
+			TabID:    args.TabID,
+		},
+	}, args.TimeoutMS, "snapshot failed")
 	if fail != nil {
 		return fail, nil, nil
 	}
-	var data struct {
-		Snapshot     string `json:"snapshot"`
-		Truncated    bool   `json:"truncated"`
-		NodesTotal   int    `json:"nodes_total"`
-		NodesEmitted int    `json:"nodes_emitted"`
-		Tier         int    `json:"tier"`
-	}
+	var data snapshotResult
 	_ = json.Unmarshal(result.Data, &data)
 	truncated := ""
 	if data.Truncated {
@@ -213,17 +219,15 @@ const defaultScreenshotMIMEType = "image/png"
 // verbatim; the go-sdk's ImageContent carries decoded bytes, so the payload
 // is decoded and re-encoded (canonically) on the way out.
 func (s *MCPServer) executeScreenshot(ctx context.Context, req *mcp.CallToolRequest, args screenshotArgs) (*mcp.CallToolResult, any, error) {
-	params := map[string]any{"tabId": args.TabID}
-	if args.FullPage != nil {
-		params["fullPage"] = *args.FullPage
-	}
-	result, fail := s.dispatch(ctx, req, "screenshot", "screenshot", params, args.TimeoutMS, "Screenshot failed")
+	result, fail := s.dispatch(ctx, req, "screenshot", commandSpec{
+		name:   "screenshot",
+		tabID:  args.TabID,
+		params: screenshotParams{FullPage: args.FullPage, TabID: args.TabID},
+	}, args.TimeoutMS, "Screenshot failed")
 	if fail != nil {
 		return fail, nil, nil
 	}
-	var data struct {
-		DataURL string `json:"dataUrl"`
-	}
+	var data screenshotResult
 	_ = json.Unmarshal(result.Data, &data)
 	match := dataURLPrefix.FindStringSubmatch(data.DataURL)
 	if match == nil {

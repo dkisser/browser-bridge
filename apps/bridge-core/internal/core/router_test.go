@@ -578,3 +578,174 @@ func makeRouterWithRouteTTL(t *testing.T, ttl time.Duration) (*Router, *StateMan
 	browser := &fakeBrowser{deliver: true}
 	return NewRouter(st, browser, &fakeRegistry{}, log.Default(), WithRouteTTL(ttl)), st, browser
 }
+
+// TestRequestedDeadlineOverridesShorterBackstop is the regression guard for
+// the timeout split: the router's TTL and the caller's deadline used to be
+// independent, and the router's was a flat 30s. A caller that legitimately
+// waited longer — the MCP schema advertises timeout_ms up to 120s — was cut
+// off mid-command and told the service worker had stopped responding, while
+// the extension was still working on it.
+func TestRequestedDeadlineOverridesShorterBackstop(t *testing.T) {
+	r, st, browser := makeRouterWithRouteTTL(t, 30*time.Millisecond)
+	st.SetStatus(StatusOnline)
+	browser.online = true
+	browser.deliver = true
+
+	sender := &fakeSender{}
+	// Ask for a deadline well past the router's own backstop.
+	requested := 400 * time.Millisecond
+	r.HandleInboundCommand(commandEnvelope(st.BrowserID(), "c1"), sender,
+		WithRouteDeadline(requested))
+
+	// The 30ms backstop must not fire: a message here is the bug.
+	time.Sleep(120 * time.Millisecond)
+	if msgs := sender.sentMessages(); len(msgs) != 0 {
+		t.Fatalf("sender got %d messages at 120ms; the 30ms backstop fired "+
+			"despite a 400ms requested deadline: %q", len(msgs), msgs[0])
+	}
+
+	// The backstop must still fire eventually — the option raises it, it does
+	// not disable it — and only *after* the caller's own deadline, so the
+	// caller reports its own accurate timeout first.
+	backstop := requested + routeBackstopMargin
+	if got := backstop - requested; got != routeBackstopMargin {
+		t.Fatalf("backstop is not the deadline + %v", routeBackstopMargin)
+	}
+	deadline := time.Now().Add(4 * time.Second)
+	for time.Now().Before(deadline) {
+		if msgs := sender.sentMessages(); len(msgs) > 0 {
+			payload := decodePayload(t, msgs[0])
+			if payload.Status != "error" || payload.Error != "sw_timeout" {
+				t.Fatalf("payload = %+v, want sw_timeout", payload)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("no sw_timeout after the requested deadline + backstop margin")
+}
+
+// TestBackstopNeverRacesTheCallersOwnTimeout pins the margin itself. If the
+// backstop were armed at exactly the caller's deadline, the two timers would
+// be due at the same instant and the router's (armed first) could win — and
+// the caller would be told the service worker had stopped responding rather
+// than that its own request timed out.
+func TestBackstopNeverRacesTheCallersOwnTimeout(t *testing.T) {
+	r, st, browser := makeRouterWithRouteTTL(t, 10*time.Millisecond)
+	st.SetStatus(StatusOnline)
+	browser.online = true
+	browser.deliver = true
+
+	sender := &fakeSender{}
+	const requested = 60 * time.Millisecond
+	start := time.Now()
+	r.HandleInboundCommand(commandEnvelope(st.BrowserID(), "c1"), sender,
+		WithRouteDeadline(requested))
+
+	deadline := time.Now().Add(4 * time.Second)
+	for time.Now().Before(deadline) {
+		if msgs := sender.sentMessages(); len(msgs) > 0 {
+			elapsed := time.Since(start)
+			if elapsed < requested+routeBackstopMargin {
+				t.Fatalf("backstop fired at %v, before deadline %v + margin %v",
+					elapsed, requested, routeBackstopMargin)
+			}
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("backstop never fired")
+}
+
+// TestShorterRequestedDeadlineDoesNotShortenBackstop pins the other half: the
+// TTL is a leak backstop, and a caller passing a small deadline must not be
+// able to pull it down for its own command.
+func TestShorterRequestedDeadlineDoesNotShortenBackstop(t *testing.T) {
+	r, st, browser := makeRouterWithRouteTTL(t, 300*time.Millisecond)
+	st.SetStatus(StatusOnline)
+	browser.online = true
+	browser.deliver = true
+
+	sender := &fakeSender{}
+	r.HandleInboundCommand(commandEnvelope(st.BrowserID(), "c1"), sender,
+		WithRouteDeadline(10*time.Millisecond))
+
+	time.Sleep(150 * time.Millisecond)
+	if msgs := sender.sentMessages(); len(msgs) != 0 {
+		t.Fatalf("a 10ms request shortened the 300ms backstop: %q", msgs[0])
+	}
+}
+
+// TestRouteDeadlineReadsBackWhatTheCallerAsked documents the accessor tests
+// use to observe the option through the router interface.
+func TestRouteDeadlineReadsBackWhatTheCallerAsked(t *testing.T) {
+	if got := RouteDeadline(); got != 0 {
+		t.Fatalf("RouteDeadline() with no options = %v, want 0", got)
+	}
+	if got := RouteDeadline(WithRouteDeadline(90 * time.Second)); got != 90*time.Second {
+		t.Fatalf("RouteDeadline() = %v, want 90s", got)
+	}
+}
+
+// TestCommandArrivingDuringTheDisconnectWindowBuffers covers the window the
+// browser server opens on every socket close: it clears s.ext under its own
+// lock, unlocks, closes the socket, and only then calls
+// HandleBrowserDisconnect. A command landing in between sees the state still
+// reading online with no extension behind it, so the router took the
+// buffering branch — and BufferCommand used to insist on idle_wait, so the
+// caller got cannot_buffer for a browser that was merely reconnecting, which
+// is exactly what the 5s reconnect tolerance exists to absorb.
+func TestCommandArrivingDuringTheDisconnectWindowBuffers(t *testing.T) {
+	r, st, browser, _ := makeRouter(t)
+	// Online, but the extension socket is already gone.
+	st.SetStatus(StatusOnline)
+	browser.online = false
+
+	sender := &fakeSender{}
+	r.HandleInboundCommand(commandEnvelope(st.BrowserID(), "c1"), sender)
+
+	if msgs := sender.sentMessages(); len(msgs) != 0 {
+		payload := decodePayload(t, msgs[0])
+		t.Fatalf("sender got %+v during the disconnect window, want the command buffered", payload)
+	}
+	if st.Status() != StatusIdleWait {
+		t.Errorf("status = %q, want idle_wait once the disconnect is observed", st.Status())
+	}
+
+	// The browser server's own HandleBrowserDisconnect lands moments later
+	// and must not drop what we just buffered. GetBufferedCommand consumes,
+	// so this is the assertion that the buffer survived — check the status
+	// first, then claim it last.
+	r.HandleBrowserDisconnect()
+	if _, ok := st.GetBufferedCommand(); !ok {
+		t.Fatal("HandleBrowserDisconnect dropped the buffered command")
+	}
+	if st.Status() != StatusIdleWait {
+		t.Errorf("status = %q, want idle_wait", st.Status())
+	}
+}
+
+// TestSecondCommandDuringTheDisconnectWindowStillRejected keeps the real
+// guarantee intact: the buffer holds one command, and the second one must
+// still be told cannot_buffer rather than silently dropped.
+func TestSecondCommandDuringTheDisconnectWindowStillRejected(t *testing.T) {
+	r, st, browser, _ := makeRouter(t)
+	st.SetStatus(StatusOnline)
+	browser.online = false
+
+	first := &fakeSender{}
+	second := &fakeSender{}
+	r.HandleInboundCommand(commandEnvelope(st.BrowserID(), "c1"), first)
+	r.HandleInboundCommand(commandEnvelope(st.BrowserID(), "c2"), second)
+
+	if msgs := first.sentMessages(); len(msgs) != 0 {
+		t.Errorf("first sender got %q, want it buffered", msgs[0])
+	}
+	msgs := second.sentMessages()
+	if len(msgs) != 1 {
+		t.Fatalf("second sender got %d messages, want 1", len(msgs))
+	}
+	if payload := decodePayload(t, msgs[0]); payload.Error != "cannot_buffer" {
+		t.Fatalf("second command error = %+v, want cannot_buffer", payload)
+	}
+}

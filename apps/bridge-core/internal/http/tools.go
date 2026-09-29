@@ -1,9 +1,7 @@
 package http
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -62,12 +60,12 @@ func (s *MCPServer) commandTimeout(timeoutMS *int) time.Duration {
 // browser (honoring set_browser), send the command, apply recovery hints,
 // and map failures to the FastMCP tool-error shape. On success it returns
 // the response payload and a nil result.
-func (s *MCPServer) dispatch(ctx context.Context, req *mcp.CallToolRequest, toolName, command string, params map[string]any, timeoutMS *int, errFallback string) (core.ResponsePayload, *mcp.CallToolResult) {
+func (s *MCPServer) dispatch(ctx context.Context, req *mcp.CallToolRequest, toolName string, spec commandSpec, timeoutMS *int, errFallback string) (core.ResponsePayload, *mcp.CallToolResult) {
 	browserID, failure := s.resolveTargetBrowser(sessionID(req))
 	if failure != "" {
 		return core.ResponsePayload{}, toolError(toolName, failure)
 	}
-	result, err := s.sendCommand(ctx, browserID, command, params, s.commandTimeout(timeoutMS))
+	result, err := s.sendCommand(ctx, browserID, spec, transportTimeout(s, spec, timeoutMS))
 	if err != nil {
 		return core.ResponsePayload{}, toolError(toolName, err.Error())
 	}
@@ -80,8 +78,8 @@ func (s *MCPServer) dispatch(ctx context.Context, req *mcp.CallToolRequest, tool
 
 // runMessageTool is the shared shape of tools whose success output is
 // `result.message ?? fallback`.
-func (s *MCPServer) runMessageTool(ctx context.Context, req *mcp.CallToolRequest, toolName, command string, params map[string]any, timeoutMS *int, errFallback, okFallback string) (*mcp.CallToolResult, any, error) {
-	result, fail := s.dispatch(ctx, req, toolName, command, params, timeoutMS, errFallback)
+func (s *MCPServer) runMessageTool(ctx context.Context, req *mcp.CallToolRequest, toolName string, spec commandSpec, timeoutMS *int, errFallback, okFallback string) (*mcp.CallToolResult, any, error) {
+	result, fail := s.dispatch(ctx, req, toolName, spec, timeoutMS, errFallback)
 	if fail != nil {
 		return fail, nil, nil
 	}
@@ -104,91 +102,6 @@ func (s channelSender) Send(text string) {
 	select {
 	case s.ch <- text:
 	default:
-	}
-}
-
-// sendCommand is sendCommand in src/mcp/command-client.ts with the WS client
-// hop replaced by an in-process router.HandleInboundCommand call. The router
-// path preserves the browser_offline / buffer / sw_timeout behavior, and the
-// timeout text matches the TS client's.
-func (s *MCPServer) sendCommand(ctx context.Context, browserID, command string, params map[string]any, timeout time.Duration) (core.ResponsePayload, error) {
-	// TS: payload.tabId = typeof params.tabId === 'number' ? params.tabId : 0.
-	// We accept int and json.Number — Go's encoding/json unmarshals JSON
-	// numbers into float64 by default, and a future caller round-tripping
-	// args through a generic map[string]any would otherwise silently coerce
-	// tabId to 0 on the wire.
-	if params == nil {
-		params = map[string]any{}
-	}
-	tabID := 0
-	switch v := params["tabId"].(type) {
-	case int:
-		tabID = v
-	case int64:
-		tabID = int(v)
-	case float64:
-		tabID = int(v)
-	case json.Number:
-		if n, convErr := v.Int64(); convErr == nil {
-			tabID = int(n)
-		}
-	}
-	payload, err := json.Marshal(struct {
-		Command string         `json:"command"`
-		TabID   int            `json:"tabId"`
-		Params  map[string]any `json:"params"`
-	}{
-		Command: command,
-		TabID:   tabID,
-		Params:  params,
-	})
-	if err != nil {
-		return core.ResponsePayload{}, fmt.Errorf("encode command payload: %w", err)
-	}
-
-	ch := make(chan string, 1)
-	envelope := core.Envelope{
-		ID:        core.NewID(),
-		Type:      core.TypeCommand,
-		BrowserID: browserID,
-		Payload:   payload,
-		Timestamp: time.Now().UnixMilli(),
-	}
-	s.router.HandleInboundCommand(envelope, channelSender{ch: ch})
-
-	select {
-	case text := <-ch:
-		// The router has already removed the route on the response path
-		// (HandleBrowserResponse calls takeInbound), so do not call
-		// RemoveRoute here.
-		decoded, err := core.Decode(text)
-		if err != nil {
-			return core.ResponsePayload{}, fmt.Errorf("decode response envelope: %w", err)
-		}
-		if len(decoded.Payload) == 0 || bytes.Equal(decoded.Payload, []byte("null")) {
-			// envelope.payload ?? { status: 'error', error: 'Empty response' }
-			return core.ResponsePayload{Status: "error", Error: "Empty response"}, nil
-		}
-		var result core.ResponsePayload
-		if err := json.Unmarshal(decoded.Payload, &result); err != nil {
-			return core.ResponsePayload{}, fmt.Errorf("decode response payload: %w", err)
-		}
-		return result, nil
-	case <-ctx.Done():
-		// The router's own success-path TTL (defaultRouteTTL) is 30s and
-		// would eventually clean this up, but a long-lived daemon that
-		// accumulates slow MCP calls while the user has already given up
-		// on this one would still leak the entry for up to 30s. Drop it
-		// here so the leak window is bounded by the caller's context, not
-		// the router's policy.
-		s.router.RemoveRoute(envelope.ID)
-		return core.ResponsePayload{}, fmt.Errorf("command %s: %w", command, ctx.Err())
-	case <-time.After(timeout):
-		// Same reasoning as ctx.Done: the router will clean up via its
-		// own TTL, but the caller has already failed — release the slot
-		// now.
-		s.router.RemoveRoute(envelope.ID)
-		return core.ResponsePayload{}, fmt.Errorf("timeout: no response for command %s within %dms", command, timeout.Milliseconds())
 	}
 }
 
@@ -399,107 +312,167 @@ func (s *MCPServer) executeSetBrowser(_ context.Context, req *mcp.CallToolReques
 // --- Navigation ---
 
 func (s *MCPServer) executeNavigate(ctx context.Context, req *mcp.CallToolRequest, args navigateArgs) (*mcp.CallToolResult, any, error) {
-	return s.runMessageTool(ctx, req, "navigate", "navigate",
-		map[string]any{"url": args.URL, "tabId": args.TabID},
-		args.TimeoutMS, "Navigation failed",
+	// The extension's own wait for the page to reach 'complete' gets the
+	// caller's budget, and the transport gets the slack on top — the same
+	// arrangement as the wait commands, so a stalled navigation reports
+	// "Navigation timeout" from the extension rather than a bare control-plane
+	// timeout on a command that is still running.
+	budget := s.commandTimeout(args.TimeoutMS)
+	return s.runMessageTool(ctx, req, "navigate", commandSpec{
+		name:   "navigate",
+		tabID:  args.TabID,
+		params: navParams{URL: args.URL, TabID: args.TabID, Timeout: int(budget.Milliseconds())},
+		// waitBudget makes transportTimeout use budget+waitSlack, and
+		// signals that params carries an in-page budget.
+		waitBudget: budget,
+	}, args.TimeoutMS, "Navigation failed",
 		fmt.Sprintf("Navigated to %s in tab %d", args.URL, args.TabID))
 }
 
 func (s *MCPServer) executeGoBack(ctx context.Context, req *mcp.CallToolRequest, args tabIDTimeoutArgs) (*mcp.CallToolResult, any, error) {
-	return s.runMessageTool(ctx, req, "go_back", "goBack",
-		map[string]any{"tabId": args.TabID},
-		args.TimeoutMS, "Go back failed", "Went back")
+	return s.runMessageTool(ctx, req, "go_back", commandSpec{
+		name:   "goBack",
+		tabID:  args.TabID,
+		params: tabParams{TabID: args.TabID},
+	}, args.TimeoutMS, "Go back failed", "Went back")
 }
 
 func (s *MCPServer) executeGoForward(ctx context.Context, req *mcp.CallToolRequest, args tabIDTimeoutArgs) (*mcp.CallToolResult, any, error) {
-	return s.runMessageTool(ctx, req, "go_forward", "goForward",
-		map[string]any{"tabId": args.TabID},
-		args.TimeoutMS, "Go forward failed", "Went forward")
+	return s.runMessageTool(ctx, req, "go_forward", commandSpec{
+		name:   "goForward",
+		tabID:  args.TabID,
+		params: tabParams{TabID: args.TabID},
+	}, args.TimeoutMS, "Go forward failed", "Went forward")
 }
 
 func (s *MCPServer) executeRefresh(ctx context.Context, req *mcp.CallToolRequest, args tabIDTimeoutArgs) (*mcp.CallToolResult, any, error) {
-	return s.runMessageTool(ctx, req, "refresh", "refresh",
-		map[string]any{"tabId": args.TabID},
-		args.TimeoutMS, "Refresh failed", "Refreshed")
+	return s.runMessageTool(ctx, req, "refresh", commandSpec{
+		name:   "refresh",
+		tabID:  args.TabID,
+		params: tabParams{TabID: args.TabID},
+	}, args.TimeoutMS, "Refresh failed", "Refreshed")
 }
 
 // --- Tabs ---
 
 func (s *MCPServer) executeTabNew(ctx context.Context, req *mcp.CallToolRequest, args tabNewArgs) (*mcp.CallToolResult, any, error) {
-	// TS drops absent (undefined) optionals from params; mirror that.
-	params := map[string]any{}
-	if args.URL != nil {
-		params["url"] = *args.URL
-	}
-	if args.Active != nil {
-		params["active"] = *args.Active
-	}
-	if args.AutoClose != nil {
-		params["auto_close"] = *args.AutoClose
-	}
-	return s.runMessageTool(ctx, req, "tab_new", "tab:new", params,
-		args.TimeoutMS, "tab:new failed", "New tab opened")
+	// Pointers + omitempty drop absent optionals from the wire, matching the
+	// TS tools' `undefined` handling.
+	return s.runMessageTool(ctx, req, "tab_new", commandSpec{
+		name: "tab:new",
+		params: tabNewParams{
+			URL:       args.URL,
+			Active:    args.Active,
+			AutoClose: args.AutoClose,
+		},
+	}, args.TimeoutMS, "tab:new failed", "New tab opened")
 }
 
 func (s *MCPServer) executeTabClose(ctx context.Context, req *mcp.CallToolRequest, args tabIDTimeoutArgs) (*mcp.CallToolResult, any, error) {
-	return s.runMessageTool(ctx, req, "tab_close", "tab:close",
-		map[string]any{"tabId": args.TabID},
-		args.TimeoutMS, "tab:close failed", fmt.Sprintf("Tab %d closed", args.TabID))
+	return s.runMessageTool(ctx, req, "tab_close", commandSpec{
+		name:   "tab:close",
+		tabID:  args.TabID,
+		params: tabParams{TabID: args.TabID},
+	}, args.TimeoutMS, "tab:close failed", fmt.Sprintf("Tab %d closed", args.TabID))
 }
 
 func (s *MCPServer) executeTabSwitch(ctx context.Context, req *mcp.CallToolRequest, args tabIDTimeoutArgs) (*mcp.CallToolResult, any, error) {
-	return s.runMessageTool(ctx, req, "tab_switch", "tab:switch",
-		map[string]any{"tabId": args.TabID},
-		args.TimeoutMS, "tab:switch failed", fmt.Sprintf("Switched to tab %d", args.TabID))
+	return s.runMessageTool(ctx, req, "tab_switch", commandSpec{
+		name:   "tab:switch",
+		tabID:  args.TabID,
+		params: tabParams{TabID: args.TabID},
+	}, args.TimeoutMS, "tab:switch failed", fmt.Sprintf("Switched to tab %d", args.TabID))
 }
 
 // --- Interaction ---
 
 func (s *MCPServer) executeClick(ctx context.Context, req *mcp.CallToolRequest, args selectorTabArgs) (*mcp.CallToolResult, any, error) {
-	return s.runMessageTool(ctx, req, "click", "click",
-		map[string]any{"selector": args.Selector, "tabId": args.TabID},
-		args.TimeoutMS, "Click failed", fmt.Sprintf("Clicked %s", args.Selector))
+	return s.runMessageTool(ctx, req, "click", commandSpec{
+		name:   "click",
+		tabID:  args.TabID,
+		params: selectorTabParams{Selector: args.Selector, TabID: args.TabID},
+	}, args.TimeoutMS, "Click failed", fmt.Sprintf("Clicked %s", args.Selector))
 }
 
 func (s *MCPServer) executeType(ctx context.Context, req *mcp.CallToolRequest, args typeArgs) (*mcp.CallToolResult, any, error) {
-	params := map[string]any{"selector": args.Selector, "text": args.Text, "tabId": args.TabID}
-	if args.Submit != nil {
-		params["submit"] = *args.Submit
-	}
-	return s.runMessageTool(ctx, req, "type", "type", params,
-		args.TimeoutMS, "Type failed", fmt.Sprintf("Typed into %s", args.Selector))
+	return s.runMessageTool(ctx, req, "type", commandSpec{
+		name:  "type",
+		tabID: args.TabID,
+		params: typeParams{
+			Selector: args.Selector,
+			Text:     args.Text,
+			Submit:   args.Submit,
+			TabID:    args.TabID,
+		},
+	}, args.TimeoutMS, "Type failed", fmt.Sprintf("Typed into %s", args.Selector))
 }
 
 func (s *MCPServer) executeSelect(ctx context.Context, req *mcp.CallToolRequest, args selectArgs) (*mcp.CallToolResult, any, error) {
-	return s.runMessageTool(ctx, req, "select", "select",
-		map[string]any{"selector": args.Selector, "value": args.Value, "tabId": args.TabID},
-		args.TimeoutMS, "Select failed", fmt.Sprintf("Selected %s in %s", args.Value, args.Selector))
+	return s.runMessageTool(ctx, req, "select", commandSpec{
+		name:  "select",
+		tabID: args.TabID,
+		params: selectParams{
+			Selector: args.Selector,
+			Value:    args.Value,
+			TabID:    args.TabID,
+		},
+	}, args.TimeoutMS, "Select failed", fmt.Sprintf("Selected %s in %s", args.Value, args.Selector))
 }
 
 func (s *MCPServer) executeScroll(ctx context.Context, req *mcp.CallToolRequest, args scrollArgs) (*mcp.CallToolResult, any, error) {
-	return s.runMessageTool(ctx, req, "scroll", "scroll",
-		map[string]any{"selector": args.Selector, "x": args.X, "y": args.Y, "tabId": args.TabID},
-		args.TimeoutMS, "Scroll failed", fmt.Sprintf("Scrolled to (%d, %d)", args.X, args.Y))
+	return s.runMessageTool(ctx, req, "scroll", commandSpec{
+		name:  "scroll",
+		tabID: args.TabID,
+		params: scrollParams{
+			Selector: args.Selector,
+			X:        args.X,
+			Y:        args.Y,
+			TabID:    args.TabID,
+		},
+	}, args.TimeoutMS, "Scroll failed", fmt.Sprintf("Scrolled to (%d, %d)", args.X, args.Y))
 }
 
 func (s *MCPServer) executeHover(ctx context.Context, req *mcp.CallToolRequest, args selectorTabArgs) (*mcp.CallToolResult, any, error) {
-	return s.runMessageTool(ctx, req, "hover", "hover",
-		map[string]any{"selector": args.Selector, "tabId": args.TabID},
-		args.TimeoutMS, "Hover failed", fmt.Sprintf("Hovered %s", args.Selector))
+	return s.runMessageTool(ctx, req, "hover", commandSpec{
+		name:   "hover",
+		tabID:  args.TabID,
+		params: selectorTabParams{Selector: args.Selector, TabID: args.TabID},
+	}, args.TimeoutMS, "Hover failed", fmt.Sprintf("Hovered %s", args.Selector))
 }
 
 // --- Waits ---
 
+// transportTimeout is how long the control plane waits for a command's
+// response. Normally that is the caller's timeout_ms; for the wait commands
+// it is the in-page budget plus waitSlack, so the content script's rejection
+// reaches the agent before the control plane gives up on it.
+func transportTimeout(s *MCPServer, spec commandSpec, timeoutMS *int) time.Duration {
+	if spec.waitBudget > 0 {
+		return spec.waitBudget + core.InPageTimeoutSlack
+	}
+	return s.commandTimeout(timeoutMS)
+}
+
 func (s *MCPServer) executeWaitElement(ctx context.Context, req *mcp.CallToolRequest, args selectorTabArgs) (*mcp.CallToolResult, any, error) {
-	timeout := s.commandTimeout(args.TimeoutMS)
-	return s.runMessageTool(ctx, req, "wait_element", "wait:element",
-		map[string]any{"selector": args.Selector, "timeout": int(timeout.Milliseconds()), "tabId": args.TabID},
-		args.TimeoutMS, "Wait element failed", fmt.Sprintf("Element %s found", args.Selector))
+	budget := s.commandTimeout(args.TimeoutMS)
+	return s.runMessageTool(ctx, req, "wait_element", commandSpec{
+		name:  "wait:element",
+		tabID: args.TabID,
+		params: waitParams{
+			Selector: &args.Selector,
+			Timeout:  int(budget.Milliseconds()),
+			TabID:    args.TabID,
+		},
+		waitBudget: budget,
+	}, args.TimeoutMS, "Wait element failed", fmt.Sprintf("Element %s found", args.Selector))
 }
 
 func (s *MCPServer) executeWaitNavigation(ctx context.Context, req *mcp.CallToolRequest, args tabIDTimeoutArgs) (*mcp.CallToolResult, any, error) {
-	timeout := s.commandTimeout(args.TimeoutMS)
-	return s.runMessageTool(ctx, req, "wait_navigation", "wait:navigation",
-		map[string]any{"timeout": int(timeout.Milliseconds()), "tabId": args.TabID},
-		args.TimeoutMS, "Wait navigation failed", "Navigation complete")
+	budget := s.commandTimeout(args.TimeoutMS)
+	return s.runMessageTool(ctx, req, "wait_navigation", commandSpec{
+		name:       "wait:navigation",
+		tabID:      args.TabID,
+		params:     waitParams{Timeout: int(budget.Milliseconds()), TabID: args.TabID},
+		waitBudget: budget,
+	}, args.TimeoutMS, "Wait navigation failed", "Navigation complete")
 }

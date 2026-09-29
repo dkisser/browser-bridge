@@ -12,6 +12,7 @@ const EMPTY_STATE: PolicyState = {
   recentDenials: [],
   blockedOrigins: [],
   pendingDownloads: [],
+  agentGroupAvailable: true,
 };
 
 describe('selectDefaultView', () => {

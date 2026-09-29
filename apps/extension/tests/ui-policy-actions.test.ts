@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
+import { applyPolicyOp, type PolicyOp } from '../src/policy-operations';
 import {
   getPolicyState,
+  normalizePolicyState,
   recordDenial,
   updatePolicyState,
 } from '../src/policy-state';
@@ -22,8 +24,26 @@ const store = new Map<string, unknown>();
       },
     },
   },
-  // handleDenialAction -> updateBadge touches chrome.action. The action API
-  // is irrelevant to these tests; stub every method it can call.
+  // The side panel does not write policy state itself: it sends a `policy_op`
+  // message and the service worker applies it inside its own write queue
+  // (see src/policy-operations.ts). This mock stands in for that handler so
+  // the test still exercises the real reducer end to end, including the
+  // message shape the UI actually sends.
+  runtime: {
+    sendMessage: async (message: { type: string; op: PolicyOp }) => {
+      if (message.type !== 'policy_op') return undefined;
+      const current = normalizePolicyState(store.get('policyState'));
+      const patch = applyPolicyOp(current, message.op);
+      if (patch === null) {
+        return { status: 'ok', data: current };
+      }
+      const next = { ...current, ...patch };
+      store.set('policyState', next);
+      return { status: 'ok', data: next };
+    },
+  },
+  // The service worker refreshes the badge as part of the same operation;
+  // the action API is irrelevant here, so stub every method it can call.
   action: {
     setBadgeBackgroundColor: async () => {},
     setBadgeText: async () => {},
@@ -33,7 +53,7 @@ const store = new Map<string, unknown>();
 
 function clickDenial(
   origin: string,
-  command = 'click',
+  command: Parameters<typeof recordDenial>[0]['command'] = 'click',
 ): Parameters<typeof recordDenial>[0] {
   return {
     reason: 'origin_not_approved',
@@ -89,8 +109,10 @@ describe('handleDenialAction — stable key resolution', () => {
   });
 
   it('dismisses the targeted denial without shifting siblings', async () => {
-    const denialA = clickDenial('https://a.example', 'type');
-    const denialB = clickDenial('https://b.example', 'submit');
+    const denialA = clickDenial('https://a.example', 'click');
+    // 'submit' is a GrantCapability, not a CommandType — passing it here was
+    // invisible until these tests were type-checked.
+    const denialB = clickDenial('https://b.example', 'type');
     await recordDenial(denialA);
     await recordDenial(denialB);
     const keyA = `${denialA.reason}|${denialA.origin ?? ''}|${denialA.command}`;
