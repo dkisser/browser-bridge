@@ -32,9 +32,9 @@ To pin a version: `BB_VERSION=v1.2.3 curl ... | bash`.
 4. Extracts the extension into `~/.browser-bridge/extension/` and exposes it through a symlink at `~/Browser-Bridge/extension/` for easy Chrome loading.
 5. Detects the macOS architecture (arm64 or x64).
 6. Downloads the matching runtime tarball (`browser-bridge-macos-{arch}-{version}.tar.gz`) and its `.sha256`; aborts on mismatch.
-7. Extracts the single `bridge` binary (CLI + service lifecycle + hidden `serve` control-plane subcommand, ADR-0013) into `~/.browser-bridge/bin/`, removing stale binaries left by earlier layouts (`ws-server`, `local-proxy`, `bridge-cmd`, the two-binary-era `bridge-core`). `config.json` (browserId + pairing hash) is preserved across upgrades: the Go state loader keeps the known fields and drops ghost fields from older schemas on save, so updating no longer un-pairs the extension.
+7. Extracts the single `bridge` binary (CLI + service lifecycle + hidden `serve` control-plane subcommand, ADR-0013) into `~/.browser-bridge/bin/`, removing stale binaries left by earlier layouts (`ws-server`, `local-proxy`, `bridge-cmd`, the two-binary-era `bridge-core`). Persistent data under `~/.browser-bridge/data/` (ADR-0017) — today just `config.json` (browserId + pairing hash), later the audit trail and agent memory — is preserved across upgrades: the Go state loader keeps the known fields and drops ghost fields from older schemas on save, so updating no longer un-pairs the extension. A pre-ADR-0017 root-level `config.json` is migrated into `data/` by the daemon on first start.
 8. Symlinks `~/.browser-bridge/bin/bridge` into `~/.local/bin/bridge` (the LaunchAgent plist is embedded in the binary since ADR-0012; nothing is templated at install time).
-9. Writes the resolved version to `~/.browser-bridge/version`.
+9. Writes the resolved version to `~/.browser-bridge/version` and creates `~/.browser-bridge/data/` (mode 0700) if missing.
 10. Stops any already-running bridge services, then starts them again after installation.
 11. Prints next steps: PATH export, Chrome "load unpacked" pointer at `~/Browser-Bridge/extension/`.
 
@@ -53,7 +53,7 @@ To pin a version: `BB_VERSION=v1.2.3 curl ... | bash`.
 | `bridge service disable` | Do not start services at login. |
 | `bridge service update [version]` | Upgrade in place. |
 | `bridge service doctor` | Diagnose install health. |
-| `bridge service uninstall [--yes]` | Remove `~/.browser-bridge/`. |
+| `bridge service uninstall [--yes] [--purge]` | Remove `~/.browser-bridge/` (keeps `data/` unless `--purge`). |
 | `bridge service version` | Show installed + latest release. |
 
 Deprecated: `bridge autostart on|off|status` still works for one release but prints a warning — use `bridge service enable|disable` and `bridge service status`.

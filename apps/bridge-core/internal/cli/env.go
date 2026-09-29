@@ -13,6 +13,8 @@ import (
 	"runtime"
 	"strconv"
 	"time"
+
+	"browser-bridge/internal/core"
 )
 
 // Default ports: packages/shared/src/constants.ts (WEBSOCKET_PORT,
@@ -142,6 +144,13 @@ func (e *Env) LogDir() string { return filepath.Join(e.BBHome, "logs") }
 
 // RunDir holds the pidfiles.
 func (e *Env) RunDir() string { return filepath.Join(e.BBHome, "run") }
+
+// DataDir holds persistent data that must survive upgrades and uninstalls
+// (ADR-0017): config.json (pairing state) today, the audit trail and agent
+// memory later. install.sh never writes here and Uninstall keeps it unless
+// --purge is given. The name comes from core so the CLI can never disagree
+// with the StateManager about what to preserve.
+func (e *Env) DataDir() string { return filepath.Join(e.BBHome, core.DataDirName) }
 
 // LogFile is the daemon's stdout/stderr log.
 func (e *Env) LogFile() string { return filepath.Join(e.LogDir(), serviceName+".log") }

@@ -21,7 +21,7 @@ Commands:
   update [version]    Upgrade to a release (default: latest)
   doctor              Diagnose the install
   version             Print installed + latest version
-  uninstall           Remove ~/.browser-bridge/ (use --yes to skip prompt)
+  uninstall           Remove ~/.browser-bridge/ (keeps data/; --purge wipes all)
 `
 
 // newServiceCommand builds the `bridge service` tree: the Go port of the
@@ -174,18 +174,19 @@ func newServiceCommand(g *globals) *cobra.Command {
 		},
 	})
 
-	var uninstallYes bool
+	var uninstallYes, uninstallPurge bool
 	uninstall := &cobra.Command{
 		Use:   "uninstall",
-		Short: "Remove ~/.browser-bridge/ (use --yes to skip prompt)",
+		Short: "Remove ~/.browser-bridge/ (keeps data/; use --yes to skip prompt)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runService(cmd, g, func(e *Env, r Runner) error {
-				return Uninstall(cmd.Context(), e, r, uninstallYes, cmd.InOrStdin(), cmd.OutOrStdout())
+				return Uninstall(cmd.Context(), e, r, uninstallYes, uninstallPurge, cmd.InOrStdin(), cmd.OutOrStdout())
 			})
 		},
 	}
 	uninstall.Flags().BoolVar(&uninstallYes, "yes", false, "Skip the confirmation prompt")
+	uninstall.Flags().BoolVar(&uninstallPurge, "purge", false, "Also remove the data dir (pairing config, audit trail, memory)")
 	svc.AddCommand(uninstall)
 
 	return svc

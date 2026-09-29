@@ -2,13 +2,14 @@ import { describe, expect, it } from 'bun:test';
 import { formatHardConfig, type HardConfigEntry } from '../src/settings-state';
 
 describe('formatHardConfig', () => {
-  it('returns the canonical five entries', () => {
+  it('returns the canonical six entries', () => {
     const entries = formatHardConfig();
-    expect(entries).toHaveLength(5);
+    expect(entries).toHaveLength(6);
     const labels = entries.map((entry) => entry.label);
     expect(labels).toContain('Local proxy URL');
     expect(labels).toContain('WebSocket port');
     expect(labels).toContain('Log directory');
+    expect(labels).toContain('Data directory');
     expect(labels).toContain('LaunchAgent plist');
     expect(labels).toContain('CLI binary');
   });

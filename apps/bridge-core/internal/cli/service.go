@@ -154,6 +154,24 @@ type spawnedCore struct {
 	wait    chan error // receives cmd.Wait() exactly once
 }
 
+// maxLogBytes caps bridge-core.log: on daemon start a log already larger
+// than this is rotated aside to bridge-core.log.1 (replacing any previous
+// generation), so the log stays bounded at two generations without any
+// background rotation machinery. Only restarts check — a daemon running
+// uninterrupted can still grow past the cap, which is acceptable for a
+// low-volume operational log.
+const maxLogBytes = 10 << 20 // 10 MiB
+
+// rotateLogFile rolls path to path.1 when it exceeds maxLogBytes.
+// Best-effort: a failed rotation must never block a daemon start.
+func rotateLogFile(path string) {
+	st, err := os.Stat(path)
+	if err != nil || st.Size() <= maxLogBytes {
+		return
+	}
+	_ = os.Rename(path, path+".1")
+}
+
 // spawnCore starts the daemon in the background with its log and pidfile,
 // shared by start_service and supervisor_spawn. The daemon is the bridge
 // binary itself running the hidden serve subcommand (ADR-0013).
@@ -164,6 +182,7 @@ func (e *Env) spawnCore() (*spawnedCore, error) {
 	if err := os.MkdirAll(e.RunDir(), 0o755); err != nil {
 		return nil, errf("BB-E011", "create run dir: %v", err)
 	}
+	rotateLogFile(e.LogFile())
 	logFile, err := os.OpenFile(e.LogFile(), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return nil, errf("BB-E011", "open log file: %v", err)
