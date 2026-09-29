@@ -334,12 +334,18 @@ func Version(e *Env, w io.Writer) error {
 	return nil
 }
 
-// Uninstall is `bridge service uninstall`. When assumeYes is false it
-// prompts on w and reads the answer from in.
-func Uninstall(ctx context.Context, e *Env, r Runner, assumeYes bool, in io.Reader, w io.Writer) error {
+// Uninstall is `bridge service uninstall`. The data dir (pairing config
+// today, audit trail and agent memory later — ADR-0017) survives a plain
+// uninstall; purge removes it too. When assumeYes is false it prompts on w
+// and reads the answer from in.
+func Uninstall(ctx context.Context, e *Env, r Runner, assumeYes, purge bool, in io.Reader, w io.Writer) error {
 	log := logf(w)
 	if !assumeYes {
-		fmt.Fprintf(w, "About to rm -rf %s. Continue? [y/N] ", e.BBHome)
+		if purge {
+			fmt.Fprintf(w, "About to rm -rf %s (including %s). Continue? [y/N] ", e.BBHome, e.DataDir())
+		} else {
+			fmt.Fprintf(w, "About to remove %s (keeping %s). Continue? [y/N] ", e.BBHome, e.DataDir())
+		}
 		var ans string
 		if _, err := fmt.Fscanln(in, &ans); err != nil {
 			ans = ""
@@ -352,10 +358,21 @@ func Uninstall(ctx context.Context, e *Env, r Runner, assumeYes bool, in io.Read
 	// bash: service_disable; cmd_service_down || true — best effort.
 	_ = Disable(ctx, e, r, w)
 	_ = Down(ctx, e, r, w)
-	if err := os.RemoveAll(e.BBHome); err != nil {
-		return fmt.Errorf("remove %s: %w", e.BBHome, err)
+	if purge {
+		if err := os.RemoveAll(e.BBHome); err != nil {
+			return fmt.Errorf("remove %s: %w", e.BBHome, err)
+		}
+		log("Removed %s", e.BBHome)
+	} else {
+		if err := removeBBHomeExceptData(e); err != nil {
+			return err
+		}
+		if st, err := os.Stat(e.DataDir()); err == nil && st.IsDir() {
+			log("Removed %s (kept %s)", e.BBHome, e.DataDir())
+		} else {
+			log("Removed %s", e.BBHome)
+		}
 	}
-	log("Removed %s", e.BBHome)
 	if st, err := os.Stat(e.ExtensionDir); err == nil && st.IsDir() {
 		if err := os.RemoveAll(e.ExtensionDir); err != nil {
 			return fmt.Errorf("remove %s: %w", e.ExtensionDir, err)
@@ -368,6 +385,28 @@ func Uninstall(ctx context.Context, e *Env, r Runner, assumeYes bool, in io.Read
 			// Dangling symlink (target removed with BBHome).
 			_ = os.Remove(link)
 			log("Removed stale symlink %s", link)
+		}
+	}
+	return nil
+}
+
+// removeBBHomeExceptData clears BBHome but keeps the data dir (ADR-0017).
+// A missing BBHome is a no-op, matching os.RemoveAll semantics.
+func removeBBHomeExceptData(e *Env) error {
+	entries, err := os.ReadDir(e.BBHome)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read %s: %w", e.BBHome, err)
+	}
+	for _, entry := range entries {
+		if entry.Name() == dataDirName {
+			continue
+		}
+		path := filepath.Join(e.BBHome, entry.Name())
+		if err := os.RemoveAll(path); err != nil {
+			return fmt.Errorf("remove %s: %w", path, err)
 		}
 	}
 	return nil

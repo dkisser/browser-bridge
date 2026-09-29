@@ -37,7 +37,7 @@ The WebSocket link between the Chrome extension and bridge-core's browser-facing
 _Avoid_: Local Proxy, extension socket, browser socket
 
 **Pairing**:
-A one-time enrollment handshake between the extension and the control plane: a short-lived code (5 min TTL) is exchanged for a long-lived bearer token, kept in the extension's `chrome.storage` and stored only as a SHA-256 hash on the control-plane side. The token does not expire; revoking it means removing `extensionTokenHash` from `~/.browser-bridge/config.json`, which makes the next extension reconnect fail with 403 and walks the user through the side-panel-driven re-pairing flow.
+A one-time enrollment handshake between the extension and the control plane: a short-lived code (5 min TTL) is exchanged for a long-lived bearer token, kept in the extension's `chrome.storage` and stored only as a SHA-256 hash on the control-plane side. The token does not expire; revoking it means removing `extensionTokenHash` from `~/.browser-bridge/data/config.json` (ADR-0017), which makes the next extension reconnect fail with 403 and walks the user through the side-panel-driven re-pairing flow.
 _Avoid_: auth, authentication, login
 
 **Login auto-start**:
@@ -65,6 +65,16 @@ _Avoid_: workgroup, lane, trust group
 **Service command**:
 The `bridge service …` half of the CLI: everything that manages the service lifecycle (up/down/status/logs/update/enable). Kept strictly separate from browser commands, which never manage services and never fall through to them.
 _Avoid_: daemon command, autostart command
+
+### Logs and records
+
+**Operational log**:
+Diagnostic output written by the control plane and its supervisors under `$BB_HOME/logs/` (`bridge-core.log`, `launchagent.log`). For developers debugging a misbehaving install: disposable, rotatable, safe to delete. Never a record of what the agent did — that is the Audit trail.
+_Avoid_: log, debug log, diagnostics
+
+**Audit trail**:
+The durable record of what the agent did in the browser and when — the accountability counterpart to Approval and Takeover (planned, not yet implemented). Data, not an Operational log: preserved across upgrades, never rotated away, and read by the user rather than by developers.
+_Avoid_: audit log, activity log
 
 ### Human surface
 

@@ -143,6 +143,15 @@ func (e *Env) LogDir() string { return filepath.Join(e.BBHome, "logs") }
 // RunDir holds the pidfiles.
 func (e *Env) RunDir() string { return filepath.Join(e.BBHome, "run") }
 
+// dataDirName is the persistent-data dir under BBHome (ADR-0017).
+const dataDirName = "data"
+
+// DataDir holds persistent data that must survive upgrades and uninstalls
+// (ADR-0017): config.json (pairing state) today, the audit trail and agent
+// memory later. install.sh never writes here and Uninstall keeps it unless
+// --purge is given.
+func (e *Env) DataDir() string { return filepath.Join(e.BBHome, dataDirName) }
+
 // LogFile is the daemon's stdout/stderr log.
 func (e *Env) LogFile() string { return filepath.Join(e.LogDir(), serviceName+".log") }
 

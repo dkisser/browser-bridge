@@ -4,6 +4,13 @@ All notable changes to Browser Bridge are documented here. The format follows [K
 
 ## [Unreleased]
 
+### Changed
+- **Persistent data now lives in `~/.browser-bridge/data/`** (ADR-0017). The pairing `config.json` moves from the install root into `data/` — the daemon migrates it on first start, so upgrading does not un-pair the extension — and future data kinds (audit trail, agent memory) get a contracted home separated from install artifacts (`bin/`, `extension/`, `version`) and runtime state (`logs/`, `run/`). The preservation contract is explicit and covered by an installer test: upgrades only ever overwrite the artifact paths. `bridge service uninstall` now keeps `data/` by default; pass the new `--purge` flag to wipe everything. Note: downgrading to a pre-ADR-0017 binary after the migration has run requires re-pairing the extension once.
+
+### Fixed
+- `extension.bak.*` backup dirs no longer accumulate forever: the installer keeps only the newest one (one rollback is enough).
+- `logs/bridge-core.log` is now bounded: on daemon start, a log over 10 MiB is rotated aside to `bridge-core.log.1` (replacing any previous generation).
+
 ## [0.4.2] - 2026-09-27
 
 ### Fixed
