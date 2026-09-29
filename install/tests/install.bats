@@ -1564,3 +1564,61 @@ SCRIPT
   [[ -f "$BB_TEST_TMP/bb-home/version" ]]
 }
 
+
+# install/README.md's error-code table is the only lookup a user has for a code
+# they just received, and it is maintained by hand. It drifted for years: ten
+# codes the installer and binary could print had no row at all, so a user
+# hitting BB-E211 — a failure this very suite asserts — found nothing, while
+# two rows described codes nothing produced.
+#
+# This runs no code. It reads the sources for every BB-Exxx and compares that
+# set with the table, so a new code without a row fails the suite at the point
+# the row would have been forgotten. A doc-parsing test that runs the error
+# paths would be a much worse thing to maintain for the same guarantee.
+@test "the error-code table covers every code the sources can print" {
+  # Resolve from the repo root explicitly and refuse to run if it is wrong.
+  # pathlib.rglob over a missing directory yields nothing and no error, so a
+  # bad root made the first run of this test report that *no* code is
+  # printed — a loud failure, but one that reads like the opposite problem.
+  run python3 - "$BATS_TEST_DIRNAME/../README.md" "$BATS_TEST_DIRNAME/../.." <<'PY'
+import re, pathlib, sys
+
+readme = pathlib.Path(sys.argv[1])
+root = pathlib.Path(sys.argv[2]).resolve()
+
+if not readme.is_file():
+    sys.exit('cannot read the table at ' + str(readme))
+if not (root / 'apps' / 'bridge-core' / 'internal').is_dir():
+    sys.exit('repo root resolved to ' + str(root) + ', which has no ' +
+             'apps/bridge-core/internal — this test would silently ' +
+             'conclude that no code is printed')
+
+documented = set(re.findall(r'BB-E\d{3}', readme.read_text()))
+emitted = set()
+for base in ('apps/bridge-core/internal', 'install/install.sh', '.github/workflows'):
+    path = root / base
+    files = path.rglob('*') if path.is_dir() else [path]
+    for f in files:
+        if not f.is_file():
+            continue
+        if f.suffix not in ('.go', '.sh', '.yml', '.yaml'):
+            continue
+        # Test files assert codes; they do not produce them.
+        if 'install/tests' in str(f) or f.name.endswith('_test.go'):
+            continue
+        emitted |= set(re.findall(r'BB-E\d{3}', f.read_text(errors='ignore')))
+
+missing = sorted(emitted - documented)
+stale = sorted(documented - emitted)
+if missing:
+    print('codes the sources print but the table omits: ' + ' '.join(missing))
+if stale:
+    print('codes the table lists but nothing prints: ' + ' '.join(stale))
+sys.exit(1 if (missing or stale) else 0)
+PY
+
+  [ "$status" -eq 0 ] || {
+    echo "$output"
+    false
+  }
+}

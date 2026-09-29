@@ -73,6 +73,11 @@ Run `bridge --help` for the full command list.
 
 ## Error Codes
 
+Emitted by `install.sh`, the `bridge` binary, and — for the two release
+codes at the end — the GitHub release workflows. Every code any of them can
+print is listed; the table is kept in step with the code by hand, so if you
+are adding one, add the row.
+
 | Code | Meaning | Fix |
 |---|---|---|
 | `BB-E000` | Bash < 4 or missing | Upgrade bash. |
@@ -87,16 +92,28 @@ Run `bridge --help` for the full command list.
 | `BB-E029` | Runtime tarball SHA-256 mismatch | Re-run; check network/proxy. |
 | `BB-E032` | Runtime tarball is malformed (missing `bin/bridge`) | Inspect `~/.browser-bridge/bin/`; re-run the install. |
 | `BB-E033` | Unsupported architecture | Only macOS arm64 and x64 are supported. |
-| `BB-E030` | Tag/version mismatch on release | Fix `package.json` and re-tag. |
-| `BB-E031` | CHANGELOG missing entry for release | Add an entry, re-tag. |
+| `BB-E101` | Unknown command | Check spelling; `bridge --help` lists every verb. A verb from a build that is not installed lands here too. |
 | `BB-E103` | Cannot locate installer (update) | Re-run the install script manually. |
+| `BB-E200` | Skills source directory not found | The release tarball has no `skills/` payload; re-run the install, or pass `--no-skills`. |
+| `BB-E201` | Skills destination not specified | Internal; the install script should always set it. Re-run without overriding skills paths. |
+| `BB-E202` | No valid skills in the payload | The tarball carried no skill directory; skills are best-effort, so a bare `bridge` install still works. |
+| `BB-E203` | Skills download failed | Check network/proxy. Skills are best-effort; the runtime install continues. |
+| `BB-E204` | Skills SHA-256 mismatch | Re-run; check network/proxy. Do not bypass the checksum. |
+| `BB-E205` | `--skills-dir` needs a directory argument | Pass a path, or drop the flag. |
+| `BB-E206` | Unknown `install.sh` option | Run `install.sh --help`. |
+| `BB-E208` | Failed to install a skill | Check permissions on the destination (`~/.agents/skills/`, `~/.claude/skills/`). |
+| `BB-E210` | Could not create the skills destination directory | Check permissions on its parent. |
+| `BB-E211` | Skills tarball is malformed (missing its top-level wrapper directory) | Re-run; the payload is not the expected shape. |
+| `BB-E300` | Login auto-start is macOS-only | Nothing to do on Linux; `service up/down` work unsupervised. |
+| `BB-E301` | LaunchAgent plist could not be written (embedded in the binary since ADR-0012) | Check permissions on `~/.browser-bridge/launchagents/` and `~/Library/LaunchAgents/`. |
+| `BB-E302` | `launchctl bootstrap` failed while loading the service | Check `launchctl list` for `com.browser-bridge.bridge`; a stale job there is the usual cause — `bridge service down` then `bridge service up`. |
+| `BB-E303` | Bad `bridge autostart` usage (deprecated alias) | Use `bridge service enable|disable`. |
 | `BB-E304` | `launchctl bootout` failed while stopping services | Check `launchctl list` for `com.browser-bridge.bridge`; retry `bridge service down`. |
 | `BB-E305` | Lifecycle command moved under `bridge service` | Re-run as `bridge service <command>`. |
 | `BB-E306` | Unknown `bridge service` subcommand | Run `bridge service` for the list. |
-| `BB-E300` | Login auto-start is macOS-only | Nothing to do on Linux; `service up/down` work unsupervised. |
-| `BB-E301` | LaunchAgent plist could not be written (embedded in the binary since ADR-0012) | Check permissions on `~/.browser-bridge/launchagents/` and `~/Library/LaunchAgents/`. |
-| `BB-E303` | Bad `bridge autostart` usage (deprecated alias) | Use `bridge service enable|disable`. |
 | `BB-E307` | A second supervisor tried to start while one is already watching | Stop the duplicate; `bridge service status` shows the running pair. |
+| `BB-E030` | Release aborted: `package.json` version does not match the pushed tag | Fix the version or the tag before pushing. Emitted by the release workflows, not by an install. |
+| `BB-E031` | Release aborted: `CHANGELOG.md` has no entry for the tag | Add the entry, re-tag. Emitted by the release workflows, not by an install. |
 
 ### macOS Gatekeeper
 
