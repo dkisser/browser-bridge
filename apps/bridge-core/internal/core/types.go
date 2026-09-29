@@ -31,15 +31,25 @@ type CommandPayload struct {
 }
 
 // ResponsePayload mirrors ResponsePayload in packages/shared/src/types.ts.
-// The control plane only ever constructs status/error/message itself; data
-// and reason pass through from the extension. Field order matches the TS
-// object literals ({status, error, message} / {status, data}).
+// The control plane only ever constructs status/error/message itself; data,
+// reason and denied pass through from the extension. Field order matches the
+// TS object literals ({status, error, message} / {status, data} and, for a
+// policy rejection, {status, error, message, denied}).
+//
+// Denied is the structured Denial the extension attaches to every policy
+// rejection. It used to be missing here while this comment claimed to mirror
+// the TS type, so the whole denial was dropped at unmarshal and only the
+// reason code in Error survived — leaving any consumer that branched on the
+// structured denial reading nil. Error and Message still carry the
+// human-readable text; Denied is there for code that needs the origin,
+// capability or command rather than prose.
 type ResponsePayload struct {
 	Status  string          `json:"status"`
 	Data    json.RawMessage `json:"data,omitempty"`
 	Error   string          `json:"error,omitempty"`
 	Message string          `json:"message,omitempty"`
 	Reason  string          `json:"reason,omitempty"`
+	Denied  *Denial         `json:"denied,omitempty"`
 }
 
 // TextSender is the fire-and-forget text-frame sink used to route a response

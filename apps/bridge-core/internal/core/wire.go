@@ -144,3 +144,15 @@ type SnapshotResult struct {
 type ScreenshotResult struct {
 	DataURL string `json:"dataUrl"`
 }
+
+// Denial is Denial in packages/shared/src/policy.ts: the structured form of
+// a policy rejection. The extension sends it alongside the human-readable
+// `error` / `message` pair; Reason repeats `error` so a consumer that only
+// decodes the struct still has the code.
+type Denial struct {
+	Reason     string `json:"reason"`
+	Command    string `json:"command"`
+	Origin     string `json:"origin,omitempty"`
+	Capability string `json:"capability,omitempty"`
+	Detail     string `json:"detail,omitempty"`
+}

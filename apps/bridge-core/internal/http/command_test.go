@@ -1,6 +1,7 @@
 package http
 
 import (
+	"encoding/json"
 	"reflect"
 	"sort"
 	"strings"
@@ -264,6 +265,71 @@ func TestResultDecodingMirrorsCommandResultMap(t *testing.T) {
 			if !strings.Contains(text, want) {
 				t.Errorf("text = %q, want it to contain %q", text, want)
 			}
+		}
+	})
+}
+
+// TestPolicyDenialSurvivesTheWire pins the structured denial end to end. The
+// extension attaches `denied` to every policy rejection, but ResponsePayload
+// used to omit the field while its comment claimed to mirror the TS type, so
+// the entire denial was dropped at unmarshal and only the reason code in
+// `error` survived. A consumer branching on the denial read nil.
+func TestPolicyDenialSurvivesTheWire(t *testing.T) {
+	const denialJSON = `{
+		"status": "error",
+		"error": "origin_not_approved",
+		"message": "Origin https://example.com is not approved for click.",
+		"denied": {
+			"reason": "origin_not_approved",
+			"command": "click",
+			"origin": "https://example.com",
+			"capability": "origin",
+			"detail": "no approval on record"
+		}
+	}`
+
+	t.Run("decodes into ResponsePayload", func(t *testing.T) {
+		var payload core.ResponsePayload
+		if err := json.Unmarshal([]byte(denialJSON), &payload); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if payload.Denied == nil {
+			t.Fatal("denied = nil; the structured denial was dropped")
+		}
+		d := payload.Denied
+		if d.Reason != "origin_not_approved" || d.Command != "click" {
+			t.Errorf("denial = %+v, want reason/command preserved", d)
+		}
+		if d.Origin != "https://example.com" {
+			t.Errorf("origin = %q, want https://example.com", d.Origin)
+		}
+		if d.Capability != "origin" {
+			t.Errorf("capability = %q, want origin", d.Capability)
+		}
+		if d.Detail != "no approval on record" {
+			t.Errorf("detail = %q, want the extension's detail", d.Detail)
+		}
+	})
+
+	t.Run("does not change the message the agent is shown", func(t *testing.T) {
+		// The human-readable path is message-first and must stay that way:
+		// the structured denial supplements it, it does not replace it.
+		var payload core.ResponsePayload
+		if err := json.Unmarshal([]byte(denialJSON), &payload); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if got := commandErrorMessage(payload, "fallback"); got != payload.Message {
+			t.Errorf("commandErrorMessage = %q, want the extension's message %q", got, payload.Message)
+		}
+	})
+
+	t.Run("absent denied leaves the field nil", func(t *testing.T) {
+		var payload core.ResponsePayload
+		if err := json.Unmarshal([]byte(`{"status":"error","error":"sw_timeout"}`), &payload); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if payload.Denied != nil {
+			t.Errorf("denied = %+v, want nil for a non-policy error", payload.Denied)
 		}
 	})
 }

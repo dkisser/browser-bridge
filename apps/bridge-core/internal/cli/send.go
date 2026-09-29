@@ -64,6 +64,24 @@ func responseError(payload core.ResponsePayload, fallback string) string {
 	if payload.Message != "" {
 		return payload.Message
 	}
+	// A policy rejection normally arrives with a human-readable message from
+	// the extension, but the structured denial carries what the bare reason
+	// code cannot: which origin, and what capability. Render it rather than
+	// printing "origin_not_approved" and nothing else.
+	if d := payload.Denied; d != nil {
+		subject := d.Origin
+		if subject == "" {
+			subject = d.Command
+		}
+		switch {
+		case d.Capability != "":
+			return fmt.Sprintf("Blocked: %s needs a %s approval (%s).", subject, d.Capability, d.Reason)
+		case subject != "":
+			return fmt.Sprintf("Blocked: %s (%s).", subject, d.Reason)
+		default:
+			return fmt.Sprintf("Blocked: %s.", d.Reason)
+		}
+	}
 	if payload.Error != "" {
 		return payload.Error
 	}
