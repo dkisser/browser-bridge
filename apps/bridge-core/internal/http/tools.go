@@ -442,25 +442,13 @@ func (s *MCPServer) executeHover(ctx context.Context, req *mcp.CallToolRequest, 
 
 // --- Waits ---
 
-// waitSlack is the headroom between the in-page wait budget handed to the
-// content script and the transport deadline the control plane waits itself.
-//
-// The content script rejects with "Element not found within Nms: <selector>"
-// at exactly the in-page budget. When the transport deadline equalled that
-// budget the control plane's own timer — started earlier — always expired
-// first, so the agent saw a bare "timeout: no response for command
-// wait:element" with no selector at all. The slack lets the useful
-// diagnostic win the race, while the page still gets the full budget the
-// caller asked for.
-const waitSlack = 500 * time.Millisecond
-
 // transportTimeout is how long the control plane waits for a command's
 // response. Normally that is the caller's timeout_ms; for the wait commands
 // it is the in-page budget plus waitSlack, so the content script's rejection
 // reaches the agent before the control plane gives up on it.
 func transportTimeout(s *MCPServer, spec commandSpec, timeoutMS *int) time.Duration {
 	if spec.waitBudget > 0 {
-		return spec.waitBudget + waitSlack
+		return spec.waitBudget + core.InPageTimeoutSlack
 	}
 	return s.commandTimeout(timeoutMS)
 }

@@ -111,9 +111,11 @@ async function queryOffscreenStatus(): Promise<boolean> {
   }
 }
 
-// Fallback when the control plane sends no `timeout` for navigate. Long
-// enough for a slow redirect chain on a modest connection, short enough that
-// a hung navigation surfaces an error instead of pinning the command.
+// Fallback when the control plane sends no `timeout` for navigate. Only an
+// older control plane reaches this path — current ones always send their own
+// budget — and the degradation is from "hangs forever" to "bounded", which is
+// the point. The value matches the Go router's historical 30s route TTL so a
+// peer on that version is not cut off before the page finishes.
 const DEFAULT_NAV_TIMEOUT_MS = 30_000;
 
 // The offscreen document cannot read chrome.storage, so the SW owns the

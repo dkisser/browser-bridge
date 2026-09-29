@@ -176,7 +176,7 @@ func TestWaitBudgetLeavesRoomForTheContentScriptDiagnostic(t *testing.T) {
 	if got := commands[0].params["timeout"]; got != float64(30000) {
 		t.Errorf("params.timeout = %v, want 30000 (the caller's full budget)", got)
 	}
-	if got, want := commands[0].routeDeadline, 30*time.Second+waitSlack; got != want {
+	if got, want := commands[0].routeDeadline, 30*time.Second+core.InPageTimeoutSlack; got != want {
 		t.Errorf("route deadline = %v, want %v (budget + slack)", got, want)
 	}
 }

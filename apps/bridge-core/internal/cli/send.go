@@ -60,21 +60,6 @@ func sendCommand(ctx context.Context, g *globals, command string, params map[str
 }
 
 // responseError is the TS `payload.message ?? payload.error ?? fallback`.
-// inPageTimeoutSlack is the headroom between an in-page wait budget the
-// extension is given and the deadline the CLI waits for the answer.
-//
-// A command whose params carry `timeout` (navigate, wait:element,
-// wait:navigation) hands that budget to the extension, which rejects with
-// "Navigation timeout" or "Element not found within Nms" when it expires.
-// The CLI's own clock starts when the envelope is written; the extension's
-// only starts once the router has delivered it, so with equal budgets the
-// CLI always gives up first and the agent-visible error is a bare
-// "no response for command navigate within 60000ms" — blaming a control
-// plane that was behaving correctly, and hiding the diagnostic the
-// extension had ready. The MCP side arranges the same thing with waitSlack
-// in internal/http/tools.go; this keeps the two entry points consistent.
-const inPageTimeoutSlack = 500 * time.Millisecond
-
 // cliTransportTimeout is how long the CLI waits for a command's response.
 //
 // Normally that is just --timeout. When the command carries an in-page
@@ -88,7 +73,7 @@ func cliTransportTimeout(g *globals, params map[string]any) time.Duration {
 	if !ok {
 		return deadline
 	}
-	if extended := time.Duration(inPage)*time.Millisecond + inPageTimeoutSlack; extended > deadline {
+	if extended := time.Duration(inPage)*time.Millisecond + core.InPageTimeoutSlack; extended > deadline {
 		return extended
 	}
 	return deadline
