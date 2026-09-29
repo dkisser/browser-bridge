@@ -187,11 +187,28 @@ export function applyRemoveDownload(
   };
 }
 
+// Releasing Takeover also drops the denials the takeover itself produced.
+//
+// recordDenial no longer writes them, but state written before that still
+// carries them, and there is no other path that would ever remove one. Left
+// alone, a user who had takeover engaged once comes back to an Approvals
+// panel full of refusals worded as though the human were still in control —
+// the panel contradicting the switch they just turned off. Only a release
+// clears them: while takeover is on they would be suppressed anyway, and
+// dropping them on engage would hide a list the user has not asked about.
 export function applySetTakeover(
-  _state: PolicyState,
+  state: PolicyState,
   desired: boolean,
 ): Partial<PolicyState> {
-  return { takeover: desired };
+  if (desired) {
+    return { takeover: true };
+  }
+  return {
+    takeover: false,
+    recentDenials: state.recentDenials.filter(
+      (d) => d.reason !== 'human_assist_active',
+    ),
+  };
 }
 
 export function applySetPairingToken(

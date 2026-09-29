@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { evaluatePolicy, type PolicyContext } from '@browser-bridge/shared';
+import { applyPolicyOp } from '../src/policy-operations';
 import {
   decideWithState,
   getPolicyState,
+  recordDenial,
   updatePolicyState,
 } from '../src/policy-state';
 
@@ -114,5 +116,122 @@ describe('policy-state serialization', () => {
     expect(decision.allow).toBe(false);
     const stored = await getPolicyState();
     expect(stored.grants).toHaveLength(1);
+  });
+});
+
+// A recentDenials entry is an approval request: the side panel renders it as a
+// card with action buttons and the badge counts it as work waiting on the
+// user. A takeover refusal is the user's own kill switch firing, and recording
+// it manufactured requests nobody made — the agent's retries walked the list
+// to its cap, and after the user released the browser the panel and the badge
+// went on reporting refusals worded as though the human were still in control.
+describe('takeover refusals are not approval requests', () => {
+  beforeEach(() => {
+    store.clear();
+  });
+
+  it('does not record a human_assist_active denial', async () => {
+    await recordDenial({
+      reason: 'human_assist_active',
+      command: 'click',
+      origin: 'https://example.com',
+    });
+
+    const state = await getPolicyState();
+    expect(state.recentDenials).toEqual([]);
+  });
+
+  it('records every other denial unchanged', async () => {
+    // The filter keys on the reason. A version that short-circuited the whole
+    // write would pass the test above by recording nothing ever, and the
+    // Approvals panel would go silent for the refusals it exists to show.
+    for (const reason of [
+      'origin_not_approved',
+      'approval_required',
+      'action_out_of_scope',
+      'origin_denied',
+    ] as const) {
+      await recordDenial({
+        reason,
+        command: 'click',
+        origin: 'https://a.test',
+      });
+    }
+
+    const state = await getPolicyState();
+    expect(state.recentDenials).toHaveLength(4);
+    expect(state.recentDenials.map((d) => d.reason)).not.toContain(
+      'human_assist_active',
+    );
+  });
+
+  it('clears takeover refusals that were recorded before the rule existed', async () => {
+    // State written by an older build still carries these, and nothing else
+    // would ever remove one. This is the path that unsticks a user who
+    // already engaged takeover once.
+    await updatePolicyState(() => ({
+      recentDenials: [
+        {
+          reason: 'origin_not_approved',
+          command: 'click',
+          origin: 'https://a.test',
+        },
+        {
+          reason: 'human_assist_active',
+          command: 'click',
+          origin: 'https://a.test',
+        },
+        {
+          reason: 'human_assist_active',
+          command: 'type',
+          origin: 'https://b.test',
+        },
+        {
+          reason: 'approval_required',
+          command: 'gettext',
+          origin: 'https://b.test',
+        },
+      ],
+    }));
+
+    const after = applyPolicyOp(await getPolicyState(), {
+      op: 'set_takeover',
+      desired: false,
+    });
+    const next = { ...(await getPolicyState()), ...after };
+
+    expect(next.takeover).toBe(false);
+    expect(next.recentDenials.map((d) => d.reason)).toEqual([
+      'origin_not_approved',
+      'approval_required',
+    ]);
+  });
+
+  it('leaves the list alone while takeover is being engaged', async () => {
+    // Clearing on engage would quietly delete a list the user has not asked
+    // about. The suppression already happens at record time; the release is
+    // the only moment that owes them a clean slate.
+    await updatePolicyState(() => ({
+      recentDenials: [
+        {
+          reason: 'origin_not_approved',
+          command: 'click',
+          origin: 'https://a.test',
+        },
+        {
+          reason: 'human_assist_active',
+          command: 'click',
+          origin: 'https://a.test',
+        },
+      ],
+    }));
+
+    const engaged = applyPolicyOp(await getPolicyState(), {
+      op: 'set_takeover',
+      desired: true,
+    });
+
+    expect(engaged).not.toBeNull();
+    expect(engaged?.recentDenials).toBeUndefined();
   });
 });
