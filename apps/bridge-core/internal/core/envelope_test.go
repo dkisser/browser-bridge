@@ -140,3 +140,30 @@ func TestDecode(t *testing.T) {
 		})
 	}
 }
+
+// TestEncodeWithTimeoutRoundTrips pins the wire field the CLI's deadline
+// travels on. Encode (the no-deadline form) must still omit it, so a sender
+// that states no deadline is distinguishable from one that asks for 0.
+func TestEncodeWithTimeoutRoundTrips(t *testing.T) {
+	text, err := EncodeWithTimeout(TypeCommand, json.RawMessage(`{"command":"navigate"}`), "id-1", "b-1", 60*time.Second)
+	if err != nil {
+		t.Fatalf("EncodeWithTimeout: %v", err)
+	}
+	env, err := Decode(text)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if env.TimeoutMs != 60000 {
+		t.Errorf("TimeoutMs = %d, want 60000", env.TimeoutMs)
+	}
+	// Encode (the no-deadline form) must omit the field entirely, so the
+	// daemon can tell "stated no deadline" from "asked for 0" and fall back
+	// to its default backstop.
+	plain, err := Encode(TypeCommand, json.RawMessage(`{"command":"navigate"}`), "id-1", "b-1")
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	if strings.Contains(plain, "timeoutMs") {
+		t.Errorf("Encode must not emit timeoutMs: %s", plain)
+	}
+}

@@ -10,20 +10,8 @@ import (
 	"browser-bridge/internal/core"
 )
 
-// The wire contract, restated on the Go side.
-//
-// packages/shared/src/types.ts is the single source of truth for the command
-// names (CommandType) and the per-command `data` shapes (CommandResultMap);
-// the extension's handlers are annotated against it. Go cannot import that
-// package, so this file used to restate the same shapes as bare
-// `map[string]any` literals and anonymous structs. That made every wire key a
-// hand-typed string duplicated from the arg struct's json tag, with nothing
-// linking the two — renaming a key on one side silently broke the contract
-// with no compile error and no test failure.
-//
-// The declarations here are that missing link: one named type per wire shape,
-// so the json tag *is* the declaration of the key. params_test.go pins the
-// marshaled form against the shapes the extension reads.
+// The command-send path: the typed wire shapes, the per-command triple that
+// carries them, and the in-process send that replaces the TS WS client hop.
 
 // commandSpec is the per-command triple the control plane sends down: the wire
 // command name, the tab it targets, and the typed params payload. Grouping
@@ -49,108 +37,30 @@ type commandSpec struct {
 	waitBudget time.Duration
 }
 
-// --- CommandPayload.params, one struct per wire shape ---
-//
-// Optional fields are pointers with omitempty so an absent argument is
-// dropped from the JSON entirely rather than sent as null or zero — the
-// extension distinguishes "not provided" from "provided as false"
-// (`params.submit === true`, `params.active === true`).
+// The wire shapes are declared once, in core (wire.go), because internal/cli
+// decodes the same responses. These aliases keep the call sites in this file
+// short without introducing a second declaration that could drift.
 
-type navParams struct {
-	URL   string `json:"url"`
-	TabID int    `json:"tabId"`
-}
+// --- CommandPayload.params ---
 
-type tabParams struct {
-	TabID int `json:"tabId"`
-}
+type navParams = core.NavParams
+type tabParams = core.TabParams
+type blankParams = core.BlankParams
+type tabNewParams = core.TabNewParams
+type selectorTabParams = core.SelectorTabParams
+type typeParams = core.TypeParams
+type selectParams = core.SelectParams
+type scrollParams = core.ScrollParams
+type snapshotParams = core.SnapshotParams
+type screenshotParams = core.ScreenshotParams
+type waitParams = core.WaitParams
 
-// blankParams is tab:list, which the extension answers from chrome.tabs and
-// reads no params from. It still marshals to `{}` rather than null.
-type blankParams struct{}
+// --- CommandResultMap ---
 
-type tabNewParams struct {
-	URL       *string `json:"url,omitempty"`
-	Active    *bool   `json:"active,omitempty"`
-	AutoClose *bool   `json:"auto_close,omitempty"`
-}
-
-type selectorTabParams struct {
-	Selector string `json:"selector"`
-	TabID    int    `json:"tabId"`
-}
-
-type typeParams struct {
-	Selector string `json:"selector"`
-	Text     string `json:"text"`
-	Submit   *bool  `json:"submit,omitempty"`
-	TabID    int    `json:"tabId"`
-}
-
-type selectParams struct {
-	Selector string `json:"selector"`
-	Value    string `json:"value"`
-	TabID    int    `json:"tabId"`
-}
-
-type scrollParams struct {
-	Selector string `json:"selector"`
-	X        int    `json:"x"`
-	Y        int    `json:"y"`
-	TabID    int    `json:"tabId"`
-}
-
-type snapshotParams struct {
-	Selector *string `json:"selector,omitempty"`
-	Filter   string  `json:"filter"`
-	MaxChars int     `json:"max_chars"`
-	TabID    int     `json:"tabId"`
-}
-
-type screenshotParams struct {
-	FullPage *bool `json:"fullPage,omitempty"`
-	TabID    int   `json:"tabId"`
-}
-
-// waitParams carries the in-page wait budget to the content script.
-type waitParams struct {
-	Selector *string `json:"selector,omitempty"`
-	Timeout  int     `json:"timeout"`
-	TabID    int     `json:"tabId"`
-}
-
-// --- CommandResultMap, the entries the control plane actually decodes ---
-//
-// Only the commands whose `data` this package reads into a typed field are
-// materialized. pageinfo and tab:list are re-indented verbatim by indentJSON
-// and need no struct; the remaining commands are rendered from
-// ResponsePayload.Message by runMessageTool. Declaring shapes for those would
-// be unused code, not contract coverage.
-
-// gettextResult is GettextResult. `text` is `string | null` on the TS side, so
-// a null decodes into the nil pointer rather than an empty string.
-type gettextResult struct {
-	Text *string `json:"text"`
-}
-
-// gethtmlResult is GethtmlResult.
-type gethtmlResult struct {
-	HTML string `json:"html"`
-}
-
-// snapshotResult is SnapshotResult in packages/shared/src/snapshot.ts.
-type snapshotResult struct {
-	Snapshot     string `json:"snapshot"`
-	Truncated    bool   `json:"truncated"`
-	NodesTotal   int    `json:"nodes_total"`
-	NodesEmitted int    `json:"nodes_emitted"`
-	Tier         int    `json:"tier"`
-}
-
-// screenshotResult is ScreenshotResult.
-type screenshotResult struct {
-	DataURL string `json:"dataUrl"`
-}
+type gettextResult = core.GettextResult
+type gethtmlResult = core.GethtmlResult
+type snapshotResult = core.SnapshotResult
+type screenshotResult = core.ScreenshotResult
 
 // sendCommand is sendCommand in src/mcp/command-client.ts with the WS client
 // hop replaced by an in-process router.HandleInboundCommand call. The router

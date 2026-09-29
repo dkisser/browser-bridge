@@ -36,11 +36,30 @@ type Envelope struct {
 	BrowserID string          `json:"browserId"`
 	Payload   json.RawMessage `json:"payload,omitempty"`
 	Timestamp int64           `json:"timestamp"`
+	// TimeoutMs is how long the *sender* is willing to wait for this
+	// envelope's response, in milliseconds. Only command envelopes from an
+	// inbound client set it (the CLI's global --timeout); it is what lets the
+	// router's TTL backstop be raised to the caller's own deadline instead of
+	// cutting a legitimate long command short at the default. A duration
+	// rather than an absolute instant so it means the same thing on a
+	// buffered command as on an immediately-dispatched one.
+	//
+	// The extension ignores it (unknown field), and the router drops it when
+	// forwarding to the extension — by then the TTL is already armed.
+	TimeoutMs int64 `json:"timeoutMs,omitempty"`
 }
 
 // Encode serializes a fresh envelope: an empty id gets a random UUID and
 // the timestamp is milliseconds since epoch (matching TS Date.now()).
 func Encode(t Type, payload json.RawMessage, id, browserID string) (string, error) {
+	return EncodeWithTimeout(t, payload, id, browserID, 0)
+}
+
+// EncodeWithTimeout is Encode plus the sender's stated deadline. Only an
+// inbound client that owns a timeout of its own (the CLI, over the inbound
+// WebSocket) needs it; every other caller leaves it at 0, which the router
+// reads as "no stated deadline, use the default backstop".
+func EncodeWithTimeout(t Type, payload json.RawMessage, id, browserID string, timeout time.Duration) (string, error) {
 	if id == "" {
 		id = NewID()
 	}
@@ -50,6 +69,7 @@ func Encode(t Type, payload json.RawMessage, id, browserID string) (string, erro
 		BrowserID: browserID,
 		Payload:   payload,
 		Timestamp: time.Now().UnixMilli(),
+		TimeoutMs: timeout.Milliseconds(),
 	}
 	raw, err := json.Marshal(env)
 	if err != nil {

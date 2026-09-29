@@ -75,7 +75,11 @@ func (c *Client) roundTrip(ctx context.Context, typ core.Type, payload any, brow
 		return core.Envelope{}, fmt.Errorf("marshal %s payload: %w", typ, err)
 	}
 	id := core.NewID()
-	text, err := core.Encode(typ, raw, id, browserID)
+	// Carry our own deadline on the wire. Without it the daemon's router has
+	// no idea how long this client is willing to wait, and its TTL backstop
+	// would abort the command at the default while we are still waiting —
+	// so `--timeout 60000` would silently behave like 30s.
+	text, err := core.EncodeWithTimeout(typ, raw, id, browserID, timeout)
 	if err != nil {
 		return core.Envelope{}, err
 	}

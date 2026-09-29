@@ -321,18 +321,33 @@ func (r *Router) removeInbound(id string) {
 	}
 }
 
+// routeBackstopMargin is how far past a caller's stated deadline the route
+// backstop is scheduled.
+//
+// The backstop must not merely equal the caller's timeout, it must exceed it.
+// Both timers are armed from the same goroutine with the same instant — the
+// router's time.AfterFunc first, the caller's time.After second — so at
+// equal deadlines the outcome is a race, and when the backstop wins the
+// caller is told "Service worker did not respond in time", blaming a service
+// worker that is in fact still working, instead of its own accurate
+// "timeout: no response for command X within Nms". The margin makes the
+// caller's own deadline deterministically win and leaves the backstop doing
+// only its real job: releasing a route whose sender never cleaned up.
+const routeBackstopMargin = time.Second
+
 // armRouteTimer schedules the TTL cleanup for a successful SendToExtension.
 // On fire the route is removed and the caller is told via sw_timeout, so
 // the inbound client (CLI / MCP) does not hang forever.
 //
 // requested is the sender's own deadline (0 when it has none). The effective
-// TTL is max(default, requested) so the backstop can only ever be *longer*
-// than what the sender asked for: a backstop that fires before the caller's
-// own deadline would report a timeout for a command that is still running.
+// TTL is max(default, requested+margin) so the backstop can only ever be
+// *longer* than what the sender asked for: a backstop that fires before the
+// caller's own deadline would report a timeout for a command that is still
+// running, with the wrong explanation.
 func (r *Router) armRouteTimer(id string, sender TextSender, browserID string, requested time.Duration) {
 	ttl := r.routeTTL
-	if requested > ttl {
-		ttl = requested
+	if requested > 0 && requested+routeBackstopMargin > ttl {
+		ttl = requested + routeBackstopMargin
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()

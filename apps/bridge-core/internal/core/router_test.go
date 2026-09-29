@@ -593,8 +593,9 @@ func TestRequestedDeadlineOverridesShorterBackstop(t *testing.T) {
 
 	sender := &fakeSender{}
 	// Ask for a deadline well past the router's own backstop.
+	requested := 400 * time.Millisecond
 	r.HandleInboundCommand(commandEnvelope(st.BrowserID(), "c1"), sender,
-		WithRouteDeadline(400*time.Millisecond))
+		WithRouteDeadline(requested))
 
 	// The 30ms backstop must not fire: a message here is the bug.
 	time.Sleep(120 * time.Millisecond)
@@ -603,9 +604,14 @@ func TestRequestedDeadlineOverridesShorterBackstop(t *testing.T) {
 			"despite a 400ms requested deadline: %q", len(msgs), msgs[0])
 	}
 
-	// The requested deadline must still fire eventually — the option raises
-	// the backstop, it does not disable it.
-	deadline := time.Now().Add(2 * time.Second)
+	// The backstop must still fire eventually — the option raises it, it does
+	// not disable it — and only *after* the caller's own deadline, so the
+	// caller reports its own accurate timeout first.
+	backstop := requested + routeBackstopMargin
+	if got := backstop - requested; got != routeBackstopMargin {
+		t.Fatalf("backstop is not the deadline + %v", routeBackstopMargin)
+	}
+	deadline := time.Now().Add(4 * time.Second)
 	for time.Now().Before(deadline) {
 		if msgs := sender.sentMessages(); len(msgs) > 0 {
 			payload := decodePayload(t, msgs[0])
@@ -616,12 +622,44 @@ func TestRequestedDeadlineOverridesShorterBackstop(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("no sw_timeout after the requested deadline")
+	t.Fatal("no sw_timeout after the requested deadline + backstop margin")
+}
+
+// TestBackstopNeverRacesTheCallersOwnTimeout pins the margin itself. If the
+// backstop were armed at exactly the caller's deadline, the two timers would
+// be due at the same instant and the router's (armed first) could win — and
+// the caller would be told the service worker had stopped responding rather
+// than that its own request timed out.
+func TestBackstopNeverRacesTheCallersOwnTimeout(t *testing.T) {
+	r, st, browser := makeRouterWithRouteTTL(t, 10*time.Millisecond)
+	st.SetStatus(StatusOnline)
+	browser.online = true
+	browser.deliver = true
+
+	sender := &fakeSender{}
+	const requested = 60 * time.Millisecond
+	start := time.Now()
+	r.HandleInboundCommand(commandEnvelope(st.BrowserID(), "c1"), sender,
+		WithRouteDeadline(requested))
+
+	deadline := time.Now().Add(4 * time.Second)
+	for time.Now().Before(deadline) {
+		if msgs := sender.sentMessages(); len(msgs) > 0 {
+			elapsed := time.Since(start)
+			if elapsed < requested+routeBackstopMargin {
+				t.Fatalf("backstop fired at %v, before deadline %v + margin %v",
+					elapsed, requested, routeBackstopMargin)
+			}
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("backstop never fired")
 }
 
 // TestShorterRequestedDeadlineDoesNotShortenBackstop pins the other half: the
 // TTL is a leak backstop, and a caller passing a small deadline must not be
-// able to make it fire early for everyone else.
+// able to pull it down for its own command.
 func TestShorterRequestedDeadlineDoesNotShortenBackstop(t *testing.T) {
 	r, st, browser := makeRouterWithRouteTTL(t, 300*time.Millisecond)
 	st.SetStatus(StatusOnline)
