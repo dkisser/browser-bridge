@@ -6,7 +6,7 @@ The side panel is per-tab and survives in-tab navigations (browser-managed lifec
 
 > **Amended**: this originally said "Browser/Cloud connection dots" and "the Cloud/Takeover switches". There has been no Cloud anything since the pre-merge (TypeScript) control plane was deleted — the panel has exactly one connection to show. A reader restoring parity with this line would add a dead switch and go hunting for a second connection state that has not existed since ADR-0011. `ui/components/TakeoverHero.tsx` is the authority.
 
-Hard configuration (WebSocket port, local-proxy URL, LaunchAgent plist path, log path, CLI binary path) lives in a separate options page, opened through `chrome.runtime.openOptionsPage()` from the side panel's state bar. That page is inert — it formats the configuration for humans to read and never accepts edits.
+Hard configuration (WebSocket port, local-proxy URL, LaunchAgent plist path, log path, data path, CLI binary path) lives in a separate options page, opened through `chrome.runtime.openOptionsPage()` from the side panel's state bar. That page is inert — it formats the configuration for humans to read and never accepts edits.
 
 ## Considered Options
 
@@ -17,7 +17,7 @@ Hard configuration (WebSocket port, local-proxy URL, LaunchAgent plist path, log
 ## Consequences
 
 - `manifest.json`: `action.default_popup` removed; `side_panel.default_path` set to `sidepanel.html`; `options_ui.page` set to `settings.html`.
-- New files: `sidepanel.html`, `sidepanel.ts`, `settings.html`, `settings.ts`. Old `popup.html` / `popup.ts` removed once content is migrated (no value keeping a dormant 360 px shell).
+- New files: `sidepanel.html`, `sidepanel.tsx`, `settings.html`, `settings.tsx`. Old `popup.html` / `popup.ts` removed once content is migrated (no value keeping a dormant 360 px shell).
 - Side panel layout: a fixed state bar at the top (Browser dot, UID, Takeover switch, settings-page link) plus a tab strip below with four panels (Approvals | Origins | Blocklist | Downloads). Default view on open is Approvals when there are pending denials or paused downloads; otherwise Origins. UI state (selected tab, scroll position, transient filters) does not persist — refresh or tab re-opening returns to the default view. Policy state itself continues to live in `chrome.storage.local` and is unaffected.
 - Settings page is inert: it formats the hard configuration for humans to read, and emits nothing back. Editing happens through file edits or installer commands, not the UI.
 - Side panel does not drive the page. It reads policy state and issues chrome.* API calls (takeover set, grant consumption, origin / blocklist mutation, download resume / cancel). It does not send `click` / `type` / `snapshot` commands to the content script — that path stays the agent's via background → content. This avoids bypassing the policy gate.

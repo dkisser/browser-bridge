@@ -789,6 +789,64 @@ describe('takeover is re-checked at the execution point', () => {
     expect(sentToContentScript).toHaveLength(0);
   });
 
+  it('re-checks every command that shares the DOM dispatch path', async () => {
+    // The re-check is attached to a `case` block listing nine commands, and
+    // the tests above drive exactly one of them. A refactor that split the
+    // block — a read group and a mutation group is the obvious split, and the
+    // comment above it already argues per-group reasoning — and passed
+    // `beforeSend` in only one arm would leave seven commands with no
+    // execution-point re-check while every test stayed green. Verified: with
+    // the re-check narrowed to `click || type`, the full suite passes.
+    //
+    // Driven off the same seam as the test above, because the seam is the
+    // thing under test. Each command needs params its own handler would
+    // accept; `type` additionally needs a preflight answer, which the mock
+    // already returns as non-sensitive by default.
+    const DOM_COMMANDS: [CommandType, Record<string, unknown>][] = [
+      ['click', { selector: '#a' }],
+      ['type', { selector: '#a', text: 'hi' }],
+      ['select', { selector: '#a', value: 'v' }],
+      ['scroll', { selector: '#a', direction: 'down' }],
+      ['hover', { selector: '#a' }],
+      ['gettext', { selector: '#a' }],
+      ['gethtml', { selector: '#a' }],
+      ['snapshot', {}],
+      ['wait:element', { selector: '#a' }],
+    ];
+
+    for (const [command, params] of DOM_COMMANDS) {
+      store.set('policyState', {
+        takeover: false,
+        origins: { [APPROVED]: 'always' },
+      });
+      tabUrls.set(1, `${APPROVED}/form`);
+      sentToContentScript.length = 0;
+      pingFailuresBeforeInjection = 1;
+      onExecuteScript = () => {
+        store.set('policyState', {
+          takeover: true,
+          origins: { [APPROVED]: 'always' },
+        });
+      };
+
+      const failure = await handleCommand(makeCommand(command, 1, params)).then(
+        () => null,
+        (err: Error & { name?: string }) => err,
+      );
+
+      // Named per command, so a failure says which arm lost its re-check
+      // rather than pointing at the loop.
+      expect({ command, denied: failure?.name }).toEqual({
+        command,
+        denied: 'PolicyDeniedError',
+      });
+      expect({ command, dispatched: sentToContentScript.length }).toEqual({
+        command,
+        dispatched: 0,
+      });
+    }
+  });
+
   it('still injects and dispatches when nobody takes over mid-flight', async () => {
     // The other direction for the same seam. A `beforeSend` that refused
     // unconditionally would pass the test above by refusing everything, and
@@ -1637,6 +1695,16 @@ describe('the worker rejects privileged messages from a non-extension sender', (
     )) as { error?: string } | undefined;
 
     expect(response?.error).toBe('forbidden_sender');
+    // Drain the event loop before asserting. The dispatch path is several
+    // awaits deep — policy gate, serialized queue, a storage read, then the
+    // injection sequence — so a guard that ran *after* the handler had
+    // already started would still produce the right reply, and a single tick
+    // would still see an empty array because the dispatch had not landed.
+    // Verified: with the guard moved after the handler starts, the click
+    // reaches the page and this assertion is green unless the loop is
+    // drained. 20 ticks is well past the chain's depth; it is a bound, not a
+    // guess at a magic number that would need re-tuning if a step were added.
+    for (let i = 0; i < 20; i += 1) await settle();
     expect(sentToContentScript).toHaveLength(0);
   });
 

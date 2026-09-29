@@ -720,7 +720,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         }
         // ContentScriptUnavailableError carries a structured reason so MCP
         // tools can attach a recovery hint (see withRecoveryHint in the
-        // websocket command-client). Surface it alongside the message.
+        // control plane, internal/http). Surface it alongside the message.
         if (err instanceof ContentScriptUnavailableError) {
           sendResponse({
             status: 'error',

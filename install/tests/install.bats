@@ -1566,10 +1566,11 @@ SCRIPT
 
 
 # install/README.md's error-code table is the only lookup a user has for a code
-# they just received, and it is maintained by hand. It drifted for years: ten
-# codes the installer and binary could print had no row at all, so a user
-# hitting BB-E211 — a failure this very suite asserts — found nothing, while
-# two rows described codes nothing produced.
+# they just received, and it is maintained by hand. It drifted: at the last
+# audit twelve codes the installer and binary could print had no row at all, so
+# a user hitting BB-E211 — a failure this very suite asserts — found nothing.
+# The reverse direction was already clean: no row described a code nothing
+# printed.
 #
 # This runs no code. It reads the sources for every BB-Exxx and compares that
 # set with the table, so a new code without a row fails the suite at the point

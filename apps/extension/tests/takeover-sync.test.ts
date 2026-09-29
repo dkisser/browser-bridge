@@ -90,11 +90,33 @@ describe('an observation that arrives during our own write', () => {
     // Parking rather than applying is the whole mechanism. If observe() moved
     // the display directly during the window, an out-of-order event landing
     // mid-write would show the user a value their own click has not produced.
-    const s = observe(click(settled(true), false), true);
+    //
+    // The observed value must DIFFER from the current display, or the test
+    // cannot tell the two behaviours apart: an implementation that applies it
+    // immediately and one that parks it both leave `displayed` alone when the
+    // two values are equal. The earlier version of this case observed `true`
+    // against a display already showing `true`, so it passed against a
+    // `parked` branch that did nothing. Verified: with observe() rewritten to
+    // apply during the window, this case was green for the full suite.
+    const s = observe(click(settled(true), true), false);
 
     expect(s.displayed).toBe(true);
-    expect(s.observed).toBe(true);
+    expect(s.observed).toBe(false);
     expect(s.parked).toBe(true);
+  });
+
+  it('parks an observation that disagrees with the display in either direction', () => {
+    // The other direction. An implementation that parked only "the value the
+    // user asked for", or that compared against something other than the
+    // display, would pass the single case above and fail here.
+    const off = observe(click(settled(false), false), true);
+    expect(off.displayed).toBe(false);
+    expect(off.observed).toBe(true);
+    expect(off.parked).toBe(true);
+
+    // And the parked value is what the settle applies, so a display that
+    // agreed by coincidence cannot pass this by accident either.
+    expect(settle(off, 1, false).displayed).toBe(true);
   });
 });
 
