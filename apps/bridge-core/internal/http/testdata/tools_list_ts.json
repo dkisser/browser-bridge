@@ -158,9 +158,6 @@
         "active": {
           "type": "boolean"
         },
-        "auto_close": {
-          "type": "boolean"
-        },
         "timeout_ms": {
           "type": "integer",
           "minimum": 100,
@@ -478,9 +475,6 @@
     "inputSchema": {
       "type": "object",
       "properties": {
-        "fullPage": {
-          "type": "boolean"
-        },
         "tab_id": {
           "type": "integer",
           "minimum": 0

@@ -100,12 +100,11 @@ var toolInputSchemas = map[string]*jsonschema.Schema{
 	"refresh":    tabIDTimeoutSchema(),
 	"tab_list":   timeoutOnlySchema(),
 	"tab_new": objectSchema(
-		[]string{"url", "active", "auto_close", "timeout_ms"},
+		[]string{"url", "active", "timeout_ms"},
 		nil,
 		map[string]*jsonschema.Schema{
 			"url":        {Type: "string", Format: "uri"},
 			"active":     {Type: "boolean"},
-			"auto_close": {Type: "boolean"},
 			"timeout_ms": timeoutMSProperty,
 		},
 	),
@@ -159,10 +158,9 @@ var toolInputSchemas = map[string]*jsonschema.Schema{
 		},
 	),
 	"screenshot": objectSchema(
-		[]string{"fullPage", "tab_id", "timeout_ms"},
+		[]string{"tab_id", "timeout_ms"},
 		[]string{"tab_id"},
 		map[string]*jsonschema.Schema{
-			"fullPage":   {Type: "boolean"},
 			"tab_id":     tabIDProperty,
 			"timeout_ms": timeoutMSProperty,
 		},
