@@ -200,14 +200,31 @@ func (m *StateManager) CanAcceptCommand() bool {
 	return m.status == StatusOnline || m.status == StatusIdleWait
 }
 
-// BufferCommand holds one command while the extension is between reconnects
-// (status idle_wait). Only one command is ever buffered; a second one within
-// the budget is rejected so the router can answer cannot_buffer. onTimeout
-// runs after the buffer expires, with the buffer already cleared.
+// BufferCommand holds one command while the extension is between reconnects.
+// Only one command is ever buffered; a second one within the budget is
+// rejected so the router can answer cannot_buffer. onTimeout runs after the
+// buffer expires, with the buffer already cleared.
+//
+// An online state is accepted as well as idle_wait, and transitions to
+// idle_wait here. The browser server clears its extension socket under its own
+// lock and only *afterwards* calls Router.HandleBrowserDisconnect, so there is
+// a real window — however short — in which the status still reads online with
+// nothing behind it. Requiring idle_wait turned that window into a spurious
+// cannot_buffer, telling the caller its command was rejected for a browser
+// that was merely reconnecting, and defeating the 5s reconnect tolerance the
+// buffer exists to provide. The transition happens inside the same critical
+// section as the buffer insert, so the state can never read online-with-
+// nothing-behind-it while a command is waiting; the browser server's
+// HandleBrowserDisconnect afterwards is idempotent.
 func (m *StateManager) BufferCommand(envelope string, onTimeout func()) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.status != StatusIdleWait {
+	switch m.status {
+	case StatusIdleWait:
+	case StatusOnline:
+		m.status = StatusIdleWait
+	default:
+		// offline: nothing to reconnect to.
 		return false
 	}
 	if m.buffered != nil {

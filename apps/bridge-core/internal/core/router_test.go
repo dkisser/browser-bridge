@@ -686,3 +686,66 @@ func TestRouteDeadlineReadsBackWhatTheCallerAsked(t *testing.T) {
 		t.Fatalf("RouteDeadline() = %v, want 90s", got)
 	}
 }
+
+// TestCommandArrivingDuringTheDisconnectWindowBuffers covers the window the
+// browser server opens on every socket close: it clears s.ext under its own
+// lock, unlocks, closes the socket, and only then calls
+// HandleBrowserDisconnect. A command landing in between sees the state still
+// reading online with no extension behind it, so the router took the
+// buffering branch — and BufferCommand used to insist on idle_wait, so the
+// caller got cannot_buffer for a browser that was merely reconnecting, which
+// is exactly what the 5s reconnect tolerance exists to absorb.
+func TestCommandArrivingDuringTheDisconnectWindowBuffers(t *testing.T) {
+	r, st, browser, _ := makeRouter(t)
+	// Online, but the extension socket is already gone.
+	st.SetStatus(StatusOnline)
+	browser.online = false
+
+	sender := &fakeSender{}
+	r.HandleInboundCommand(commandEnvelope(st.BrowserID(), "c1"), sender)
+
+	if msgs := sender.sentMessages(); len(msgs) != 0 {
+		payload := decodePayload(t, msgs[0])
+		t.Fatalf("sender got %+v during the disconnect window, want the command buffered", payload)
+	}
+	if st.Status() != StatusIdleWait {
+		t.Errorf("status = %q, want idle_wait once the disconnect is observed", st.Status())
+	}
+
+	// The browser server's own HandleBrowserDisconnect lands moments later
+	// and must not drop what we just buffered. GetBufferedCommand consumes,
+	// so this is the assertion that the buffer survived — check the status
+	// first, then claim it last.
+	r.HandleBrowserDisconnect()
+	if _, ok := st.GetBufferedCommand(); !ok {
+		t.Fatal("HandleBrowserDisconnect dropped the buffered command")
+	}
+	if st.Status() != StatusIdleWait {
+		t.Errorf("status = %q, want idle_wait", st.Status())
+	}
+}
+
+// TestSecondCommandDuringTheDisconnectWindowStillRejected keeps the real
+// guarantee intact: the buffer holds one command, and the second one must
+// still be told cannot_buffer rather than silently dropped.
+func TestSecondCommandDuringTheDisconnectWindowStillRejected(t *testing.T) {
+	r, st, browser, _ := makeRouter(t)
+	st.SetStatus(StatusOnline)
+	browser.online = false
+
+	first := &fakeSender{}
+	second := &fakeSender{}
+	r.HandleInboundCommand(commandEnvelope(st.BrowserID(), "c1"), first)
+	r.HandleInboundCommand(commandEnvelope(st.BrowserID(), "c2"), second)
+
+	if msgs := first.sentMessages(); len(msgs) != 0 {
+		t.Errorf("first sender got %q, want it buffered", msgs[0])
+	}
+	msgs := second.sentMessages()
+	if len(msgs) != 1 {
+		t.Fatalf("second sender got %d messages, want 1", len(msgs))
+	}
+	if payload := decodePayload(t, msgs[0]); payload.Error != "cannot_buffer" {
+		t.Fatalf("second command error = %+v, want cannot_buffer", payload)
+	}
+}
