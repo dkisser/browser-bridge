@@ -41,7 +41,7 @@ func sendCommand(ctx context.Context, g *globals, command string, params map[str
 		Command: command,
 		TabID:   g.tab,
 		Params:  params,
-	}, time.Duration(g.timeout)*time.Millisecond)
+	}, cliTransportTimeout(g, params))
 	if err != nil {
 		return nil, err
 	}
@@ -60,6 +60,40 @@ func sendCommand(ctx context.Context, g *globals, command string, params map[str
 }
 
 // responseError is the TS `payload.message ?? payload.error ?? fallback`.
+// inPageTimeoutSlack is the headroom between an in-page wait budget the
+// extension is given and the deadline the CLI waits for the answer.
+//
+// A command whose params carry `timeout` (navigate, wait:element,
+// wait:navigation) hands that budget to the extension, which rejects with
+// "Navigation timeout" or "Element not found within Nms" when it expires.
+// The CLI's own clock starts when the envelope is written; the extension's
+// only starts once the router has delivered it, so with equal budgets the
+// CLI always gives up first and the agent-visible error is a bare
+// "no response for command navigate within 60000ms" — blaming a control
+// plane that was behaving correctly, and hiding the diagnostic the
+// extension had ready. The MCP side arranges the same thing with waitSlack
+// in internal/http/tools.go; this keeps the two entry points consistent.
+const inPageTimeoutSlack = 500 * time.Millisecond
+
+// cliTransportTimeout is how long the CLI waits for a command's response.
+//
+// Normally that is just --timeout. When the command carries an in-page
+// timeout in its params, the extension's own wait is bounded by that, so the
+// transport must outlast it — otherwise the one diagnostic worth seeing
+// arrives after the caller has already stopped listening. Whichever deadline
+// is longer wins, so a deliberately small --timeout is still honoured.
+func cliTransportTimeout(g *globals, params map[string]any) time.Duration {
+	deadline := time.Duration(g.timeout) * time.Millisecond
+	inPage, ok := params["timeout"].(int)
+	if !ok {
+		return deadline
+	}
+	if extended := time.Duration(inPage)*time.Millisecond + inPageTimeoutSlack; extended > deadline {
+		return extended
+	}
+	return deadline
+}
+
 func responseError(payload core.ResponsePayload, fallback string) string {
 	if payload.Message != "" {
 		return payload.Message

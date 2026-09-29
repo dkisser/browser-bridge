@@ -31,16 +31,23 @@ const ALLOWED_WRITERS = new Set([
 ]);
 
 // A module outside the allow-list must not mutate policy state at all, by
-// either route: through a policy-state mutator, or by writing
-// chrome.storage.local directly. The direct-write branch is deliberately NOT
-// conditioned on importing policy-state — a module that bypassed the storage
-// layer entirely is exactly the case worth catching, and gating it on the
-// import would make the pattern unreachable for the shape it exists to
-// detect. The only cost is that a future module writing some *other* storage
-// key must be allow-listed with a reason, which is a decision worth making
-// consciously anyway.
+// either route: through a policy-state mutator, or by writing the policy key
+// into chrome.storage directly.
+//
+// The direct-write branch is anchored on the *key*, not on an import. Two
+// wrong anchors were tried first. Conditioning on "imports policy-state"
+// makes the pattern unreachable for the case it exists to catch — a module
+// that bypasses the storage layer does not import it — and the tell is that
+// adding an import to such a file is what makes the guard fire. Anchoring on
+// nothing at all then flags a module that merely mentions the PolicyState
+// type while writing some unrelated key. Keying on the policy key catches
+// the bypass and leaves unrelated storage use alone.
 const MUTATES_POLICY =
-  /\b(updatePolicyState|setPolicyState|decideWithState|recordDenial|clearSessionScoped|setAgentGroupAvailability)\s*\(|chrome\.storage\.(local|sync|session)\.(set|remove|clear)\s*\(/;
+  /\b(updatePolicyState|setPolicyState|decideWithState|recordDenial|clearSessionScoped|setAgentGroupAvailability)\s*\(/;
+
+// A direct write counts only when the policy key is in the same statement.
+const WRITES_POLICY_KEY =
+  /chrome\.storage\.(local|sync|session)\.(set|remove|clear)\s*\(\s*\{[^}]*\bpolicyState\b/;
 
 function sourceFilesIn(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -59,7 +66,7 @@ describe('only the service worker writes policy state', () => {
   for (const file of sourceFilesIn(SRC_DIR)) {
     if (ALLOWED_WRITERS.has(file)) continue;
     const source = readFileSync(file, 'utf8');
-    if (MUTATES_POLICY.test(source)) {
+    if (MUTATES_POLICY.test(source) || WRITES_POLICY_KEY.test(source)) {
       offenders.push(file.slice(SRC_DIR.length + 1));
     }
   }
