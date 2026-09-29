@@ -135,23 +135,27 @@ async function connectOffscreen(): Promise<void> {
 //
 // Compares the whole URL, not just the origin: a same-origin navigation
 // (`/old-page` → `/page`) is exactly the case this must not accept, and an
-// origin comparison would wave it through. Only the trailing slash is
-// normalized away, so a bare `https://example.com` still matches the
-// `https://example.com/` the browser reports. Targets the URL parser rejects
-// (data:, about:) fall back to exact equality.
+// origin comparison would wave it through.
+//
+// Comparison goes through the URL parser, which canonicalizes a bare
+// `https://example.com` to the `https://example.com/` the browser reports —
+// the trailing-slash case is the parser's job, not something to redo by hand
+// here. An earlier version normalized both sides manually (forcing an empty
+// pathname to `/`, then stripping a trailing slash); every pair that version
+// judged equal or unequal, this one judges the same, because both sides went
+// through identical normalization either way. Anything the parser rejects
+// (data:, about:) falls back to exact equality.
 function reachedUrl(actual: string | undefined, target: string): boolean {
   if (actual === undefined) return false;
-  const normalize = (raw: string): string | null => {
+  const canonical = (raw: string): string | null => {
     try {
-      const parsed = new URL(raw);
-      if (parsed.pathname === '') parsed.pathname = '/';
-      return parsed.href.replace(/\/$/, '');
+      return new URL(raw).href;
     } catch {
       return null;
     }
   };
-  const a = normalize(actual);
-  const b = normalize(target);
+  const a = canonical(actual);
+  const b = canonical(target);
   if (a !== null && b !== null) return a === b;
   return actual === target;
 }

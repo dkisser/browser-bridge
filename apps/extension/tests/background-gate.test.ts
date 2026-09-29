@@ -735,16 +735,41 @@ describe('navigate waits for completion without losing the event', () => {
 
   it('accepts the re-check once the tab has actually moved to the target', async () => {
     // The complementary case: the same 'complete' status, but the tab is now
-    // on the requested origin (a bare origin in the request vs the trailing
-    // slash the browser reports must still match).
-    tabUrls.set(1, URL);
+    // on the requested page. The request is a *bare origin* while the browser
+    // reports it with a trailing slash — the two are different strings, so
+    // reachingUrl's normalization is what makes this resolve. Pointing both
+    // sides at the same constant would pass even with the normalization
+    // deleted, which is why they deliberately differ here.
+    tabUrls.set(1, 'https://example.com/');
     tabStatuses.set(1, 'complete');
 
     const result = await handleCommand(
-      makeCommand('navigate', 1, { url: URL }),
+      makeCommand('navigate', 1, { url: 'https://example.com' }),
     );
 
-    expect(result).toEqual({ url: URL, title: undefined });
+    expect(result).toEqual({ url: 'https://example.com/', title: undefined });
+  });
+
+  it('still waits when the tab is on the target url but has not loaded', async () => {
+    // The url property commits before the document finishes loading, so a tab
+    // can sit on exactly the requested page while status is still 'loading'.
+    // Every other "still loading" case in this file leaves the tab on
+    // about:blank or the old page, which means the url check alone already
+    // rejects them — a re-check that accepted 'loading' outright would pass
+    // all of them and only fail here. Status and url are independent
+    // conditions and this is the case that pins them apart.
+    tabUrls.set(1, URL);
+    tabStatuses.set(1, 'loading');
+
+    const failure = await handleCommand(
+      makeCommand('navigate', 1, { url: URL, timeout: 25 }),
+    ).then(
+      () => null,
+      (err: Error) => err,
+    );
+
+    expect(failure?.message).toBe('Navigation timeout');
+    expect(onUpdatedListeners).toHaveLength(0);
   });
 
   it('does not resolve on a non-completion update for the same tab', async () => {
