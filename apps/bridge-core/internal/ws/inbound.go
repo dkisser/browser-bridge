@@ -20,7 +20,10 @@ import (
 
 // InboundRouter is the slice of core.Router the inbound server calls.
 type InboundRouter interface {
-	HandleInboundCommand(envelope core.Envelope, sender core.TextSender)
+	// HandleInboundCommand takes the same per-command options the MCP layer
+	// passes; the inbound server has no deadline of its own and passes none,
+	// so the router applies its default backstop.
+	HandleInboundCommand(envelope core.Envelope, sender core.TextSender, opts ...core.InboundOption)
 	// RemoveClient drops every inbound route pointing at sender when the
 	// client connection ends; without it a kill -9 / unexpected close pins
 	// the sender in inboundByID until the extension finally answers (which
@@ -223,7 +226,15 @@ func (s *InboundServer) serveConn(c *clientConn) {
 				s.sendError(c, "browser_offline", fmt.Sprintf("Browser %s is offline", browserID), envelope.ID, browserID)
 				continue
 			}
-			s.router.HandleInboundCommand(envelope, c)
+			// Honour the sender's own deadline, so `bridge --timeout 60000`
+			// really waits 60s instead of being cut at the router's default
+			// backstop. A client that states none (older build, or a
+			// non-command envelope) keeps the default.
+			var opts []core.InboundOption
+			if envelope.TimeoutMs > 0 {
+				opts = append(opts, core.WithRouteDeadline(time.Duration(envelope.TimeoutMs)*time.Millisecond))
+			}
+			s.router.HandleInboundCommand(envelope, c, opts...)
 		case core.TypeResponse:
 			// Forward CLI→browser responses (rare; the browser normally
 			// produces responses) to all other CLI sockets.

@@ -126,6 +126,35 @@ func TestSendCommandRoundTrip(t *testing.T) {
 	requireServed(t, done)
 }
 
+// TestSendCommandCarriesItsDeadlineOnTheWire: the CLI's `--timeout` only
+// bounds how long *it* waits. The daemon's router has its own TTL backstop,
+// and unless the client states its deadline the router aborts the command at
+// the default — so `--timeout 60000` would silently behave like 30s and the
+// user would get "Service worker did not respond in time" from a service
+// worker that was still working.
+func TestSendCommandCarriesItsDeadlineOnTheWire(t *testing.T) {
+	url, done := fakeServer(t, func(conn *websocket.Conn) error {
+		env, err := readEnvelope(conn)
+		if err != nil {
+			return err
+		}
+		if env.TimeoutMs != 60000 {
+			return fmt.Errorf("timeoutMs = %d, want 60000", env.TimeoutMs)
+		}
+		return writeResponse(conn, env.ID, `{"status":"ok"}`)
+	})
+
+	client := dial(t, url)
+	if _, err := client.SendCommand(context.Background(), "b-1", core.CommandPayload{
+		Command: "navigate",
+		TabID:   1,
+		Params:  map[string]any{"url": "https://example.com"},
+	}, 60*time.Second); err != nil {
+		t.Fatalf("SendCommand: %v", err)
+	}
+	requireServed(t, done)
+}
+
 func TestRequestRoundTrip(t *testing.T) {
 	url, done := fakeServer(t, func(conn *websocket.Conn) error {
 		env, err := readEnvelope(conn)

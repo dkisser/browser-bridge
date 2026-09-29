@@ -10,6 +10,7 @@ import {
   type Denial,
   evaluatePolicy,
   humanDenialMessage,
+  isReadOnlyCommand,
   originOf,
   type PolicyContext,
   SENSITIVE_FIELD_RECHECK_ERROR,
@@ -120,9 +121,6 @@ async function connectOffscreen(): Promise<void> {
     .catch(() => {});
 }
 
-// Read-only commands bypass the gate entirely (no origin lookups at all).
-const GATE_EXEMPT_COMMANDS = new Set<CommandType>(['tab:list', 'pageinfo']);
-
 // Policy enforcement point (ADR-0006..0009): every command is evaluated
 // against the shared policy core before it executes. Throws PolicyDeniedError
 // when the decision is a denial; returns the policy state the decision was
@@ -136,21 +134,25 @@ async function applyPolicyGate(
   origin: string | null;
   sensitiveApproved: boolean;
 }> {
-  const notApproved = async () => ({
-    state: await getPolicyState(),
-    origin: null,
-    sensitiveApproved: false,
-  });
-  if (GATE_EXEMPT_COMMANDS.has(command)) return notApproved();
+  // Read-only commands read browser state rather than acting on a page, so
+  // they skip the origin lookups below — but they still run through
+  // evaluatePolicy, because the Takeover gate has to apply to them too.
+  // They used to return early here, before evaluatePolicy was ever reached,
+  // which let `bridge` read every open tab's URL and title while the user
+  // believed the human had the browser.
+  const readOnly = isReadOnlyCommand(command);
+  // A `tab:new` with no url opens a blank tab: no navigation target exists to
+  // gate. The policy core handles that case explicitly (blankNewTab) so the
+  // shortcut lives there, behind the takeover check, instead of here in front
+  // of it.
+  const blankNewTab = command === 'tab:new' && !params.url;
 
   let origin: string | null = null;
   let isActiveTab = false;
 
-  if (command === 'navigate' || command === 'tab:new') {
-    // A blank tab:new opens no page — there is no navigation target to gate.
-    if (command === 'tab:new' && !params.url) return notApproved();
+  if (!readOnly && (command === 'navigate' || command === 'tab:new')) {
     origin = originOf(params.url as string | undefined);
-  } else if (typeof tabId === 'number') {
+  } else if (!readOnly && typeof tabId === 'number') {
     const tab = await chrome.tabs.get(tabId);
     origin = originOf(tab.url);
     if (command === 'screenshot') {
@@ -179,6 +181,7 @@ async function applyPolicyGate(
       origin,
       blocklistHit: blocklistHit(origin, fresh.blockedOrigins),
       grants: fresh.grants,
+      ...(blankNewTab ? { blankNewTab: true } : {}),
       ...(typeof tabId === 'number' ? { tabId } : {}),
       ...(sensitiveField !== undefined ? { sensitiveField } : {}),
       ...(params.submit === true ? { submit: true } : {}),

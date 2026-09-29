@@ -96,6 +96,62 @@ describe('takeover', () => {
       );
     }
   });
+
+  // The extension used to short-circuit url-less tab:new before reaching
+  // evaluatePolicy, so Takeover did not cover it and blank tabs kept
+  // appearing while the user believed they had the browser.
+  it('rejects a blank tab:new while takeover is active', () => {
+    expectDeny(
+      evaluatePolicy(
+        'tab:new',
+        ctx({ takeover: true, origin: null, blankNewTab: true }),
+      ),
+      'human_assist_active',
+    );
+  });
+});
+
+describe('blank tab:new', () => {
+  it('allows a url-less tab:new outside takeover', () => {
+    // No navigation target exists, so there is no origin to gate and no
+    // blocklist entry to match.
+    expect(
+      evaluatePolicy('tab:new', ctx({ origin: null, blankNewTab: true })),
+    ).toEqual({ allow: true });
+  });
+
+  it('still hard-denies a named non-http(s) target', () => {
+    // blankNewTab is what separates "no url at all" from "a url that parses
+    // to a protected origin". Without the flag a file:// / data: target must
+    // not slip through the blank-tab shortcut.
+    expectDeny(
+      evaluatePolicy('tab:new', ctx({ origin: null })),
+      'origin_blocked',
+    );
+  });
+
+  it('still requires an origin approval when a url is supplied', () => {
+    expectDeny(
+      evaluatePolicy(
+        'tab:new',
+        ctx({ origin: 'https://elsewhere.test', originState: undefined }),
+      ),
+      'origin_not_approved',
+    );
+  });
+
+  it('still denies a url target that is on the blocklist', () => {
+    expectDeny(
+      evaluatePolicy(
+        'tab:new',
+        ctx({
+          origin: 'https://chromewebstore.google.com',
+          blocklistHit: true,
+        }),
+      ),
+      'origin_blocked',
+    );
+  });
 });
 
 describe('protected context and blocklist', () => {

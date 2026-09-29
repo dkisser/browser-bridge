@@ -21,6 +21,11 @@ const HOUR = 60 * 60 * 1000;
 const store = new Map<string, unknown>();
 const tabUrls = new Map<number, string>();
 const sentToContentScript: Record<string, unknown>[] = [];
+// Records the browser-level side effects a command handler performed, so a
+// takeover test can assert the handler never ran — not merely that the call
+// rejected. A url-less tab:new that opens a tab is the regression these guard.
+const createdTabs: { url?: string; active?: boolean }[] = [];
+const queriedTabs: unknown[] = [];
 let badgeTextUpdates = 0;
 let lastBadgeText: { text: string } | null = null;
 
@@ -177,10 +182,33 @@ beforeAll(async () => {
         sentToContentScript.push(message);
         return contentScriptResponse(message);
       },
+      create: async (props: { url?: string; active?: boolean }) => {
+        createdTabs.push(props);
+        return {
+          id: 99,
+          url: props.url,
+          windowId: 1,
+          active: props.active ?? false,
+        };
+      },
+      query: async (query: unknown) => {
+        queriedTabs.push(query);
+        return [];
+      },
+      group: async (opts: { createProperties?: unknown; groupId?: number }) =>
+        opts.groupId ?? 7,
       onUpdated: { addListener: () => {}, removeListener: () => {} },
       onRemoved: { addListener: () => {} },
     },
     scripting: { executeScript: async () => {} },
+    // agent-group.ts degrades to "grouping disabled" when these reject, which
+    // is its real behavior when Chrome withholds the tabGroups permission.
+    // Mocking the happy path keeps this suite's console readable; the
+    // degradation path is exercised where it belongs, not here.
+    tabGroups: {
+      query: async () => [],
+      update: async () => ({}),
+    },
     action: {
       setBadgeText: async (details: { text: string }) => {
         badgeTextUpdates += 1;
@@ -204,6 +232,8 @@ beforeEach(() => {
   store.clear();
   tabUrls.clear();
   sentToContentScript.length = 0;
+  createdTabs.length = 0;
+  queriedTabs.length = 0;
   badgeTextUpdates = 0;
   lastBadgeText = null;
   preflightResult = { sensitive: false };
@@ -367,5 +397,144 @@ describe('background policy gate orchestration', () => {
       recentDenials?: { reason: string }[];
     };
     expect(stored.recentDenials ?? []).toHaveLength(0);
+  });
+});
+
+// Takeover is the human's kill switch: CONTEXT.md defines it as rejecting
+// *every* agent command, and shared/policy.test.ts asserts that for
+// evaluatePolicy in isolation. These are the dispatch-path counterparts —
+// the layer where three commands used to short-circuit before evaluatePolicy
+// was ever reached, so the asserted invariant did not actually hold.
+describe('takeover covers the whole dispatch path', () => {
+  const APPROVED = 'https://approved.site';
+
+  function withTakeover(): void {
+    store.set('policyState', {
+      takeover: true,
+      // Everything the agent could ask for is pre-approved, so the only
+      // thing that can reject these commands is the takeover gate itself.
+      origins: { [APPROVED]: 'always' },
+      grants: [
+        {
+          capability: 'origin',
+          origin: APPROVED,
+          expiresAt: Date.now() + HOUR,
+          singleUse: true,
+        },
+        {
+          capability: 'sensitive-field',
+          expiresAt: Date.now() + HOUR,
+          singleUse: true,
+        },
+      ],
+    });
+  }
+
+  const cases: {
+    name: string;
+    command: CommandType;
+    tabId: number;
+    params: Record<string, unknown>;
+  }[] = [
+    {
+      name: 'tab:list (read-only bypass)',
+      command: 'tab:list',
+      tabId: 0,
+      params: {},
+    },
+    {
+      name: 'pageinfo (read-only bypass)',
+      command: 'pageinfo',
+      tabId: 1,
+      params: {},
+    },
+    {
+      name: 'tab:new without a url (blank-tab bypass)',
+      command: 'tab:new',
+      tabId: 0,
+      params: {},
+    },
+    {
+      name: 'tab:new with a url',
+      command: 'tab:new',
+      tabId: 0,
+      params: { url: `${APPROVED}/` },
+    },
+    {
+      name: 'navigate',
+      command: 'navigate',
+      tabId: 1,
+      params: { url: `${APPROVED}/` },
+    },
+    { name: 'click', command: 'click', tabId: 1, params: { selector: '#a' } },
+    {
+      name: 'type',
+      command: 'type',
+      tabId: 1,
+      params: { selector: '#pw', text: 'x' },
+    },
+    { name: 'screenshot', command: 'screenshot', tabId: 1, params: {} },
+    { name: 'tab:close', command: 'tab:close', tabId: 1, params: { tabId: 1 } },
+  ];
+
+  for (const { name, command, tabId, params } of cases) {
+    it(`rejects ${name}`, async () => {
+      tabUrls.set(1, `${APPROVED}/form`);
+      withTakeover();
+
+      const failure = await handleCommand(
+        makeCommand(command, tabId, params),
+      ).then(
+        () => null,
+        (err: Error & { name?: string; denial?: { reason: string } }) => err,
+      );
+
+      expect(failure).not.toBeNull();
+      expect(failure?.name).toBe('PolicyDeniedError');
+      expect(failure?.denial?.reason).toBe('human_assist_active');
+    });
+  }
+
+  it('opens no tab and dispatches nothing while takeover is active', async () => {
+    tabUrls.set(1, `${APPROVED}/form`);
+    withTakeover();
+
+    await Promise.allSettled(
+      cases.map((c) =>
+        handleCommand(makeCommand(c.command, c.tabId, c.params)),
+      ),
+    );
+
+    // The strong assertion: a denied command must not have reached its
+    // handler. A url-less tab:new under takeover is the regression that
+    // actually shipped a blank tab into the user's browser.
+    expect(createdTabs).toHaveLength(0);
+    expect(sentToContentScript).toHaveLength(0);
+    // tab:list's handler queries with `{}`. The gate's own screenshot probe
+    // uses {windowId, active:true}, which legitimately runs *before* the
+    // decision, so match on the handler's exact call rather than "no query".
+    expect(queriedTabs).not.toContainEqual({});
+  });
+
+  it('leaves the pre-approved grants unconsumed while takeover is active', async () => {
+    tabUrls.set(1, `${APPROVED}/form`);
+    withTakeover();
+
+    await Promise.allSettled([
+      handleCommand(makeCommand('click', 1, { selector: '#a' })),
+      handleCommand(makeCommand('type', 1, { selector: '#pw', text: 'x' })),
+    ]);
+
+    const stored = store.get('policyState') as { grants: unknown[] };
+    expect(stored.grants).toHaveLength(2);
+  });
+
+  it('allows a url-less tab:new when the human has not taken over', async () => {
+    store.set('policyState', { takeover: false });
+
+    const result = await handleCommand(makeCommand('tab:new', 0, {}));
+
+    expect(result).toEqual({ id: 99, url: undefined });
+    expect(createdTabs).toHaveLength(1);
   });
 });

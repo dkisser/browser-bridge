@@ -281,15 +281,11 @@ func registerBrowserCommands(root *cobra.Command, g *globals) {
 	}
 }
 
-// snapshotResult mirrors SnapshotResult in packages/shared/src/snapshot.ts
-// (only the fields the human-readable output needs).
-type snapshotResult struct {
-	Snapshot     string `json:"snapshot"`
-	NodesEmitted int    `json:"nodes_emitted"`
-	NodesTotal   int    `json:"nodes_total"`
-	Tier         int    `json:"tier"`
-	Truncated    bool   `json:"truncated"`
-}
+// snapshotResult is the shared wire shape (core.SnapshotResult mirrors
+// SnapshotResult in packages/shared/src/snapshot.ts); the CLI only prints a
+// subset of the fields, but decoding the rest is free and keeping one
+// declaration avoids a second copy drifting from the MCP layer's.
+type snapshotResult = core.SnapshotResult
 
 // newSnapshotCommand is the snapshot registration in the TS CLI, including
 // its bespoke human output (snapshot text + stats line).
