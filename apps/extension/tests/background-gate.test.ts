@@ -54,6 +54,19 @@ const onMessageListeners: ((
 // being invalidated mid-request.
 let badgeShouldFail = false;
 
+// Fires inside the Nth chrome.storage.local read of a test, so the world can
+// change between two of the handler's *own* reads.
+//
+// This is not mock-cooking the decision: the handler really does read policy
+// state twice on a DOM command — once for the gate's verdict, once for the
+// Takeover re-check at the execution point — and flipping takeover between
+// them is exactly the real-world sequence, a user reaching for the kill
+// switch while a command is already in flight. The mock stays faithful (reads
+// are reads, storage is the single source of truth); it only chooses *when*
+// the world changes.
+let storageReads = 0;
+let onNthStorageRead: { n: number; run: () => void } | null = null;
+
 function fireTabUpdated(
   tabId: number,
   changeInfo: chrome.tabs.TabChangeInfo,
@@ -183,8 +196,18 @@ beforeAll(async () => {
   (globalThis as Record<string, unknown>).chrome = {
     storage: {
       local: {
-        get: async (key: string): Promise<Record<string, unknown>> =>
-          store.has(key) ? { [key]: store.get(key) } : {},
+        get: async (key: string): Promise<Record<string, unknown>> => {
+          storageReads += 1;
+          if (
+            onNthStorageRead !== null &&
+            storageReads === onNthStorageRead.n
+          ) {
+            const { run } = onNthStorageRead;
+            onNthStorageRead = null;
+            run();
+          }
+          return store.has(key) ? { [key]: store.get(key) } : {};
+        },
         set: async (entries: Record<string, unknown>): Promise<void> => {
           for (const [key, value] of Object.entries(entries)) {
             store.set(key, value);
@@ -326,6 +349,8 @@ beforeEach(() => {
   onUpdatedListeners = [];
   badgeShouldFail = false;
   badgeTextUpdates = 0;
+  storageReads = 0;
+  onNthStorageRead = null;
   lastBadgeText = null;
   preflightResult = { sensitive: false };
   contentScriptResponse = defaultContentScriptResponse;
@@ -627,6 +652,88 @@ describe('takeover covers the whole dispatch path', () => {
 
     expect(result).toEqual({ id: 99, url: undefined });
     expect(createdTabs).toHaveLength(1);
+  });
+});
+
+// Takeover was enforced at the gate and nowhere else. The gate reads policy
+// state inside the write queue, and a takeover flip is applied in that same
+// queue, so a command still queued when the user hit the switch does see it —
+// but nothing re-checked after the decision, and DOM commands have a real
+// window between the two: sendToContentScript calls ensureContentScript
+// first, which injects the content script when the tab does not have one yet.
+describe('takeover is re-checked at the execution point', () => {
+  const APPROVED = 'https://approved.site';
+
+  beforeEach(() => {
+    store.set('policyState', {
+      takeover: false,
+      origins: { [APPROVED]: 'always' },
+    });
+    tabUrls.set(1, `${APPROVED}/form`);
+  });
+
+  it('withdraws a command when the human takes over after the gate allowed it', async () => {
+    // Read 1 is the gate's verdict, read 2 is the execution-point re-check.
+    // Flipping between them is the sequence this whole re-check exists for:
+    // the user reaching for the kill switch while a command is in flight.
+    onNthStorageRead = {
+      n: 2,
+      run: () => {
+        store.set('policyState', {
+          takeover: true,
+          origins: { [APPROVED]: 'always' },
+        });
+      },
+    };
+
+    const failure = await handleCommand(
+      makeCommand('click', 1, { selector: '#a' }),
+    ).then(
+      () => null,
+      (err: Error & { name?: string; denial?: { reason: string } }) => err,
+    );
+
+    expect(failure?.name).toBe('PolicyDeniedError');
+    expect(failure?.denial?.reason).toBe('human_assist_active');
+    // The point of the re-check: the click never reached the page. A
+    // withdrawn command that still dispatched would leave the user watching
+    // a page act on the browser they just took back.
+    expect(sentToContentScript).toHaveLength(0);
+  });
+
+  it('leaves the command alone when the human does not take over', async () => {
+    // The other direction. A re-check that denied unconditionally would pass
+    // the test above by refusing everything, and this is what says it is
+    // reading the state rather than always saying no.
+    const result = await handleCommand(
+      makeCommand('click', 1, { selector: '#a' }),
+    );
+
+    expect(result).toEqual({ clicked: '#a' });
+    expect(sentToContentScript.length).toBeGreaterThan(0);
+  });
+
+  it('records the late denial so the badge and Approvals panel show it', async () => {
+    // A denial this late is still a denial the user has to see. Dropping it
+    // from the denial log would leave the command withdrawn with no trace,
+    // which reads as a glitch rather than as the kill switch working.
+    onNthStorageRead = {
+      n: 2,
+      run: () => {
+        store.set('policyState', {
+          takeover: true,
+          origins: { [APPROVED]: 'always' },
+        });
+      },
+    };
+
+    await handleCommand(makeCommand('click', 1, { selector: '#a' })).catch(
+      () => undefined,
+    );
+
+    const stored = store.get('policyState') as { recentDenials?: unknown[] };
+    expect(stored.recentDenials).toHaveLength(1);
+    expect(badgeTextUpdates).toBeGreaterThan(0);
   });
 });
 

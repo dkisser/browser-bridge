@@ -14,6 +14,7 @@ import {
   originOf,
   type PolicyContext,
   SENSITIVE_FIELD_RECHECK_ERROR,
+  takeoverDenied,
 } from '@browser-bridge/shared';
 import { addTabToAgentGroup, queryAgentGroupIds } from './agent-group';
 import {
@@ -228,6 +229,30 @@ function waitForTabComplete(
         // Tab lookup failed; rely on the event listener and timeout.
       });
   });
+}
+
+// assertTakeoverUnchanged re-reads policy state and refuses to proceed if
+// Takeover was engaged after applyPolicyGate allowed the command.
+//
+// The verdict comes from the shared policy core's takeoverDenied rather than
+// from reading `state.takeover` here, so this cannot drift from the rule the
+// gate applied. See the call site for why only the DOM commands need it.
+async function assertTakeoverUnchanged(
+  command: CommandType,
+  origin: string | null,
+): Promise<void> {
+  const { decision } = await decideWithState(
+    (fresh) =>
+      takeoverDenied(command, fresh.takeover, { origin }) ?? { allow: true },
+  );
+  if (decision.allow || !decision.denial) return;
+
+  // A denial this late is still a denial the user should see in the badge
+  // and the Approvals panel, exactly as if the gate had produced it — the
+  // difference is only that the command was allowed and then withdrawn.
+  await recordDenial(decision.denial);
+  await updateBadge();
+  throw new PolicyDeniedError(decision.denial);
 }
 
 // Policy enforcement point (ADR-0006..0009): every command is evaluated
@@ -500,6 +525,30 @@ export async function handleCommand(
     case 'gethtml':
     case 'snapshot':
     case 'wait:element': {
+      // Takeover re-check at the execution point.
+      //
+      // The gate above read `takeover` inside the write queue, and a
+      // takeover flip is applied in that same queue, so a command that was
+      // still queued when the user hit the switch does see it. What the
+      // gate cannot cover is the stretch between its decision and the DOM
+      // actually changing: sendToContentScript calls ensureContentScript
+      // first, which injects the content script when it is not there yet.
+      // That is a real await — long enough on a cold tab for a user who
+      // just reached for the kill switch to be staring at a page that
+      // clicks itself afterwards.
+      //
+      // This is the only command group that needs it, and saying so
+      // matters more than the check itself. Every other branch reaches its
+      // effect with a single `chrome.*` call after the gate and no
+      // intervening await, so a re-check there would be a second queue
+      // round-trip guarding a window of zero width. The commands that
+      // genuinely do wait for a long time — navigate, wait:navigation,
+      // wait:element — spend it after their effect has already happened,
+      // where no re-check could undo anything.
+      //
+      // What this cannot do: recall a mutation that already reached the
+      // page. It closes the window, it does not make the control absolute.
+      await assertTakeoverUnchanged(command, origin);
       // A sensitive-field grant consumed at the gate authorizes this one type
       // command; the content script re-verifies the field at execution time.
       const forwarded =
