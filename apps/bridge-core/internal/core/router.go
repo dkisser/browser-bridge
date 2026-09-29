@@ -153,6 +153,21 @@ func (r *Router) HandleInboundCommand(envelope Envelope, sender TextSender, opts
 		opt(&o)
 	}
 
+	// An inbound client may omit the id. It is minted here, at the top, rather
+	// than left to Encode further down, because the id is the routing key and
+	// the two must be the same value.
+	//
+	// Encode also mints one for an empty id, and doing it there was too late:
+	// the route below was registered under "" while the frame that went to the
+	// extension carried a fresh UUID, so the response — which echoes the id it
+	// was given — could never match the route. A client that omitted the id
+	// had every response dropped on the floor and its route pinned until the
+	// TTL, including on the happy path where the extension answered promptly.
+	// Nothing validated that the id was non-empty, so nothing surfaced it.
+	if envelope.ID == "" {
+		envelope.ID = NewID()
+	}
+
 	r.mu.Lock()
 	r.inboundByID[envelope.ID] = sender
 	r.mu.Unlock()

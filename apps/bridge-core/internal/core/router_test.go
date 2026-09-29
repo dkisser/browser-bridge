@@ -857,3 +857,95 @@ func TestSecondCommandDuringTheDisconnectWindowStillRejected(t *testing.T) {
 		t.Fatalf("second command error = %+v, want cannot_buffer", payload)
 	}
 }
+
+// A client is allowed to omit the envelope id — Encode has always minted one
+// for it. But Encode ran *after* the route was registered, so the route was
+// filed under "" while the frame going to the extension carried a fresh UUID.
+// The response echoes the id it was given, so `takeInbound` never matched: an
+// id-less client's command was answered by a perfectly healthy extension and
+// the answer was dropped, with the route pinned until the TTL fired.
+//
+// This is the happy path, not an error path, which is why it went unnoticed:
+// nothing failed, the extension just never got its answer through.
+func TestIdlessInboundCommandStillGetsItsResponse(t *testing.T) {
+	r, st, browser, _ := makeRouter(t)
+	st.SetStatus(StatusOnline)
+	browser.online = true
+
+	sender := &fakeSender{}
+	r.HandleInboundCommand(commandEnvelope(st.BrowserID(), ""), sender)
+
+	sent := browser.sentMessages()
+	if len(sent) != 1 {
+		t.Fatalf("extension got %d frames, want 1", len(sent))
+	}
+	env, err := Decode(sent[0])
+	if err != nil {
+		t.Fatalf("decode the frame the extension received: %v", err)
+	}
+	if env.ID == "" {
+		t.Fatal("the frame went out with an empty id; the extension has " +
+			"nothing to echo, so no response can be routed back")
+	}
+
+	// The route must be filed under the id that is actually on the wire —
+	// that is the whole point, and the response below is the proof.
+	r.mu.Lock()
+	_, routed := r.inboundByID[env.ID]
+	r.mu.Unlock()
+	if !routed {
+		t.Fatalf("no route under the wire id %q; the response will find "+
+			"nothing to deliver to", env.ID)
+	}
+
+	r.HandleBrowserResponse(Envelope{
+		ID:        env.ID,
+		Type:      TypeResponse,
+		BrowserID: st.BrowserID(),
+		Payload:   json.RawMessage(`{"status":"ok"}`),
+	})
+
+	got := sender.sentMessages()
+	if len(got) != 1 {
+		t.Fatalf("sender got %d messages, want the response routed back", len(got))
+	}
+	routed2, err := Decode(got[0])
+	if err != nil {
+		t.Fatalf("decode the delivered response: %v", err)
+	}
+	if routed2.ID != env.ID {
+		t.Errorf("response id = %q, want %q", routed2.ID, env.ID)
+	}
+}
+
+// The same invariant on the buffer path: a replay that cannot be delivered has
+// to find the route to fail, or the fix's own error path misses and the entry
+// leaks exactly as it did before.
+func TestIdlessBufferedCommandIsFailedOnAFailedReplay(t *testing.T) {
+	r, st, browser, _ := makeRouter(t)
+	st.SetStatus(StatusIdleWait)
+
+	sender := &fakeSender{}
+	r.HandleInboundCommand(commandEnvelope(st.BrowserID(), ""), sender)
+
+	browser.online = true
+	browser.deliver = false
+	r.HandleBrowserConnect()
+
+	got := sender.sentMessages()
+	if len(got) != 1 {
+		t.Fatalf("sender got %d messages, want extension_send_failed", len(got))
+	}
+	payload := decodePayload(t, got[0])
+	if payload.Error != "extension_send_failed" {
+		t.Errorf("error = %q, want extension_send_failed", payload.Error)
+	}
+
+	r.mu.Lock()
+	n := len(r.inboundByID)
+	r.mu.Unlock()
+	if n != 0 {
+		t.Errorf("%d routes left behind after a failed replay; each one pins "+
+			"its sender until the TTL fires", n)
+	}
+}
