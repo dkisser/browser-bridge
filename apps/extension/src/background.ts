@@ -38,11 +38,13 @@ import {
 const dispatchToContentScript = (
   tabId: number,
   message: Record<string, unknown>,
+  beforeSend?: () => void | Promise<void>,
 ): Promise<unknown> =>
   dispatchToContentScriptRaw(
     globalThis.chrome as unknown as ChromeLike,
     tabId,
     message,
+    beforeSend,
   );
 
 const OFFSCREEN_DOCUMENT_URL = 'offscreen.html';
@@ -543,11 +545,20 @@ export async function handleCommand(
       // takeover flip is applied in that same queue, so a command that was
       // still queued when the user hit the switch does see it. What the
       // gate cannot cover is the stretch between its decision and the DOM
-      // actually changing: sendToContentScript calls ensureContentScript
-      // first, which injects the content script when it is not there yet.
-      // That is a real await — long enough on a cold tab for a user who
-      // just reached for the kill switch to be staring at a page that
-      // clicks itself afterwards.
+      // actually changing — and that stretch is not short. Before the
+      // message goes out, sendToContentScript calls ensureContentScript,
+      // which on a cold tab does a tabs.get, a ping, an executeScript, and
+      // a listener wait of up to two seconds. A user reaching for the kill
+      // switch during that is looking at a page that clicks itself
+      // afterwards.
+      //
+      // So the check is passed down as `beforeSend` and runs *inside*
+      // dispatchToContentScript, between ensureContentScript and
+      // tabs.sendMessage. It used to run here, before that whole block —
+      // which meant it covered a window that had already closed by the time
+      // the command was delivered. The comment above used to claim
+      // otherwise; the test that now keys on the injection boundary is what
+      // makes the difference observable.
       //
       // This is the only command group that needs it, and saying so
       // matters more than the check itself. Every other branch's remaining
@@ -576,7 +587,7 @@ export async function handleCommand(
       // for a control whose job is to be inconvenient under pressure. The
       // cost is that "one-shot" means one *attempt*, not one execution, and
       // the test below pins that so it stays a decision.
-      await assertTakeoverUnchanged(command, origin);
+      //
       // A sensitive-field grant consumed at the gate authorizes this one type
       // command; the content script re-verifies the field at execution time.
       const forwarded =
@@ -587,9 +598,8 @@ export async function handleCommand(
             }
           : payload;
       try {
-        return (await sendToContentScript(
-          tabId,
-          forwarded,
+        return (await sendToContentScript(tabId, forwarded, () =>
+          assertTakeoverUnchanged(command, origin),
         )) as CommandResultMap[typeof command];
       } catch (err) {
         // Execution-point recheck: the field became sensitive between the
@@ -623,11 +633,16 @@ export async function handleCommand(
 async function sendToContentScript(
   tabId: number | undefined,
   payload: Record<string, unknown>,
+  beforeSend?: () => void | Promise<void>,
 ): Promise<unknown> {
   if (typeof tabId !== 'number') {
     throw new Error('Missing required tabId');
   }
-  return await dispatchToContentScript(tabId, { type: 'command', payload });
+  return await dispatchToContentScript(
+    tabId,
+    { type: 'command', payload },
+    beforeSend,
+  );
 }
 
 // Policy preflight for `type`: asks the content script to classify the

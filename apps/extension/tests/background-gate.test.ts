@@ -66,6 +66,11 @@ let badgeShouldFail = false;
 // the world changes.
 let storageReads = 0;
 let onNthStorageRead: { n: number; run: () => void } | null = null;
+// The injection boundary, which is a different seam from a storage read: it is
+// inside the dispatch path, after the execution-point re-check that a
+// read-ordinal flip targets. See the cold-tab test below.
+let onExecuteScript: (() => void) | null = null;
+let pingFailuresBeforeInjection = 0;
 
 function fireTabUpdated(
   tabId: number,
@@ -265,7 +270,21 @@ beforeAll(async () => {
         return { id: tabId, url: tabUrls.get(tabId), windowId: 1 };
       },
       sendMessage: async (_tabId: number, message: Record<string, unknown>) => {
-        if (message.type === 'ping') return { type: 'pong' };
+        if (message.type === 'ping') {
+          // Failing the first N pings is how a test reaches the *injection*
+          // path: ensureContentScript returns early when the listener already
+          // answers, so the default mock never injects, and a test that cannot
+          // inject cannot observe anything that happens around the injection.
+          // waitForListener pings again afterwards, so only the pre-injection
+          // pings need to fail.
+          if (pingFailuresBeforeInjection > 0) {
+            pingFailuresBeforeInjection -= 1;
+            throw new Error(
+              'Could not establish connection. Receiving end does not exist.',
+            );
+          }
+          return { type: 'pong' };
+        }
         if (message.type === 'preflight') {
           // Mirrors `content.ts:570`'s post-fix wire shape
           // (`sendResponse({ status: 'ok', data })` where `data` is
@@ -307,7 +326,18 @@ beforeAll(async () => {
       },
       onRemoved: { addListener: () => {} },
     },
-    scripting: { executeScript: async () => {} },
+    scripting: {
+      executeScript: async () => {
+        // The injection boundary. Everything the content script needs before
+        // it can listen happens inside this call, and it is the slowest await
+        // in the dispatch path on a cold tab — which is exactly why a
+        // takeover check that runs *before* it covers a window that has
+        // already been closed by the time the command is sent.
+        const hook = onExecuteScript;
+        onExecuteScript = null;
+        if (hook) hook();
+      },
+    },
     // agent-group.ts degrades to "grouping disabled" when these reject, which
     // is its real behavior when Chrome withholds the tabGroups permission.
     // Mocking the happy path keeps this suite's console readable; the
@@ -347,6 +377,8 @@ beforeAll(async () => {
 beforeEach(() => {
   store.clear();
   tabUrls.clear();
+  onExecuteScript = null;
+  pingFailuresBeforeInjection = 0;
   sentToContentScript.length = 0;
   createdTabs.length = 0;
   queriedTabs.length = 0;
@@ -717,6 +749,58 @@ describe('takeover is re-checked at the execution point', () => {
     // So this is an integration test of the window: takeover is engaged
     // during command handling and the command does not reach the page. The
     // re-check's own behaviour is pinned by the direct test below.
+  });
+
+  it('withdraws a command when the human takes over during content-script injection', async () => {
+    // The window the re-check's own comment claims to close.
+    //
+    // That comment says the gate "cannot cover the stretch between its
+    // decision and the DOM actually changing" because sendToContentScript
+    // injects the content script first, "which is a real await — long enough
+    // on a cold tab". But the re-check ran *before* that await, not across
+    // it: ensureContentScript (a tabs.get, a ping, an executeScript, and a
+    // listener wait that can take up to 2s) all happened between the check
+    // and the dispatch. Engaging Takeover anywhere in there was a no-op.
+    //
+    // Keyed on the injection rather than on a storage read ordinal on
+    // purpose. A read ordinal pins the test to an internal call count, and
+    // the read that mattered was never in the window at all — the existing
+    // test above flips on read 2, which is the one instant the check does
+    // cover, so it passed while the seam sat in the wrong place.
+    pingFailuresBeforeInjection = 1;
+    onExecuteScript = () => {
+      store.set('policyState', {
+        takeover: true,
+        origins: { [APPROVED]: 'always' },
+      });
+    };
+
+    const failure = await handleCommand(
+      makeCommand('click', 1, { selector: '#a' }),
+    ).then(
+      () => null,
+      (err: Error & { name?: string; denial?: { reason: string } }) => err,
+    );
+
+    expect(failure?.name).toBe('PolicyDeniedError');
+    expect(failure?.denial?.reason).toBe('human_assist_active');
+    // The whole point: the click did not reach the page. The user took the
+    // browser back while it was being prepared, and it clicked anyway.
+    expect(sentToContentScript).toHaveLength(0);
+  });
+
+  it('still injects and dispatches when nobody takes over mid-flight', async () => {
+    // The other direction for the same seam. A `beforeSend` that refused
+    // unconditionally would pass the test above by refusing everything, and
+    // the existing "leaves the command alone" test does not reach the
+    // injection path at all, so nothing would notice.
+    pingFailuresBeforeInjection = 1;
+    const result = await handleCommand(
+      makeCommand('click', 1, { selector: '#a' }),
+    );
+
+    expect(result).toEqual({ clicked: '#a' });
+    expect(sentToContentScript.length).toBeGreaterThan(0);
   });
 
   it('leaves the command alone when the human does not take over', async () => {
