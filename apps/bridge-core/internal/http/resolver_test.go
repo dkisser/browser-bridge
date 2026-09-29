@@ -164,3 +164,63 @@ func TestCommandErrorMessage(t *testing.T) {
 		})
 	}
 }
+
+// A browser in idle_wait is between sockets, not gone: the command buffer
+// holds a command for it during the reconnect tolerance. Resolving only to
+// online browsers meant the agent's tool call failed for that whole window
+// with advice to start an extension that was already running — and the CLI
+// path, which skips this resolver, never saw that failure at all.
+func TestResolveBrowserTargetsReconnectingBrowsers(t *testing.T) {
+	reconnecting := core.BrowserConnection{
+		BrowserID: "b-1", UserID: "extension", Status: core.StatusIdleWait, LastSeen: 1,
+	}
+	offline := core.BrowserConnection{
+		BrowserID: "b-2", UserID: "extension", Status: core.StatusOffline, LastSeen: 1,
+	}
+
+	tests := []struct {
+		name     string
+		explicit string
+		browsers []core.BrowserConnection
+		wantID   string
+		wantFail string
+	}{
+		{
+			name:     "implicit falls back to a reconnecting browser",
+			browsers: []core.BrowserConnection{reconnecting},
+			wantID:   "b-1",
+		},
+		{
+			name:     "explicit accepts a reconnecting browser",
+			explicit: "b-1",
+			browsers: []core.BrowserConnection{reconnecting},
+			wantID:   "b-1",
+		},
+		{
+			name:     "a live browser is still preferred over a reconnecting one",
+			browsers: []core.BrowserConnection{reconnecting, onlineBrowser("b-3")},
+			wantID:   "b-3",
+		},
+		{
+			name:     "explicit still rejects a truly offline browser",
+			explicit: "b-2",
+			browsers: []core.BrowserConnection{offline, reconnecting},
+			wantFail: `Browser "b-2" is not online (status: offline).`,
+		},
+		{
+			name:     "an offline browser is not a candidate",
+			browsers: []core.BrowserConnection{offline},
+			wantFail: "No browser connected. Start the extension/local-proxy first.",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotID, gotFail := resolveBrowser(tt.explicit, tt.browsers)
+			if gotID != tt.wantID || gotFail != tt.wantFail {
+				t.Errorf("resolveBrowser = (%q, %q), want (%q, %q)",
+					gotID, gotFail, tt.wantID, tt.wantFail)
+			}
+		})
+	}
+}

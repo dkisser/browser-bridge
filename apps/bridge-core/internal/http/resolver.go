@@ -10,11 +10,25 @@ import (
 // resolveBrowser is resolveBrowser in src/mcp/browser-resolver.ts: pick the
 // browser a command should go to, or explain why none qualifies. explicit is
 // the browserId pinned via set_browser ("" when unset).
+//
+// A browser in idle_wait is a legitimate target. That status is the router's
+// "connected, socket currently between" state, and it is what the command
+// buffer exists for: a command sent during the reconnect tolerance is held
+// and delivered when the extension comes back. Resolving only to online
+// browsers meant an agent's tool call failed for the whole 5s window with
+// "No browser connected. Start the extension/local-proxy first." — advice to
+// go start an extension that was running and merely reconnecting, and advice
+// the CLI path did not give because it skips this resolver entirely.
 func resolveBrowser(explicit string, browsers []core.BrowserConnection) (browserID, failureMessage string) {
+	// targetable is online or reconnecting; offline means it is gone.
+	targetable := func(s core.BrowserStatus) bool {
+		return s == core.StatusOnline || s == core.StatusIdleWait
+	}
+
 	if explicit != "" {
 		for _, b := range browsers {
 			if b.BrowserID == explicit {
-				if b.Status != core.StatusOnline {
+				if !targetable(b.Status) {
 					return "", fmt.Sprintf("Browser \"%s\" is not online (status: %s).", explicit, b.Status)
 				}
 				return explicit, ""
@@ -23,19 +37,31 @@ func resolveBrowser(explicit string, browsers []core.BrowserConnection) (browser
 		return "", fmt.Sprintf("Browser \"%s\" is not connected.", explicit)
 	}
 
-	var online []core.BrowserConnection
+	// Prefer browsers that are live now; fall back to ones that are
+	// reconnecting, so a command is still held for a browser that is about to
+	// come back rather than refused outright.
+	var online, reconnecting []core.BrowserConnection
 	for _, b := range browsers {
-		if b.Status == core.StatusOnline {
+		switch b.Status {
+		case core.StatusOnline:
 			online = append(online, b)
+		case core.StatusIdleWait:
+			reconnecting = append(reconnecting, b)
 		}
 	}
-	switch len(online) {
-	case 0:
-		return "", "No browser connected. Start the extension/local-proxy first."
-	case 1:
-		return online[0].BrowserID, ""
+	candidates := online
+	distinguishing := "No browser connected. Start the extension/local-proxy first."
+	if len(candidates) == 0 && len(reconnecting) > 0 {
+		candidates = reconnecting
+		distinguishing = "No browser connected."
 	}
-	return "", fmt.Sprintf("Multiple browsers are online. Call set_browser with one of:\n%s", formatBrowserList(online))
+	switch len(candidates) {
+	case 0:
+		return "", distinguishing
+	case 1:
+		return candidates[0].BrowserID, ""
+	}
+	return "", fmt.Sprintf("Multiple browsers are online. Call set_browser with one of:\n%s", formatBrowserList(candidates))
 }
 
 // formatBrowserList is formatBrowserList in browser-resolver.ts.
