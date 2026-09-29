@@ -3,6 +3,7 @@ package core
 import (
 	"encoding/json"
 	"log"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -255,11 +256,118 @@ func TestBufferedCommandTimesOutIntoSWTimeout(t *testing.T) {
 	select {
 	case text := <-responded:
 		payload := decodePayload(t, text)
-		if payload.Status != "error" || payload.Error != "sw_timeout" || payload.Message != "Service worker did not wake up" {
+		if payload.Status != "error" || payload.Error != "sw_timeout" || payload.Message != bufferExpiredMessage {
 			t.Fatalf("payload = %+v, want sw_timeout", payload)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("no sw_timeout within the buffer budget")
+	}
+}
+
+// TestBufferExpiryDoesNotBlameTheServiceWorker pins the *content* of the
+// buffer-expiry message, not just its code.
+//
+// The code is a contract clients match on and has to stay sw_timeout. The
+// message is the part a human reads, and it used to assert something the
+// router cannot know: whether the service worker woke up. The command is
+// buffered because the extension has no connection, and that connection can
+// have ended for any number of reasons downstream of the service worker, so
+// the sentence sent an operator to inspect the wrong subsystem. The claim
+// under test is the narrower one this router can actually support.
+func TestBufferExpiryDoesNotBlameTheServiceWorker(t *testing.T) {
+	if strings.Contains(strings.ToLower(bufferExpiredMessage), "service worker") {
+		t.Fatalf("buffer expiry message %q names a layer the router cannot "+
+			"observe; it should describe the connection, not the service worker",
+			bufferExpiredMessage)
+	}
+	// It still has to say something actionable rather than become a shrug.
+	if !strings.Contains(bufferExpiredMessage, "not connected") {
+		t.Fatalf("buffer expiry message %q does not say the browser was "+
+			"unreachable, which is the condition the caller can act on", bufferExpiredMessage)
+	}
+}
+
+// TestReplayedCommandFailsTheCallerWhenTheExtensionCannotBeReached covers
+// the third site where an accepted command can be lost, and the only one
+// where every safety net is already disarmed at the moment it happens.
+//
+// By the time HandleBrowserConnect replays the buffer, GetBufferedCommand has
+// cleared the buffer and stopped its timeout — so the sw_timeout callback can
+// no longer fire — and the buffered path never armed a route TTL, so nothing
+// else will clean up either. The return value of the replay was discarded, so
+// a send that failed left the caller waiting on its own deadline and the
+// router holding an inbound route that would never be released.
+func TestReplayedCommandFailsTheCallerWhenTheExtensionCannotBeReached(t *testing.T) {
+	r, st, browser, _ := makeRouter(t)
+	st.SetStatus(StatusIdleWait)
+
+	responded := make(chan string, 1)
+	sender := senderFunc(func(text string) { responded <- text })
+
+	r.HandleInboundCommand(commandEnvelope(st.BrowserID(), "c1"), sender)
+	select {
+	case text := <-responded:
+		t.Fatalf("sender got %q while the command is still buffered, want nothing", text)
+	default:
+	}
+
+	// The extension reconnects, but the upgrade produced no usable
+	// connection — SendToExtension says so.
+	browser.online = true
+	browser.deliver = false
+	r.HandleBrowserConnect()
+
+	select {
+	case text := <-responded:
+		payload := decodePayload(t, text)
+		if payload.Status != "error" || payload.Error != "extension_send_failed" {
+			t.Fatalf("payload = %+v, want extension_send_failed", payload)
+		}
+		if payload.Message == "" {
+			t.Fatal("extension_send_failed carried no message; the caller is " +
+				"left with a code and no explanation")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("caller was never answered after the replay failed")
+	}
+
+	// And the route is released, rather than pinned until the process exits.
+	r.mu.Lock()
+	_, still := r.inboundByID["c1"]
+	r.mu.Unlock()
+	if still {
+		t.Fatal("inboundByID[c1] survived a failed replay; the route leaks")
+	}
+}
+
+// The happy path: a replay that goes through must not also produce an error.
+func TestReplayedCommandStaysSilentWhenItIsDelivered(t *testing.T) {
+	r, st, browser, _ := makeRouter(t)
+	st.SetStatus(StatusIdleWait)
+
+	responded := make(chan string, 1)
+	sender := senderFunc(func(text string) { responded <- text })
+
+	r.HandleInboundCommand(commandEnvelope(st.BrowserID(), "c1"), sender)
+	browser.online = true
+	browser.deliver = true
+	r.HandleBrowserConnect()
+
+	select {
+	case text := <-responded:
+		t.Fatalf("sender got %q; a delivered replay must leave the caller waiting "+
+			"for the extension's real response", text)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if got := browser.sentMessages(); len(got) != 1 {
+		t.Fatalf("extension got %d frames, want the 1 buffered command", len(got))
+	}
+	// The route survives: the response still has to reach this caller.
+	r.mu.Lock()
+	_, alive := r.inboundByID["c1"]
+	r.mu.Unlock()
+	if !alive {
+		t.Fatal("inboundByID[c1] was removed after a successful replay")
 	}
 }
 

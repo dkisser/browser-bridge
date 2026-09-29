@@ -19,6 +19,25 @@ import (
 // daemon's MCP defaultTimeout (10s) for callers that do not.
 const defaultRouteTTL = 30 * time.Second
 
+// bufferExpiredMessage is what a caller reads when its command sat in the
+// buffer until the budget ran out.
+//
+// It used to say "Service worker did not wake up", which blames a layer the
+// router cannot observe and that is usually not the layer at fault. The
+// command is buffered because the extension has no connection to us, and
+// HandleBrowserDisconnect puts it there for any reason that ends one — the
+// offscreen document being torn down, a network blip, an extension reload.
+// Whether the service worker then wakes and reconnects is downstream of
+// something the router has no handle on, so asserting that it did not is a
+// guess, and a wrong one sends the operator to inspect the service worker
+// when the connection is what actually went away.
+//
+// The error code stays sw_timeout: it is the contract identifier clients
+// match on, and it is accurate about what happened to the command — it was
+// never delivered, and it stopped waiting. Only the human-readable half,
+// which never had to be a stable identifier, stops naming a subsystem.
+const bufferExpiredMessage = "The browser was not connected, and no connection arrived before the command expired"
+
 // Browser is the browser-server half the router talks to (BrowserServer in
 // router.ts).
 type Browser interface {
@@ -182,7 +201,7 @@ func (r *Router) HandleInboundCommand(envelope Envelope, sender TextSender, opts
 		if target == nil {
 			return
 		}
-		r.sendError(target, "sw_timeout", "Service worker did not wake up", envelope.ID, envelope.BrowserID)
+		r.sendError(target, "sw_timeout", bufferExpiredMessage, envelope.ID, envelope.BrowserID)
 		r.removeInbound(envelope.ID)
 	})
 	if !buffered {
@@ -271,12 +290,38 @@ func (r *Router) HandleBrowserConnect() {
 	// and the command is silently dropped — neither forwarded nor answered,
 	// with the caller left to time out on its own.
 	buffered, ok := r.state.GetBufferedCommand()
+	// The envelope id, needed to answer the caller if the replay below
+	// fails. GetBufferedCommand hands back the encoded frame rather than the
+	// envelope, and the frame *is* an envelope, so it decodes back.
+	var bufferedID string
+	if ok {
+		if env, err := Decode(buffered); err == nil {
+			bufferedID = env.ID
+		}
+	}
 
 	r.state.SetStatus(StatusOnline)
 	r.registry.SetStatus(r.state.BrowserID(), StatusOnline)
 
-	if ok {
-		r.browser.SendToExtension(buffered)
+	if !ok {
+		return
+	}
+	if r.browser.SendToExtension(buffered) {
+		return
+	}
+	// The third site that can lose a command after it has been accepted, and
+	// the only one where every safety net is already disarmed. GetBufferedCommand
+	// cleared the buffer and stopped its timeout, so onTimeout will not fire;
+	// the buffered path never armed a route TTL, so nothing else will either.
+	// The command is already unsendable — the upgrade this handler is
+	// reacting to has not produced a usable connection — so the only honest
+	// thing left is to fail the caller now instead of leaving it to discover
+	// the loss by timing out on its own deadline.
+	if target := r.lookupInbound(bufferedID); target != nil {
+		r.sendError(target, "extension_send_failed",
+			"The extension reconnected but the command could not be delivered.",
+			bufferedID, r.state.BrowserID())
+		r.removeInbound(bufferedID)
 	}
 }
 
