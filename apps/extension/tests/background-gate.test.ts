@@ -31,6 +31,8 @@ const queriedTabs: unknown[] = [];
 // navigation tests set it explicitly to drive both the "already finished" and
 // "still loading" paths.
 const tabStatuses = new Map<number, string>();
+// URLs staged by chrome.tabs.update, committed when the document loads.
+const pendingNavUrl = new Map<number, string>();
 // Live onUpdated listener registry, so a test can fire the event that a real
 // navigation produces — and assert the handler removes it again.
 let onUpdatedListeners: ((
@@ -56,6 +58,14 @@ function fireTabUpdated(
   tabId: number,
   changeInfo: chrome.tabs.TabChangeInfo,
 ): void {
+  // The new document commits here, so the tab starts showing the target.
+  if (changeInfo.status === 'complete') {
+    const pending = pendingNavUrl.get(tabId);
+    if (pending !== undefined) {
+      tabUrls.set(tabId, pending);
+      pendingNavUrl.delete(tabId);
+    }
+  }
   for (const listener of [...onUpdatedListeners]) listener(tabId, changeInfo);
 }
 
@@ -217,8 +227,14 @@ beforeAll(async () => {
         active: true,
         status: tabStatuses.get(tabId) ?? 'loading',
       }),
+      // Faithful to Chrome in the way that matters here: tabs.update
+      // *initiates* a navigation, it does not change what the tab is
+      // showing. The URL changes when the new document commits, which the
+      // mock models at status==='complete'. An unfaithful mock — one that
+      // rewrote tabUrls immediately — would hide the exact race
+      // waitForTabComplete's re-check has to survive.
       update: async (tabId: number, props: { url?: string }) => {
-        if (props.url !== undefined) tabUrls.set(tabId, props.url);
+        if (props.url !== undefined) pendingNavUrl.set(tabId, props.url);
         return { id: tabId, url: tabUrls.get(tabId), windowId: 1 };
       },
       sendMessage: async (_tabId: number, message: Record<string, unknown>) => {
@@ -306,6 +322,7 @@ beforeEach(() => {
   createdTabs.length = 0;
   queriedTabs.length = 0;
   tabStatuses.clear();
+  pendingNavUrl.clear();
   onUpdatedListeners = [];
   badgeShouldFail = false;
   badgeTextUpdates = 0;
@@ -695,6 +712,39 @@ describe('navigate waits for completion without losing the event', () => {
     );
 
     expect(failure?.message).toBe('Navigation timeout');
+  });
+
+  it('does not accept the page it is leaving as already complete', async () => {
+    // chrome.tabs.update resolves when the navigation is *initiated*, so the
+    // tab can still be reporting the previous page as 'complete' when the
+    // wait begins. The re-check must not treat that as this navigation
+    // having finished, or the caller gets the old page's url and title
+    // alongside a success.
+    tabUrls.set(1, 'https://example.com/old-page');
+    tabStatuses.set(1, 'complete');
+
+    const failure = await handleCommand(
+      makeCommand('navigate', 1, { url: URL, timeout: 25 }),
+    ).then(
+      () => null,
+      (err: Error) => err,
+    );
+
+    expect(failure?.message).toBe('Navigation timeout');
+  });
+
+  it('accepts the re-check once the tab has actually moved to the target', async () => {
+    // The complementary case: the same 'complete' status, but the tab is now
+    // on the requested origin (a bare origin in the request vs the trailing
+    // slash the browser reports must still match).
+    tabUrls.set(1, URL);
+    tabStatuses.set(1, 'complete');
+
+    const result = await handleCommand(
+      makeCommand('navigate', 1, { url: URL }),
+    );
+
+    expect(result).toEqual({ url: URL, title: undefined });
   });
 
   it('does not resolve on a non-completion update for the same tab', async () => {

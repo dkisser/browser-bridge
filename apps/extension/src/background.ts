@@ -127,6 +127,31 @@ async function connectOffscreen(): Promise<void> {
     .catch(() => {});
 }
 
+// reachedUrl reports whether a tab is now showing `target`.
+//
+// Compares the whole URL, not just the origin: a same-origin navigation
+// (`/old-page` → `/page`) is exactly the case this must not accept, and an
+// origin comparison would wave it through. Only the trailing slash is
+// normalized away, so a bare `https://example.com` still matches the
+// `https://example.com/` the browser reports. Targets the URL parser rejects
+// (data:, about:) fall back to exact equality.
+function reachedUrl(actual: string | undefined, target: string): boolean {
+  if (actual === undefined) return false;
+  const normalize = (raw: string): string | null => {
+    try {
+      const parsed = new URL(raw);
+      if (parsed.pathname === '') parsed.pathname = '/';
+      return parsed.href.replace(/\/$/, '');
+    } catch {
+      return null;
+    }
+  };
+  const a = normalize(actual);
+  const b = normalize(target);
+  if (a !== null && b !== null) return a === b;
+  return actual === target;
+}
+
 // waitForTabComplete resolves once the tab reports status 'complete'.
 //
 // The listener can only be registered *after* the navigation is kicked off
@@ -143,10 +168,21 @@ async function connectOffscreen(): Promise<void> {
 //   - finish() is idempotent and always removes the listener, so no path
 //     leaks one.
 //
-// `wait:navigation` had all of this; `navigate` had none of it, which is how a
-// fast-loading target hung until the control plane gave up on it and reported
-// a service worker that was perfectly healthy.
-function waitForTabComplete(tabId: number, timeout: number): Promise<void> {
+// `expectUrl` constrains only the re-check, and only for callers that know
+// where they are going. chrome.tabs.update resolves while the tab may still
+// be showing the *previous* page as 'complete', so an unconstrained re-check
+// can resolve against the old page and hand the caller its url and title
+// while reporting success. Requiring the tab to have actually moved to the
+// target removes that. The event path is unaffected — a 'complete' event
+// after the update is the new page — so a redirect to a different origin
+// still resolves normally through the listener, and only a redirect *and* a
+// fast cached load together would fall through to the timeout, which is a
+// clear error rather than a confidently wrong answer.
+function waitForTabComplete(
+  tabId: number,
+  timeout: number,
+  expectUrl?: string,
+): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     let settled = false;
     let timer: ReturnType<typeof setTimeout>;
@@ -174,7 +210,11 @@ function waitForTabComplete(tabId: number, timeout: number): Promise<void> {
     chrome.tabs
       .get(tabId)
       .then((current) => {
-        if (current.status === 'complete') finish();
+        if (current.status !== 'complete') return;
+        if (expectUrl !== undefined && !reachedUrl(current.url, expectUrl)) {
+          return;
+        }
+        finish();
       })
       .catch(() => {
         // Tab lookup failed; rely on the event listener and timeout.
@@ -302,12 +342,15 @@ export async function handleCommand(
         throw new Error('Missing required tabId');
       }
       const tab = tabId;
-      await chrome.tabs.update(tab, { url: params.url as string });
-      // The wait is bounded and cannot lose its completion event; see
-      // waitForTabComplete.
+      const target = params.url as string;
+      await chrome.tabs.update(tab, { url: target });
+      // The wait is bounded and cannot lose its completion event; passing the
+      // target keeps the re-check from accepting the page we are leaving.
+      // See waitForTabComplete.
       await waitForTabComplete(
         tab,
         (params.timeout as number) || DEFAULT_NAV_TIMEOUT_MS,
+        target,
       );
       const updatedTab = await chrome.tabs.get(tab);
       return { url: updatedTab.url, title: updatedTab.title };
