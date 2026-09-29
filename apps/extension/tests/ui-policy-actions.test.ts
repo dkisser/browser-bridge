@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
+import { applyPolicyOp, type PolicyOp } from '../src/policy-operations';
 import {
   getPolicyState,
+  normalizePolicyState,
   recordDenial,
   updatePolicyState,
 } from '../src/policy-state';
@@ -22,8 +24,26 @@ const store = new Map<string, unknown>();
       },
     },
   },
-  // handleDenialAction -> updateBadge touches chrome.action. The action API
-  // is irrelevant to these tests; stub every method it can call.
+  // The side panel does not write policy state itself: it sends a `policy_op`
+  // message and the service worker applies it inside its own write queue
+  // (see src/policy-operations.ts). This mock stands in for that handler so
+  // the test still exercises the real reducer end to end, including the
+  // message shape the UI actually sends.
+  runtime: {
+    sendMessage: async (message: { type: string; op: PolicyOp }) => {
+      if (message.type !== 'policy_op') return undefined;
+      const current = normalizePolicyState(store.get('policyState'));
+      const patch = applyPolicyOp(current, message.op);
+      if (patch === null) {
+        return { status: 'ok', data: current };
+      }
+      const next = { ...current, ...patch };
+      store.set('policyState', next);
+      return { status: 'ok', data: next };
+    },
+  },
+  // The service worker refreshes the badge as part of the same operation;
+  // the action API is irrelevant here, so stub every method it can call.
   action: {
     setBadgeBackgroundColor: async () => {},
     setBadgeText: async () => {},

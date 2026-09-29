@@ -586,7 +586,10 @@ describe('navigate waits for completion without losing the event', () => {
   const URL = 'https://example.com/page';
 
   beforeEach(() => {
-    store.set('policyState', { takeover: false, origins: { 'https://example.com': 'always' } });
+    store.set('policyState', {
+      takeover: false,
+      origins: { 'https://example.com': 'always' },
+    });
   });
 
   it('completes when the page already reached complete before listening', async () => {

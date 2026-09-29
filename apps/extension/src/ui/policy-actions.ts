@@ -1,15 +1,12 @@
-import type { Denial, Grant } from '@browser-bridge/shared';
-import { denialKey } from '@browser-bridge/shared';
-import { updateBadge, updatePolicyState } from '../policy-state';
+import type { Denial } from '@browser-bridge/shared';
+import type { DenialAction, OriginKind, PolicyOp } from '../policy-operations';
+import { requestPolicyOp } from './policy-ops';
 
-const GRANT_TTL_MS = 5 * 60 * 1000;
-
-export type DenialAction =
-  | 'approve-session'
-  | 'approve-always'
-  | 'deny-origin'
-  | 'allow-once'
-  | 'dismiss';
+// User actions on the side panel. Each one names a policy operation for the
+// service worker to apply inside its own serialization queue; none of them
+// writes storage directly (see ui/policy-ops.ts for why), and none of them
+// refreshes the badge — the service worker does that as part of the same
+// operation, so the two can never disagree.
 
 // Button sets vary by denial reason — order and labels are user-visible
 // contract (copy freeze), do not reorder or rename.
@@ -32,125 +29,29 @@ export function denialCardButtons(denial: Denial): [DenialAction, string][] {
   }
 }
 
-// Resolves the target denial by stable key (reason|origin|command) inside
-// the serialized update — the array index from render time may no longer
-// point at the same denial if a new one was prepended between render and
-// click. Passing the key keeps the action bound to the card the user saw.
+// targetKey is the stable denial key (reason|origin|command) the card was
+// rendered with, so the action stays bound to the card the user saw even if a
+// new denial was prepended between render and click.
 export async function handleDenialAction(
   action: DenialAction,
   targetKey: string,
 ): Promise<void> {
-  if (action === 'dismiss') {
-    await updatePolicyState((state) => ({
-      recentDenials: state.recentDenials.filter(
-        (d) => denialKey(d) !== targetKey,
-      ),
-    }));
-    await updateBadge();
-    return;
-  }
-  await updatePolicyState((state) => {
-    const index = state.recentDenials.findIndex(
-      (d) => denialKey(d) === targetKey,
-    );
-    if (index === -1) return null;
-    const denial = state.recentDenials[index];
-    const remaining = state.recentDenials.filter((_, i) => i !== index);
-    // The two maps must stay mutually exclusive — OriginsPanel renders
-    // them together and would otherwise show the same origin twice.
-    const clearedOrigins =
-      denial.origin !== undefined && state.origins[denial.origin] !== undefined
-        ? Object.fromEntries(
-            Object.entries(state.origins).filter(
-              ([origin]) => origin !== denial.origin,
-            ),
-          )
-        : state.origins;
-    const clearedDeniedOrigins =
-      denial.origin !== undefined &&
-      state.deniedOrigins[denial.origin] !== undefined
-        ? Object.fromEntries(
-            Object.entries(state.deniedOrigins).filter(
-              ([origin]) => origin !== denial.origin,
-            ),
-          )
-        : state.deniedOrigins;
-    switch (action) {
-      case 'approve-session':
-      case 'approve-always': {
-        if (denial.origin === undefined) {
-          // These actions require an origin. denialCardButtons never
-          // surfaces them for origin-less denials, but a stale UI
-          // (extension update, script injection) could still invoke
-          // them. Surface the rejection so the caller can show an
-          // error banner instead of silently leaving the card.
-          throw new Error('approve requires a denial with an origin');
-        }
-        return {
-          origins: {
-            ...clearedOrigins,
-            [denial.origin]:
-              action === 'approve-session' ? 'session' : 'always',
-          },
-          deniedOrigins: clearedDeniedOrigins,
-          recentDenials: remaining,
-        };
-      }
-      case 'deny-origin': {
-        if (denial.origin === undefined) {
-          throw new Error('deny-origin requires a denial with an origin');
-        }
-        return {
-          origins: clearedOrigins,
-          deniedOrigins: {
-            ...clearedDeniedOrigins,
-            [denial.origin]: 'always',
-          },
-          recentDenials: remaining,
-        };
-      }
-      case 'allow-once': {
-        const grant: Grant = {
-          capability: denial.capability ?? 'submit',
-          ...(denial.origin !== undefined ? { origin: denial.origin } : {}),
-          expiresAt: Date.now() + GRANT_TTL_MS,
-          singleUse: true,
-        };
-        return { grants: [...state.grants, grant], recentDenials: remaining };
-      }
-      default:
-        return null;
-    }
-  });
-  await updateBadge();
+  await requestPolicyOp({ op: 'denial_action', action, targetKey });
 }
-
-export type OriginKind = 'origins' | 'deniedOrigins';
 
 export async function removeOriginEntry(
   kind: OriginKind,
   origin: string,
 ): Promise<void> {
-  await updatePolicyState((state) => {
-    const map = kind === 'origins' ? state.origins : state.deniedOrigins;
-    const next = Object.fromEntries(
-      Object.entries(map).filter(([key]) => key !== origin),
-    );
-    return kind === 'origins' ? { origins: next } : { deniedOrigins: next };
-  });
+  await requestPolicyOp({ op: 'remove_origin', kind, origin });
 }
 
 export async function addBlockEntry(entry: string): Promise<void> {
-  await updatePolicyState((state) => {
-    if (state.blockedOrigins.includes(entry)) return null;
-    return { blockedOrigins: [...state.blockedOrigins, entry] };
-  });
+  await requestPolicyOp({ op: 'add_block', entry });
 }
 
 export async function removeBlockEntry(entry: string): Promise<void> {
-  await updatePolicyState((state) => ({
-    blockedOrigins: state.blockedOrigins.filter((item) => item !== entry),
-  }));
+  await requestPolicyOp({ op: 'remove_block', entry });
 }
 
 export async function handleDownloadAction(
@@ -164,19 +65,16 @@ export async function handleDownloadAction(
       await chrome.downloads.cancel(id);
     }
   } catch (error) {
-    // chrome.downloads.resume/cancel rejects when the download is gone
-    // (already completed or cancelled via the browser UI before us) —
-    // that is the expected terminal state. Drop the pending entry
-    // silently so the panel does not keep showing a download the user
-    // can no longer act on from here.
     if (
       error instanceof Error &&
       /not found|gone|no longer/i.test(error.message)
     ) {
-      await updatePolicyState((state) => ({
-        pendingDownloads: state.pendingDownloads.filter((d) => d.id !== id),
-      }));
-      await updateBadge();
+      // chrome.downloads.resume/cancel rejects when the download is gone
+      // (already completed or cancelled via the browser UI before us) —
+      // that is the expected terminal state. Drop the pending entry
+      // silently so the panel does not keep showing a download the user
+      // can no longer act on from here.
+      await requestPolicyOp({ op: 'remove_download', id });
       return;
     }
     // Non-terminal failure (host tab closed, lost extension context,
@@ -185,8 +83,9 @@ export async function handleDownloadAction(
     // so the caller's .catch surfaces the failure.
     throw error;
   }
-  await updatePolicyState((state) => ({
-    pendingDownloads: state.pendingDownloads.filter((d) => d.id !== id),
-  }));
-  await updateBadge();
+  await requestPolicyOp({ op: 'remove_download', id });
 }
+
+// Re-exported so the panels keep importing the action vocabulary from the
+// module they already use for the actions themselves.
+export type { DenialAction, OriginKind };

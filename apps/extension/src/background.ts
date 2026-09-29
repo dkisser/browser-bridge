@@ -21,6 +21,7 @@ import {
   ContentScriptUnavailableError,
   dispatchToContentScript as dispatchToContentScriptRaw,
 } from './content-bridge';
+import { applyPolicyOp, type PolicyOp } from './policy-operations';
 import {
   clearSessionScoped,
   decideWithState,
@@ -546,6 +547,33 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
           });
           return;
         }
+        sendResponse({ status: 'error', error: err.message });
+      });
+    return true; // async response
+  }
+
+  // Policy mutation requested by a UI context (side panel / pairing).
+  //
+  // The UI deliberately does not write chrome.storage.local itself. The
+  // serialization queue in policy-state.ts is a module-level variable, so
+  // each JS context has its own copy and its own last-writer-wins window
+  // over the whole state object — a UI write could resurrect a singleUse
+  // grant the service worker had just consumed, or drop the user's takeover
+  // toggle. Routing the mutation through here makes the service worker the
+  // only writer, so its queue is the only one that matters.
+  //
+  // A callback could not cross this boundary, so the UI names an operation
+  // (see policy-operations.ts) instead of supplying the code to run.
+  if (request.type === 'policy_op') {
+    const op = request.op as PolicyOp;
+    updatePolicyState((state) => applyPolicyOp(state, op))
+      .then((state) =>
+        // The service worker owns the badge, so refreshing it here keeps
+        // every operation's side effect in one place instead of each UI
+        // call site remembering to.
+        updateBadge().then(() => ({ status: 'ok', data: state })),
+      )
+      .catch((err: Error) => {
         sendResponse({ status: 'error', error: err.message });
       });
     return true; // async response

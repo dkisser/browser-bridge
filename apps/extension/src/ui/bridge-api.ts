@@ -1,5 +1,5 @@
 import { LOCAL_WS_PORT } from '@browser-bridge/shared';
-import { setPolicyState } from '../policy-state';
+import { requestPolicyOp } from './policy-ops';
 
 export const API_BASE = `http://localhost:${LOCAL_WS_PORT}`;
 
@@ -54,7 +54,10 @@ export async function confirmPairingCode(code: string): Promise<string | null> {
     });
     const result = (await response.json()) as PairConfirmResponse;
     if (result.success && result.data?.token) {
-      await setPolicyState({ pairingToken: result.data.token });
+      await requestPolicyOp({
+        op: 'set_pairing_token',
+        token: result.data.token,
+      });
       void chrome.runtime.sendMessage({ type: 'connect' }).catch(() => {});
       return null;
     }
