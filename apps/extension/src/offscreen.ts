@@ -13,7 +13,10 @@ import { LOCAL_HOST, LOCAL_WS_PORT } from '@browser-bridge/shared';
 // /etc/hosts lists it first means the agent never pairs at all. A display
 // string being wrong is a cosmetic problem; this one is the product not
 // working.
-const LOCAL_WS_URL = `ws://${LOCAL_HOST}:${LOCAL_WS_PORT}`;
+// Exported so a test can pin it. This is the extension's only outbound
+// address, it has no test otherwise, and the one-line test is the cheapest
+// possible guard against the loopback literal coming back.
+export const LOCAL_WS_URL = `ws://${LOCAL_HOST}:${LOCAL_WS_PORT}`;
 
 let ws: WebSocket | null = null;
 let currentToken: string | null = null;
