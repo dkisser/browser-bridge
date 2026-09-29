@@ -64,10 +64,12 @@ func responseError(payload core.ResponsePayload, fallback string) string {
 	if payload.Message != "" {
 		return payload.Message
 	}
-	// A policy rejection normally arrives with a human-readable message from
-	// the extension, but the structured denial carries what the bare reason
-	// code cannot: which origin, and what capability. Render it rather than
-	// printing "origin_not_approved" and nothing else.
+	// Fallback for a producer that sends the structured denial without a
+	// human-readable message. The extension does not currently — it always
+	// fills Message via humanDenialMessage — so this branch does not fire
+	// today; it exists so a future producer cannot regress into printing a
+	// bare reason code with no indication of which origin or capability was
+	// refused.
 	if d := payload.Denied; d != nil {
 		subject := d.Origin
 		if subject == "" {
@@ -106,20 +108,20 @@ type browserCommand struct {
 	short   string
 	args    cobra.PositionalArgs
 	command string // wire CommandType in packages/shared/src/types.ts
-	params  func(args []string) (map[string]any, error)
+	params  func(g *globals, args []string) (map[string]any, error)
 }
 
-func noParams(_ []string) (map[string]any, error) { return map[string]any{}, nil }
+func noParams(_ *globals, _ []string) (map[string]any, error) { return map[string]any{}, nil }
 
 // selectorParam maps `bridge <cmd> <selector>` to {selector}.
-func selectorParam(args []string) (map[string]any, error) {
+func selectorParam(_ *globals, args []string) (map[string]any, error) {
 	return map[string]any{"selector": args[0]}, nil
 }
 
 // intParam parses a positional integer. The TS CLI passed Number() through
 // (NaN serialized as null); failing fast keeps the error local and legible.
-func intParam(name string) func(args []string) (map[string]any, error) {
-	return func(args []string) (map[string]any, error) {
+func intParam(name string) func(_ *globals, args []string) (map[string]any, error) {
+	return func(_ *globals, args []string) (map[string]any, error) {
 		n, err := strconv.Atoi(args[0])
 		if err != nil {
 			return nil, fmt.Errorf("invalid %s %q", name, args[0])
@@ -141,8 +143,14 @@ var browserCommands = []browserCommand{
 		short:   "Navigate to URL in a specific tab",
 		args:    cobra.ExactArgs(1),
 		command: "navigate",
-		params: func(args []string) (map[string]any, error) {
-			return map[string]any{"url": args[0]}, nil
+		params: func(g *globals, args []string) (map[string]any, error) {
+			// The extension bounds its own wait for the page to reach
+			// 'complete' with this budget, and falls back to a hardcoded 30s
+			// when it is absent. Without it the two entry points disagree:
+			// the CLI's default --timeout is 10s, so the extension would sit
+			// on a listener for 20s after the CLI had already given up, and
+			// `--timeout 60000` would still be capped at 30s.
+			return map[string]any{"url": args[0], "timeout": g.timeout}, nil
 		},
 	},
 	{
@@ -180,7 +188,7 @@ var browserCommands = []browserCommand{
 		short:   "Open a new tab",
 		args:    cobra.MaximumNArgs(1),
 		command: "tab:new",
-		params: func(args []string) (map[string]any, error) {
+		params: func(g *globals, args []string) (map[string]any, error) {
 			params := map[string]any{}
 			if len(args) == 1 {
 				params["url"] = args[0]
@@ -214,7 +222,7 @@ var browserCommands = []browserCommand{
 		short:   "Type text into an element. " + selectorHint,
 		args:    cobra.ExactArgs(2),
 		command: "type",
-		params: func(args []string) (map[string]any, error) {
+		params: func(g *globals, args []string) (map[string]any, error) {
 			return map[string]any{"selector": args[0], "text": args[1]}, nil
 		},
 	},
@@ -223,7 +231,7 @@ var browserCommands = []browserCommand{
 		short:   "Select an option in a dropdown. " + selectorHint,
 		args:    cobra.ExactArgs(2),
 		command: "select",
-		params: func(args []string) (map[string]any, error) {
+		params: func(g *globals, args []string) (map[string]any, error) {
 			return map[string]any{"selector": args[0], "value": args[1]}, nil
 		},
 	},
@@ -232,7 +240,7 @@ var browserCommands = []browserCommand{
 		short:   "Scroll page by x,y pixels",
 		args:    cobra.ExactArgs(2),
 		command: "scroll",
-		params: func(args []string) (map[string]any, error) {
+		params: func(g *globals, args []string) (map[string]any, error) {
 			params := map[string]any{"selector": "page"}
 			for i, key := range []string{"x", "y"} {
 				n, err := strconv.ParseFloat(args[i], 64)
@@ -289,7 +297,7 @@ func registerBrowserCommands(root *cobra.Command, g *globals) {
 			Short:   bc.short,
 			Args:    bc.args,
 			RunE: func(cmd *cobra.Command, args []string) error {
-				params, err := bc.params(args)
+				params, err := bc.params(g, args)
 				if err != nil {
 					return fail(cmd, g, "command_failed", err.Error())
 				}

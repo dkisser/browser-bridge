@@ -18,6 +18,27 @@ import { join } from 'node:path';
 const UI_DIR = join(import.meta.dir, '..', 'src', 'ui');
 const SRC_DIR = join(import.meta.dir, '..', 'src');
 
+// Modules owned by the service worker, which is the only context allowed to
+// write policy state — directly or through the storage layer. `agent-group`
+// is here because it is imported by background.ts alone and its
+// setAgentGroupAvailability helper runs inside the worker's own queue; the
+// badge and tab-group side effects belong to the worker anyway. If one of
+// these ever becomes reachable from a page, this list must shrink with it.
+const ALLOWED_WRITERS = new Set([
+  join(SRC_DIR, 'background.ts'),
+  join(SRC_DIR, 'agent-group.ts'),
+  join(SRC_DIR, 'policy-state.ts'),
+]);
+
+// Anchor on the module specifier rather than on the write function names, so
+// renaming updatePolicyState cannot turn this guard into a silent no-op that
+// stays green. The write patterns are matched broadly, including direct
+// chrome.storage.local writes — the shape the original bug would take if a
+// module bypassed policy-state entirely.
+const IMPORTS_POLICY_STATE = /from\s+'[^']*policy-state'/;
+const WRITES_POLICY =
+  /\b(updatePolicyState|setPolicyState|decideWithState|setAgentGroupAvailability)\s*\(|chrome\.storage\.local\.(set|remove|clear)\s*\(/;
+
 function sourceFilesIn(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const full = join(dir, entry.name);
@@ -29,20 +50,18 @@ function sourceFilesIn(dir: string): string[] {
 describe('only the service worker writes policy state', () => {
   const offenders: string[] = [];
 
-  for (const file of sourceFilesIn(UI_DIR)) {
+  // Scan every extension source file, not just ui/: offscreen.ts,
+  // agent-group.ts and any future page are equally able to reintroduce the
+  // second writer this guard exists to prevent.
+  for (const file of sourceFilesIn(SRC_DIR)) {
+    if (ALLOWED_WRITERS.has(file)) continue;
     const source = readFileSync(file, 'utf8');
-    // updatePolicyState / setPolicyState are the two write entry points that
-    // perform a read-modify-write of the whole state object. decideWithState
-    // is included for the same reason: it consumes grants and must not run
-    // outside the service worker's queue.
-    if (
-      /\b(updatePolicyState|setPolicyState|decideWithState)\s*\(/.test(source)
-    ) {
-      offenders.push(file);
+    if (IMPORTS_POLICY_STATE.test(source) && WRITES_POLICY.test(source)) {
+      offenders.push(file.slice(SRC_DIR.length + 1));
     }
   }
 
-  it('no UI module calls a policy-state write function', () => {
+  it('no other module calls a policy-state write function', () => {
     expect(offenders).toEqual([]);
   });
 

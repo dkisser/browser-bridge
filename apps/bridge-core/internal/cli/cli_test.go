@@ -148,7 +148,11 @@ func TestCommandConstruction(t *testing.T) {
 		// does not fight the shared compact-JSON assertion.
 		jsonMode bool
 	}{
-		{name: "navigate", args: []string{"navigate", "https://example.com"}, wantCmd: "navigate", wantParams: map[string]any{"url": "https://example.com"}},
+		// navigate carries the in-page completion budget so the extension bounds its
+		// own wait instead of falling back to its hardcoded 30s default — which
+		// would otherwise disagree with the CLI's --timeout.
+		{name: "navigate", args: []string{"navigate", "https://example.com"}, wantCmd: "navigate", wantParams: map[string]any{"url": "https://example.com", "timeout": float64(10000)}},
+		{name: "navigate local timeout", args: []string{"navigate", "https://example.com", "--timeout", "60000"}, wantCmd: "navigate", wantParams: map[string]any{"url": "https://example.com", "timeout": float64(60000)}},
 		{name: "go-back", args: []string{"go-back"}, wantCmd: "goBack", wantParams: map[string]any{}},
 		{name: "goBack alias", args: []string{"goBack"}, wantCmd: "goBack", wantParams: map[string]any{}},
 		{name: "go-forward", args: []string{"go-forward"}, wantCmd: "goForward", wantParams: map[string]any{}},

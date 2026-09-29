@@ -38,6 +38,20 @@ let onUpdatedListeners: ((
   changeInfo: chrome.tabs.TabChangeInfo,
 ) => void)[] = [];
 
+// The real service-worker's chrome.runtime.onMessage listener, captured so a
+// test can drive an actual `policy_op` through it. Before this existed the
+// registration was inert, so the handler ran in no test at all — which is how
+// a success path that never called sendResponse shipped green.
+const onMessageListeners: ((
+  request: unknown,
+  sender: unknown,
+  sendResponse: (response?: unknown) => void,
+) => boolean | undefined)[] = [];
+
+// Set to make chrome.action.* reject, simulating a service-worker context
+// being invalidated mid-request.
+let badgeShouldFail = false;
+
 function fireTabUpdated(
   tabId: number,
   changeInfo: chrome.tabs.TabChangeInfo,
@@ -167,7 +181,17 @@ beforeAll(async () => {
       // Listener registrations and the module-bottom connectOffscreen() are
       // import-time side effects of background.ts; they only need inert
       // stand-ins.
-      onMessage: { addListener: () => {} },
+      onMessage: {
+        addListener: (
+          fn: (
+            request: unknown,
+            sender: unknown,
+            sendResponse: (response?: unknown) => void,
+          ) => boolean | undefined,
+        ) => {
+          onMessageListeners.push(fn);
+        },
+      },
       onInstalled: { addListener: () => {} },
       onStartup: { addListener: () => {} },
       getContexts: async () => [],
@@ -245,11 +269,18 @@ beforeAll(async () => {
     },
     action: {
       setBadgeText: async (details: { text: string }) => {
+        if (badgeShouldFail) {
+          throw new Error('Extension context invalidated.');
+        }
         badgeTextUpdates += 1;
         lastBadgeText = { text: details.text };
       },
-      setBadgeBackgroundColor: async () => {},
-      setTitle: async () => {},
+      setBadgeBackgroundColor: async () => {
+        if (badgeShouldFail) throw new Error('Extension context invalidated.');
+      },
+      setTitle: async () => {
+        if (badgeShouldFail) throw new Error('Extension context invalidated.');
+      },
     },
     downloads: { onCreated: { addListener: () => {} } },
     windows: { onRemoved: { addListener: () => {} } },
@@ -270,6 +301,7 @@ beforeEach(() => {
   queriedTabs.length = 0;
   tabStatuses.clear();
   onUpdatedListeners = [];
+  badgeShouldFail = false;
   badgeTextUpdates = 0;
   lastBadgeText = null;
   preflightResult = { sensitive: false };
@@ -657,5 +689,112 @@ describe('navigate waits for completion without losing the event', () => {
     );
 
     expect(failure?.message).toBe('Navigation timeout');
+  });
+});
+
+// Drive a real `policy_op` through the real service-worker listener.
+//
+// Every other test around this path mocks `chrome.runtime.sendMessage` with
+// its own reimplementation, so background.ts's own handler was executed by no
+// test in the suite. That is how a success path that built the response
+// payload and then dropped it — never calling sendResponse — shipped green:
+// the side panel's promise would hang, and the takeover switch would flip back
+// to "human assist active" while storage said the agent had the browser.
+describe('policy_op through the real service-worker listener', () => {
+  const listener = () => onMessageListeners[0];
+
+  function sendPolicyOp(op: unknown): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error('policy_op was never answered')),
+        1000,
+      );
+      const kept = listener()?.(
+        { type: 'policy_op', op },
+        { id: 'test' },
+        (response?: unknown) => {
+          clearTimeout(timer);
+          resolve(response);
+        },
+      );
+      // Returning true is what keeps the message channel open for an async
+      // response; returning falsy would close it before the handler replied.
+      expect(kept).toBe(true);
+    });
+  }
+
+  beforeEach(() => {
+    store.set('policyState', { takeover: false, origins: {} });
+  });
+
+  it('answers a successful operation', async () => {
+    const response = (await sendPolicyOp({
+      op: 'set_takeover',
+      desired: true,
+    })) as { status: string; data: { takeover: boolean } };
+
+    expect(response.status).toBe('ok');
+    expect(response.data.takeover).toBe(true);
+    // The write actually landed, not just a well-formed reply.
+    const stored = store.get('policyState') as { takeover: boolean };
+    expect(stored.takeover).toBe(true);
+  });
+
+  it('answers even when the badge refresh fails', async () => {
+    // The badge is cosmetic. If its failure could reach the caller, the panel
+    // would revert its optimistic UI while the write had already landed —
+    // for Takeover that shows the user "human assist active" while the agent
+    // actually has the browser.
+    badgeShouldFail = true;
+
+    const response = (await sendPolicyOp({
+      op: 'set_takeover',
+      desired: false,
+    })) as { status: string; data: { takeover: boolean } };
+
+    expect(response.status).toBe('ok');
+    const stored = store.get('policyState') as { takeover: boolean };
+    expect(stored.takeover).toBe(false);
+  });
+
+  it('answers with an error when the operation itself fails', async () => {
+    // An origin-less denial is in the store, so the reducer reaches the
+    // approve guard and throws. The caller must hear about it rather than
+    // hang. denialKey is `reason|origin|command`, with an empty origin.
+    store.set('policyState', {
+      takeover: false,
+      origins: {},
+      recentDenials: [{ reason: 'approval_required', command: 'click' }],
+    });
+
+    const response = (await sendPolicyOp({
+      op: 'denial_action',
+      action: 'approve-always',
+      targetKey: 'approval_required||click',
+    })) as { status: string; error: string };
+
+    expect(response.status).toBe('error');
+    expect(response.error).toContain('requires a denial with an origin');
+  });
+
+  it('keeps serving operations after one fails', async () => {
+    store.set('policyState', {
+      takeover: false,
+      origins: {},
+      recentDenials: [{ reason: 'approval_required', command: 'click' }],
+    });
+    await sendPolicyOp({
+      op: 'denial_action',
+      action: 'approve-always',
+      targetKey: 'approval_required||click',
+    });
+
+    const response = (await sendPolicyOp({
+      op: 'add_block',
+      entry: 'evil.example',
+    })) as { status: string; data: { blockedOrigins: string[] } };
+
+    expect(response.status).toBe('ok');
+    expect(response.data.blockedOrigins).toEqual(['evil.example']);
   });
 });

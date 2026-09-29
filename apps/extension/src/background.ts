@@ -567,12 +567,24 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   if (request.type === 'policy_op') {
     const op = request.op as PolicyOp;
     updatePolicyState((state) => applyPolicyOp(state, op))
-      .then((state) =>
-        // The service worker owns the badge, so refreshing it here keeps
-        // every operation's side effect in one place instead of each UI
-        // call site remembering to.
-        updateBadge().then(() => ({ status: 'ok', data: state })),
-      )
+      .then((state) => {
+        // The badge is cosmetic and must never be able to fail the
+        // operation's acknowledgement. updateBadge awaits a storage read and
+        // three chrome.action calls, all of which can reject — and the panel
+        // reverts its optimistic UI on an error response. If a badge failure
+        // could reach the caller that way, toggling Takeover off would leave
+        // the switch reading "human assist active" while storage said the
+        // agent had the browser: a fail-open on the one control that
+        // overrides all others. Refresh it, but never let it answer for the
+        // write.
+        void updateBadge().catch((err: unknown) => {
+          console.error(
+            'browser-bridge: badge refresh failed after policy op',
+            err,
+          );
+        });
+        sendResponse({ status: 'ok', data: state });
+      })
       .catch((err: Error) => {
         sendResponse({ status: 'error', error: err.message });
       });
