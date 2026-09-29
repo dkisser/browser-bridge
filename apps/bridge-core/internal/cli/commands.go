@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"browser-bridge/internal/core"
 )
 
 // logf returns a printf-style logger writing to w (bash's info()).
@@ -401,7 +403,7 @@ func removeBBHomeExceptData(e *Env) error {
 		return fmt.Errorf("read %s: %w", e.BBHome, err)
 	}
 	for _, entry := range entries {
-		if entry.Name() == dataDirName {
+		if entry.Name() == core.DataDirName {
 			continue
 		}
 		path := filepath.Join(e.BBHome, entry.Name())

@@ -16,10 +16,14 @@ const DefaultBufferTimeout = 5 * time.Second
 
 const configFileName = "config.json"
 
-// dataDirName is the persistent-data dir under $BB_HOME (ADR-0017): it
+// DataDirName is the persistent-data dir under $BB_HOME (ADR-0017): it
 // survives upgrades and `bridge service uninstall`. The pairing config is
 // its only resident today; the audit trail and agent memory land here later.
-const dataDirName = "data"
+//
+// Exported because the CLI must agree with this exactly: `bridge service
+// uninstall` keeps $BB_HOME by skipping this name, so a divergent copy would
+// rm -rf the live pairing config on a plain uninstall.
+const DataDirName = "data"
 
 // fileConfig is the on-disk shape. Only these two fields survive a load —
 // the TS load destructures exactly them so ghost fields from pre-merge
@@ -74,7 +78,7 @@ func NewStateManager(opts ...StateOption) (*StateManager, error) {
 		}
 		bbHome = filepath.Join(home, ".browser-bridge")
 	}
-	dir := filepath.Join(bbHome, dataDirName)
+	dir := filepath.Join(bbHome, DataDirName)
 	migrateLegacyConfig(bbHome, dir)
 	m := &StateManager{
 		dir:           dir,
