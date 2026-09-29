@@ -152,7 +152,7 @@ export function isReadOnlyCommand(command: CommandType): boolean {
 function denial(
   command: CommandType,
   reason: DenyReason,
-  ctx: PolicyContext,
+  ctx: Pick<PolicyContext, 'origin'>,
   capability?: GrantCapability,
   detail?: string,
 ): PolicyDecision {
@@ -194,12 +194,33 @@ export function originOf(url: string | null | undefined): string | null {
   }
 }
 
+// takeoverDenied is the denial Takeover produces, or null when it is off.
+//
+// Split out of evaluatePolicy so a caller re-checking Takeover at an execution
+// point asks the gate's own question instead of reading `state.takeover` and
+// hand-rolling a second verdict next to it. A re-check that reimplemented the
+// rule would be free to drift from it, and the drift would be a security
+// control quietly disagreeing with itself.
+//
+// Note what this deliberately does not do: it takes the state read from
+// whatever queue the caller is in. Reading fresh state is the caller's half —
+// this is only the rule.
+export function takeoverDenied(
+  command: CommandType,
+  takeover: boolean,
+  ctx: Pick<PolicyContext, 'origin'>,
+): PolicyDecision | null {
+  if (!takeover) return null;
+  return denial(command, 'human_assist_active', ctx);
+}
+
 export function evaluatePolicy(
   command: CommandType,
   ctx: PolicyContext,
 ): PolicyDecision {
-  if (ctx.takeover) {
-    return denial(command, 'human_assist_active', ctx);
+  const takeover = takeoverDenied(command, ctx.takeover, ctx);
+  if (takeover) {
+    return takeover;
   }
 
   // A url-less `tab:new` opens a blank tab: there is no navigation target, so

@@ -29,6 +29,7 @@ export {
   humanDenialMessage,
   isReadOnlyCommand,
   originOf,
+  takeoverDenied,
 } from './policy';
 export type {
   SnapshotFilter,
