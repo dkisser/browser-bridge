@@ -1,5 +1,5 @@
 import type { Denial } from '@browser-bridge/shared';
-import type { DenialAction, OriginKind, PolicyOp } from '../policy-operations';
+import type { DenialAction, OriginKind } from '../policy-operations';
 import { requestPolicyOp } from './policy-ops';
 
 // User actions on the side panel. Each one names a policy operation for the

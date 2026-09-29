@@ -1,4 +1,4 @@
-import { applyPolicyOp, type PolicyOp } from '../policy-operations';
+import type { PolicyOp } from '../policy-operations';
 import type { PolicyState } from '../policy-state';
 
 // UI-side client for policy mutations.
