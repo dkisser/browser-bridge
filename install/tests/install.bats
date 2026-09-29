@@ -1597,13 +1597,31 @@ root = pathlib.Path(sys.argv[2]).resolve()
 if not readme.is_file():
     sys.exit('cannot read the table at ' + str(readme))
 
+# A code, and only a code. The trailing boundary is what stops `BB-E2110` from
+# being read as the documented `BB-E211` — without it a typo'd four-digit code
+# passes this suite while the table has no row for it.
+CODE = r'(?<![0-9A-Za-z-])BB-E\d{3}(?![0-9])'
+
+# The table rows, not the whole file and not even the whole section. Scoping
+# to the section was not enough: prose *inside* it still counted, so deleting
+# a row and replacing it with a sentence reading "also see BB-E211" passed.
+# A markdown table row is the only thing that documents a code, so a line that
+# does not start with `|` cannot vouch for one.
+text = readme.read_text()
+head = text.find('## Error Codes')
+if head == -1:
+    sys.exit('no "## Error Codes" section — the table this test reads is gone')
+end = text.find('\n## ', head + 1)
+section = text[head:] if end == -1 else text[head:end]
+rows = '\n'.join(
+    line for line in section.split('\n') if line.lstrip().startswith('|')
+)
+if not rows:
+    sys.exit('the Error Codes section has no table rows left to read')
+
 # Every tree a BB-Exxx can be printed from. apps/bridge-core/cmd and
 # .github/scripts were missing while the table claimed to cover the `bridge`
 # binary, so a code added to cmd/bridge/main.go passed this suite silently.
-# The list is checked rather than walked optimistically: a root that does not
-# exist would contribute nothing and be indistinguishable from a root that
-# holds no codes, which is the one conclusion this test must never reach by
-# accident.
 ROOTS = (
     'apps/bridge-core/cmd',
     'apps/bridge-core/internal',
@@ -1613,10 +1631,14 @@ ROOTS = (
 )
 for base in ROOTS:
     if not (root / base).exists():
-        sys.exit('scan root does not exist: ' + base + ' — this test would '
-                 'read it as "no codes here" rather than as "not scanned"')
+        # This is a diagnostic, not a verdict: with the check gone, a wrong
+        # root also fails the suite, because `stale` then holds every
+        # documented code. What it buys is a failure that names the real
+        # cause. Without it the message is "the table lists 34 codes nothing
+        # prints", which points at the table — the one file that is fine.
+        sys.exit('scan root does not exist: ' + base)
 
-documented = set(re.findall(r'BB-E\d{3}', readme.read_text()))
+documented = set(re.findall(CODE, rows))
 emitted = set()
 for base in ROOTS:
     path = root / base
@@ -1633,7 +1655,7 @@ for base in ROOTS:
         # one of the four suffixes, and it sits outside every root above.
         if f.name.endswith('_test.go'):
             continue
-        emitted |= set(re.findall(r'BB-E\d{3}', f.read_text(errors='ignore')))
+        emitted |= set(re.findall(CODE, f.read_text(errors='ignore')))
 
 missing = sorted(emitted - documented)
 stale = sorted(documented - emitted)

@@ -24,6 +24,13 @@ import {
 } from './policy-actions';
 import { requestPolicyOp } from './policy-ops';
 import styles from './SidePanel.module.css';
+import {
+  click,
+  createTakeoverSync,
+  observe,
+  settle,
+  type TakeoverSync,
+} from './takeover-sync';
 
 const TABS = [
   { id: 'approvals', label: 'Approvals' },
@@ -131,80 +138,49 @@ export function SidePanel() {
 
   // --- Takeover: the switch shows persisted state, not the click ---
   //
-  // Not optimistic. The value here is what the policy gate enforces, and a
-  // control that renders ahead of the thing it controls is wrong in the one
-  // direction that matters: it says the human has the browser while the agent
-  // still does. See handleTakeoverChange.
+  // Not optimistic, and the value here is not this component's to decide. It
+  // is whatever takeover-sync says the engine enforces, and takeover-sync
+  // moves only on an observation or on a write it knows landed. The panel
+  // used to keep the equivalent bookkeeping in three refs, which could only
+  // be tested by reading this file and counting occurrences of a variable
+  // name — a guard that passes when the behaviour is wrong. The logic is a
+  // pure module now (takeover-sync.ts) so the cases are executed.
   const [takeover, setTakeover] = useState(false);
-  // True while at least one storage write is in flight. While true, the
-  // state-sync effect below does not touch local state, so a state arrival
-  // landing out of order — or a second panel's write landing during our
-  // pending write — cannot clobber the user's most recent click before its
-  // own write has been applied.
-  const hasPendingTakeoverWrite = useRef(false);
-  // Last takeover value the UI has been synced to from storage, used to
-  // detect external writes once no write is in flight.
-  const lastAppliedTakeover = useRef(false);
-  // Monotonic generation counter, bumped on every click. writeGen.current
-  // is the generation of the *most recent* click; the closure variable
-  // `myGen` captured at the time of a given click is the generation of
-  // *that* click. The catch below compares the two so a failing older
-  // click can tell it has been superseded by a newer one and skip both
-  // the revert and the persistent error banner.
-  const writeGen = useRef(0);
+  const takeoverSync = useRef<TakeoverSync>(createTakeoverSync(false));
+  const applySync = useCallback((next: TakeoverSync): void => {
+    const prev = takeoverSync.current;
+    takeoverSync.current = next;
+    if (next.displayed !== prev.displayed) setTakeover(next.displayed);
+  }, []);
 
   useEffect(() => {
     if (state === null) return;
-    if (hasPendingTakeoverWrite.current) return;
-    if (state.takeover !== lastAppliedTakeover.current) {
-      setTakeover(state.takeover);
-      lastAppliedTakeover.current = state.takeover;
-    }
-  }, [state]);
+    applySync(observe(takeoverSync.current, state.takeover));
+  }, [state, applySync]);
 
   const handleTakeoverChange = useCallback(
     (desired: boolean): void => {
-      const myGen = ++writeGen.current;
-      // Deliberately NOT optimistic. This used to render the switch first and
-      // persist second, which meant it could show "the human has the browser"
-      // while the policy gate — and the execution-point re-check, which reads
-      // the same persisted value — still saw takeover off and let the command
-      // through.
-      //
-      // That window is one message round trip, which is sub-millisecond when
-      // the service worker is awake and far longer when it is asleep and has
-      // to be woken for the request. For any other switch the optimistic
-      // render is a nicety; for the kill switch it is the switch lying to the
-      // one person reaching for it under pressure. The displayed state is now
-      // the state the policy engine actually enforces, which is the only
-      // version of this control worth having.
-      hasPendingTakeoverWrite.current = true;
+      const opening = click(takeoverSync.current, desired);
+      const myGen = opening.gen;
+      applySync(opening);
+
       void requestPolicyOp({ op: 'set_takeover', desired })
         .then(() => {
-          hasPendingTakeoverWrite.current = false;
-          if (writeGen.current !== myGen) {
-            // A newer click already superseded this one. Its own .then will
-            // apply the value the user actually last asked for; applying this
-            // one now would flicker the switch backwards.
-            return;
-          }
-          setTakeover(desired);
-          lastAppliedTakeover.current = desired;
+          applySync(settle(takeoverSync.current, myGen, true));
         })
         .catch((error: unknown) => {
-          hasPendingTakeoverWrite.current = false;
-          if (writeGen.current !== myGen) {
-            // A newer click has already superseded this one. The error
-            // refers to an action that no longer reflects the user's
-            // current intent — do not surface a banner.
-            return;
-          }
+          // A newer click superseded this one. Its error refers to an action
+          // that no longer reflects the user's current intent, so no banner;
+          // and the window it still holds must not be released here, or a
+          // parked observation would apply against a write still in flight.
+          if (takeoverSync.current.gen !== myGen) return;
+          applySync(settle(takeoverSync.current, myGen, false));
           // The write failed, so the switch never moved and there is nothing
           // to revert: it still shows what the engine enforces. Just say why.
           setMessage(toErrorMessage(error));
         });
     },
-    [setMessage],
+    [applySync, setMessage],
   );
 
   const handleOpenSettings = useCallback(
@@ -258,7 +234,7 @@ export function SidePanel() {
   // persisted state arrives.
   const takeoverLoaded = state !== null;
   const takeoverForHero =
-    takeoverLoaded || hasPendingTakeoverWrite.current ? takeover : null;
+    takeoverLoaded || takeoverSync.current.pending ? takeover : null;
 
   return (
     <div className={styles.app}>

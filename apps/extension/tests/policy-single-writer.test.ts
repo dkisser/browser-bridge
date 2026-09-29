@@ -237,7 +237,19 @@ describe('only the service worker writes policy state', () => {
       }
     }
     expect(end).toBeGreaterThan(start);
-    const branch = background.slice(start, end + 1);
+    // Comments are stripped so an explanatory note naming the two calls
+    // cannot satisfy the assertions on its own. Verified: the calls moved
+    // out of the branch and the branch given a comment that names both —
+    // green before this line, red after it. The `//` is not taken for a
+    // comment start when it is part of `://`, the same trap the
+    // localhost sweep in offscreen-endpoint.test.ts documents.
+    const branch = background
+      .slice(start, end + 1)
+      .split('\n')
+      .map((line) =>
+        line.replace(/\/\*.*?\*\//g, '').replace(/(^|[^:])\/\/.*$/, '$1'),
+      )
+      .join('\n');
     expect(branch).toContain('updatePolicyState');
     expect(branch).toContain('applyPolicyOp');
   });

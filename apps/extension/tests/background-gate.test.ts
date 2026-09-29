@@ -1473,6 +1473,26 @@ describe('the worker rejects privileged messages from a non-extension sender', (
       'a bare origin that merely starts with our id',
       { id: 'test', url: 'chrome-extension://testevil/x' },
     ],
+    [
+      // The one that separates `startsWith` from `includes`. The case above
+      // cannot: `chrome-extension://testevil/x` contains no
+      // `chrome-extension://test/` substring, so a substring check rejects it
+      // for the same reason the prefix check does. This URL is an ordinary
+      // https page that happens to *embed* our origin in a query string,
+      // which a content script on it would report. Verified against an
+      // `includes` implementation: rejected by `startsWith`, admitted by
+      // `includes`.
+      'a hostile page whose URL merely embeds our origin',
+      { id: 'test', url: 'https://evil.example/?r=chrome-extension://test/x' },
+    ],
+    [
+      // The reverse direction. Chrome assigns `sender.url` from the sending
+      // extension, so a mismatched id is not reachable today — but the check
+      // is there, and without this row deleting it changed nothing the suite
+      // could see.
+      'a mismatched id carrying our own origin in the url',
+      { id: 'someotherid', url: 'chrome-extension://test/sidepanel.html' },
+    ],
     ['a sender with no url', { id: 'test' }],
   ];
 
