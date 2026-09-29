@@ -1573,9 +1573,17 @@ SCRIPT
 #
 # This runs no code. It reads the sources for every BB-Exxx and compares that
 # set with the table, so a new code without a row fails the suite at the point
-# the row would have been forgotten. A doc-parsing test that runs the error
-# paths would be a much worse thing to maintain for the same guarantee.
-@test "the error-code table covers every code the sources can print" {
+# the row would have been forgotten, and a row nothing prints fails it too. A
+# doc-parsing test that runs the error paths would be a much worse thing to
+# maintain for the same guarantee.
+#
+# The stale direction is enforced on purpose, and it is why a code retired in
+# this release has to lose its row rather than keep it for users who read an
+# older README: this file documents what the installer you just ran can print.
+# A retired code belongs in the CHANGELOG, where "we stopped printing this" is
+# the useful fact, not in the lookup table, where it reads as "if you see this,
+# here is what to do".
+@test "the error-code table and the code emitters agree in both directions" {
   # Resolve from the repo root explicitly and refuse to run if it is wrong.
   # pathlib.rglob over a missing directory yields nothing and no error, so a
   # bad root made the first run of this test report that *no* code is
@@ -1588,14 +1596,29 @@ root = pathlib.Path(sys.argv[2]).resolve()
 
 if not readme.is_file():
     sys.exit('cannot read the table at ' + str(readme))
-if not (root / 'apps' / 'bridge-core' / 'internal').is_dir():
-    sys.exit('repo root resolved to ' + str(root) + ', which has no ' +
-             'apps/bridge-core/internal — this test would silently ' +
-             'conclude that no code is printed')
+
+# Every tree a BB-Exxx can be printed from. apps/bridge-core/cmd and
+# .github/scripts were missing while the table claimed to cover the `bridge`
+# binary, so a code added to cmd/bridge/main.go passed this suite silently.
+# The list is checked rather than walked optimistically: a root that does not
+# exist would contribute nothing and be indistinguishable from a root that
+# holds no codes, which is the one conclusion this test must never reach by
+# accident.
+ROOTS = (
+    'apps/bridge-core/cmd',
+    'apps/bridge-core/internal',
+    'install/install.sh',
+    '.github/scripts',
+    '.github/workflows',
+)
+for base in ROOTS:
+    if not (root / base).exists():
+        sys.exit('scan root does not exist: ' + base + ' — this test would '
+                 'read it as "no codes here" rather than as "not scanned"')
 
 documented = set(re.findall(r'BB-E\d{3}', readme.read_text()))
 emitted = set()
-for base in ('apps/bridge-core/internal', 'install/install.sh', '.github/workflows'):
+for base in ROOTS:
     path = root / base
     files = path.rglob('*') if path.is_dir() else [path]
     for f in files:
@@ -1603,8 +1626,12 @@ for base in ('apps/bridge-core/internal', 'install/install.sh', '.github/workflo
             continue
         if f.suffix not in ('.go', '.sh', '.yml', '.yaml'):
             continue
-        # Test files assert codes; they do not produce them.
-        if 'install/tests' in str(f) or f.name.endswith('_test.go'):
+        # Go's build system guarantees a _test.go file is test-only, so this
+        # is the boundary the compiler already draws and there is no build tag
+        # to consult. Test files assert codes; they do not print them. This
+        # suite's own install.bats needs no exclusion: it is .bats rather than
+        # one of the four suffixes, and it sits outside every root above.
+        if f.name.endswith('_test.go'):
             continue
         emitted |= set(re.findall(r'BB-E\d{3}', f.read_text(errors='ignore')))
 

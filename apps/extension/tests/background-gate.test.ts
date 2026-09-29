@@ -1060,9 +1060,11 @@ describe('policy_op through the real service-worker listener', () => {
 
   it('answers even when the badge refresh fails', async () => {
     // The badge is cosmetic. If its failure could reach the caller, the panel
-    // would revert its optimistic UI while the write had already landed —
-    // for Takeover that shows the user "human assist active" while the agent
-    // actually has the browser.
+    // would show an error for an operation whose write had already landed —
+    // and since the switch no longer renders ahead of the write, it would
+    // still read "human assist active" while the engine had already handed
+    // the browser to the agent. A kill switch the user is told failed, and
+    // then tries again, is worse than one that is merely slow.
     badgeShouldFail = true;
 
     // The seeded state has takeover:false, so asking for true makes the write
@@ -1413,9 +1415,41 @@ describe('the worker rejects privileged messages from a non-extension sender', (
   });
 
   function send(request: unknown, sender: unknown): Promise<unknown> {
-    return new Promise((resolve) => {
-      listener()?.(request, sender, (response?: unknown) => resolve(response));
+    return new Promise((resolve, reject) => {
+      // A listener that never calls its sendResponse leaves this pending
+      // forever, and the case then fails as a whole-suite timeout that names
+      // no test. Rejecting here names the case, and the window is short
+      // because nothing in this file does real I/O — the handler is either
+      // synchronous or a resolved microtask away.
+      const timer = setTimeout(
+        () => reject(new Error('the worker listener never answered')),
+        500,
+      );
+      listener()?.(request, sender, (response?: unknown) => {
+        clearTimeout(timer);
+        resolve(response);
+      });
     });
+  }
+
+  // For handlers that legitimately never reply. Resolves with a sentinel
+  // rather than hanging, because "no response" is the pass condition there
+  // and a plain await cannot tell it from a listener that forgot to answer.
+  const NO_REPLY = Symbol('no-reply');
+  async function sendExpectingSilence(
+    request: unknown,
+    sender: unknown,
+  ): Promise<unknown | typeof NO_REPLY> {
+    const pending = send(request, sender);
+    // The race below is what decides this case. If it loses, the rejection
+    // `send` is about to produce has no consumer left, and an unhandled
+    // rejection fails the run even though this case passed.
+    pending.catch(() => {});
+    const raced = await Promise.race([
+      pending,
+      new Promise((resolve) => setTimeout(() => resolve(NO_REPLY), 25)),
+    ]);
+    return raced;
   }
 
   const spoofed: [string, Record<string, unknown>][] = [
@@ -1478,7 +1512,16 @@ describe('the worker rejects privileged messages from a non-extension sender', (
   });
 
   it('refuses ws_command from a spoofed sender', async () => {
-    store.set('policyState', { takeover: false, origins: {} });
+    // The origin is approved on purpose. With an unapproved origin the gate
+    // denies first and the content-script array is empty whichever way the
+    // guard goes, so the "never dispatched" assertion below was passing
+    // because of the seed rather than because of the guard — and it would
+    // have passed with the guard deleted entirely.
+    store.set('policyState', {
+      takeover: false,
+      origins: { 'https://approved.site': 'always' },
+    });
+    tabUrls.set(1, 'https://approved.site/form');
     sentToContentScript.length = 0;
 
     const response = (await send(
@@ -1493,33 +1536,93 @@ describe('the worker rejects privileged messages from a non-extension sender', (
     expect(sentToContentScript).toHaveLength(0);
   });
 
-  it('still admits the real side panel and the offscreen document', async () => {
+  it('still admits the side panel and the settings page, and the write lands', async () => {
     // The negative half without the positive half is a worker that refuses
     // everything, which would look identical in production to a worker whose
-    // policy layer is dead.
-    store.set('policyState', { takeover: true, origins: {} });
-
+    // policy layer is dead. So this asserts the *state* moved, not merely
+    // that nothing was rejected: the previous version checked only the
+    // absence of an error, so making applySetTakeover a no-op left it green.
     for (const url of [
       'chrome-extension://test/sidepanel.html',
-      'chrome-extension://test/offscreen.html',
       'chrome-extension://test/settings.html',
     ]) {
+      store.set('policyState', { takeover: true, origins: {}, grants: [] });
       const response = (await send(
         { type: 'policy_op', op: { op: 'set_takeover', desired: false } },
         { id: 'test', url },
-      )) as { error?: string; status?: string } | undefined;
+      )) as { error?: string } | undefined;
+
       expect(response?.error).toBeUndefined();
+      const stored = store.get('policyState') as { takeover?: boolean };
+      expect(stored.takeover).toBe(false);
     }
   });
 
+  it('still admits the offscreen document on the message it actually sends', async () => {
+    // The offscreen document is the only sender of `ws_command` — it holds
+    // the WebSocket and relays what the proxy sends. The previous version
+    // sent it a `policy_op`, which the offscreen document never sends, so a
+    // guard that severed the command channel for `offscreen.html` still
+    // passed: the extension's entire agent-facing path was untested.
+    store.set('policyState', {
+      takeover: false,
+      origins: { 'https://approved.site': 'always' },
+    });
+    // The gate reads the origin off the tab, so approving an origin in
+    // storage is not enough — without this the tab is about:blank, the
+    // origin resolves to null and the command is denied as origin_blocked
+    // before dispatch, for a reason that has nothing to do with the guard.
+    tabUrls.set(1, 'https://approved.site/form');
+    sentToContentScript.length = 0;
+
+    const response = (await send(
+      {
+        type: 'ws_command',
+        envelope: makeCommand('click', 1, { selector: '#a' }),
+      },
+      { id: 'test', url: 'chrome-extension://test/offscreen.html' },
+    )) as { error?: string; status?: string } | undefined;
+
+    expect(response?.error).toBeUndefined();
+    // It reached the content script, which is the whole point.
+    expect(sentToContentScript.length).toBeGreaterThan(0);
+  });
+
   it('leaves the other message types alone', async () => {
-    // The guard is scoped to the two privileged types. Widening it would
-    // break the offscreen handshake for no security gain, so ping and the
-    // status messages must still get through from a content script.
+    // The guard is scoped to the two privileged types. Widening it to every
+    // type would break the offscreen handshake for no security gain, so ping
+    // has to still get through from a content script.
+    //
+    // Asserting the *reply shape*, not merely that something came back: the
+    // rejection is also a defined response, so `toBeDefined()` passed even
+    // with the guard widened to everything — which is the exact regression
+    // this case exists to catch. The pong marker is the discriminator.
     const response = (await send(
       { type: 'ping' },
       { id: 'test', url: 'https://evil.example/page' },
-    )) as { pong?: boolean } | undefined;
-    expect(response).toBeDefined();
+    )) as { type?: string; error?: string } | undefined;
+
+    expect(response?.error).toBeUndefined();
+    expect(response?.type).toBe('pong');
+  });
+
+  it('leaves ws_status alone, which returns no reply at all', async () => {
+    // The offscreen document reports its socket state with this, and the
+    // handler returns false without calling sendResponse — so the only thing
+    // observable is the *service worker state* it records. A guard that
+    // swallowed it would silently freeze the status indicator, with no
+    // response to assert on.
+    store.set('policyState', { takeover: false, origins: {} });
+    sentToContentScript.length = 0;
+
+    const response = await sendExpectingSilence(
+      { type: 'ws_status', connected: true },
+      { id: 'test', url: 'https://evil.example/page' },
+    );
+    // Silence is the pass condition, and specifically not a forbidden_sender
+    // reply: had the guard been widened to cover this type, it would have
+    // answered, and the offscreen socket state would have stopped updating
+    // with nothing in any response to show for it.
+    expect(response).toBe(NO_REPLY);
   });
 });

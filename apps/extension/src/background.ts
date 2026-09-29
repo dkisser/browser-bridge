@@ -738,13 +738,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       .then((state) => {
         // The badge is cosmetic and must never be able to fail the
         // operation's acknowledgement. updateBadge awaits a storage read and
-        // three chrome.action calls, all of which can reject — and the panel
-        // reverts its optimistic UI on an error response. If a badge failure
-        // could reach the caller that way, toggling Takeover off would leave
-        // the switch reading "human assist active" while storage said the
-        // agent had the browser: a fail-open on the one control that
-        // overrides all others. Refresh it, but never let it answer for the
-        // write.
+        // three chrome.action calls, all of which can reject. If a badge
+        // failure could reach the caller, an operation whose write had
+        // already landed would be reported as failed — and the panel does
+        // not render ahead of the write, so its switch would still be
+        // showing the old value while the engine enforced the new one. For
+        // Takeover that is "your kill switch did not move, try again" about a
+        // change that did take effect, which is the one way this control can
+        // make things worse than showing nothing at all. Refresh the badge,
+        // but never let it answer for the write.
         void updateBadge().catch((err: unknown) => {
           console.error(
             'browser-bridge: badge refresh failed after policy op',
