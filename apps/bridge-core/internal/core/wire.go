@@ -1,5 +1,7 @@
 package core
 
+import "time"
+
 // The wire contract, restated on the Go side.
 //
 // packages/shared/src/types.ts is the single source of truth for the command
@@ -21,6 +23,22 @@ package core
 // declaration of the key. internal/http/command_test.go pins the marshaled
 // form against the keys the extension reads.
 
+// InPageTimeoutSlack is the headroom between an in-page wait budget handed to
+// the extension and the deadline a caller waits for the answer.
+//
+// The extension rejects with "Navigation timeout" or "Element not found
+// within Nms" when its own budget expires. A caller's clock starts when the
+// command is written; the extension's starts only once the router has
+// delivered it. With equal budgets the caller always gives up first, so the
+// one diagnostic worth seeing arrives after nobody is listening, and the
+// user is told a control plane that was behaving correctly has stopped
+// responding.
+//
+// Declared once here because two callers need it and they drifted when each
+// held its own copy: the MCP tools and the CLI budget the in-page wait
+// identically, so a change to one must change the other.
+const InPageTimeoutSlack = 500 * time.Millisecond
+
 // --- CommandPayload.params, one struct per wire shape ---
 //
 // Optional fields are pointers with omitempty so an absent argument is
@@ -28,10 +46,17 @@ package core
 // extension distinguishes "not provided" from "provided as false"
 // (`params.submit === true`, `params.active === true`).
 
-// NavParams is navigate: { url, tabId }.
+// NavParams is navigate: { url, tabId, timeout }.
+//
+// Timeout is the in-page budget for the navigation to reach 'complete'. The
+// extension used to wait for that event with no bound and no way to notice
+// it had already fired, so a fast-loading target lost its completion event
+// and the command hung until the caller gave up. The control plane sends its
+// own budget (minus waitSlack) the same way it does for the wait commands.
 type NavParams struct {
-	URL   string `json:"url"`
-	TabID int    `json:"tabId"`
+	URL     string `json:"url"`
+	TabID   int    `json:"tabId"`
+	Timeout int    `json:"timeout"`
 }
 
 // TabParams is every command that only names its target tab:
@@ -136,4 +161,16 @@ type SnapshotResult struct {
 // ScreenshotResult is ScreenshotResult.
 type ScreenshotResult struct {
 	DataURL string `json:"dataUrl"`
+}
+
+// Denial is Denial in packages/shared/src/policy.ts: the structured form of
+// a policy rejection. The extension sends it alongside the human-readable
+// `error` / `message` pair; Reason repeats `error` so a consumer that only
+// decodes the struct still has the code.
+type Denial struct {
+	Reason     string `json:"reason"`
+	Command    string `json:"command"`
+	Origin     string `json:"origin,omitempty"`
+	Capability string `json:"capability,omitempty"`
+	Detail     string `json:"detail,omitempty"`
 }

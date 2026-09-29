@@ -14,3 +14,15 @@ dist/
 # Go build artifacts
 apps/bridge-core/bridge-core
 apps/bridge-core/bridge
+
+# Release build artifacts. The .github/scripts/build-*.sh scripts default
+# OUT_DIR to the repo root, so a local `bun run build:tarball` (or any of the
+# release:* scripts) drops the built assets beside the source, where they sit
+# as untracked noise that `git add -A` would cheerfully commit into the next
+# commit. The release workflows upload these by path, so ignoring them here
+# does not affect publishing.
+#
+# Anchored to the repo root so a same-named fixture under a subdirectory stays
+# committable. The trailing `*` covers both the asset and its `.sha256`
+# sidecar, and covers new architectures without another edit here.
+/browser-bridge-*-v*

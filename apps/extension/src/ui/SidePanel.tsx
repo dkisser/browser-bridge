@@ -5,7 +5,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { type PolicyState, setPolicyState, updateBadge } from '../policy-state';
+import { type PolicyState, updateBadge } from '../policy-state';
 import { type SidePanelTab, selectDefaultView } from '../side-panel-state';
 import { SegmentedNav } from './components/SegmentedNav';
 import { TakeoverHero } from './components/TakeoverHero';
@@ -22,6 +22,7 @@ import {
   removeOriginEntry,
   handleDenialAction as runDenialAction,
 } from './policy-actions';
+import { requestPolicyOp } from './policy-ops';
 import styles from './SidePanel.module.css';
 
 const TABS = [
@@ -163,7 +164,7 @@ export function SidePanel() {
       const myGen = ++writeGen.current;
       setTakeover(desired);
       hasPendingTakeoverWrite.current = true;
-      void setPolicyState({ takeover: desired })
+      void requestPolicyOp({ op: 'set_takeover', desired })
         .then(() => {
           hasPendingTakeoverWrite.current = false;
         })

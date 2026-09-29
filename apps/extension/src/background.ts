@@ -21,6 +21,7 @@ import {
   ContentScriptUnavailableError,
   dispatchToContentScript as dispatchToContentScriptRaw,
 } from './content-bridge';
+import { applyPolicyOp, type PolicyOp } from './policy-operations';
 import {
   clearSessionScoped,
   decideWithState,
@@ -110,6 +111,15 @@ async function queryOffscreenStatus(): Promise<boolean> {
   }
 }
 
+// Fallback when the control plane sends no `timeout` for navigate. Only an
+// older control plane reaches this path — current ones always send their own
+// budget — and the degradation is from "hangs forever" to "bounded", which is
+// the point. The value matches the Go router's historical 30s route TTL; that
+// is a coincidence of history, not a guarantee, since the router now takes
+// the caller's deadline plus its own backstop margin. Set it for what a slow
+// page plausibly needs, not to match anything on the other side.
+const DEFAULT_NAV_TIMEOUT_MS = 30_000;
+
 // The offscreen document cannot read chrome.storage, so the SW owns the
 // pairing token and pushes it here. Idempotent: safe to call on every
 // service-worker wake and on every pairing-token change.
@@ -119,6 +129,105 @@ async function connectOffscreen(): Promise<void> {
   await chrome.runtime
     .sendMessage({ type: 'connect_ws', token: state.pairingToken })
     .catch(() => {});
+}
+
+// reachedUrl reports whether a tab is now showing `target`.
+//
+// Compares the whole URL, not just the origin: a same-origin navigation
+// (`/old-page` → `/page`) is exactly the case this must not accept, and an
+// origin comparison would wave it through.
+//
+// Comparison goes through the URL parser, which canonicalizes a bare
+// `https://example.com` to the `https://example.com/` the browser reports —
+// the trailing-slash case is the parser's job, not something to redo by hand
+// here. An earlier version normalized both sides manually (forcing an empty
+// pathname to `/`, then stripping a trailing slash); every pair that version
+// judged equal or unequal, this one judges the same, because both sides went
+// through identical normalization either way. Anything the parser rejects
+// (data:, about:) falls back to exact equality.
+function reachedUrl(actual: string | undefined, target: string): boolean {
+  if (actual === undefined) return false;
+  const canonical = (raw: string): string | null => {
+    try {
+      return new URL(raw).href;
+    } catch {
+      return null;
+    }
+  };
+  const a = canonical(actual);
+  const b = canonical(target);
+  if (a !== null && b !== null) return a === b;
+  return actual === target;
+}
+
+// waitForTabComplete resolves once the tab reports status 'complete'.
+//
+// The listener can only be registered *after* the navigation is kicked off
+// (chrome.tabs.update resolves once the navigation is initiated, not once it
+// loads), so a page that finishes first loses its event entirely — a lost
+// wakeup that left the promise pending forever and the listener leaked. Three
+// things prevent that, and all three are needed:
+//
+//   - the current status is re-checked right after registration, covering the
+//     event that already fired;
+//   - a timeout bounds the wait, so a navigation that stalls mid-chain
+//     (a slow redirect, a download response) fails with a real error instead
+//     of pinning the command until the caller's own deadline;
+//   - finish() is idempotent and always removes the listener, so no path
+//     leaks one.
+//
+// `expectUrl` constrains only the re-check, and only for callers that know
+// where they are going. chrome.tabs.update resolves while the tab may still
+// be showing the *previous* page as 'complete', so an unconstrained re-check
+// can resolve against the old page and hand the caller its url and title
+// while reporting success. Requiring the tab to have actually moved to the
+// target removes that. The event path is unaffected — a 'complete' event
+// after the update is the new page — so a redirect to a different origin
+// still resolves normally through the listener, and only a redirect *and* a
+// fast cached load together would fall through to the timeout, which is a
+// clear error rather than a confidently wrong answer.
+function waitForTabComplete(
+  tabId: number,
+  timeout: number,
+  expectUrl?: string,
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const listener = (
+      updatedTabId: number,
+      changeInfo: chrome.tabs.TabChangeInfo,
+    ) => {
+      if (updatedTabId === tabId && changeInfo.status === 'complete') finish();
+    };
+    function finish(error?: Error): void {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      chrome.tabs.onUpdated.removeListener(listener);
+      if (error) {
+        reject(error);
+      } else {
+        resolve();
+      }
+    }
+    timer = setTimeout(() => {
+      finish(new Error('Navigation timeout'));
+    }, timeout);
+    chrome.tabs.onUpdated.addListener(listener);
+    chrome.tabs
+      .get(tabId)
+      .then((current) => {
+        if (current.status !== 'complete') return;
+        if (expectUrl !== undefined && !reachedUrl(current.url, expectUrl)) {
+          return;
+        }
+        finish();
+      })
+      .catch(() => {
+        // Tab lookup failed; rely on the event listener and timeout.
+      });
+  });
 }
 
 // Policy enforcement point (ADR-0006..0009): every command is evaluated
@@ -241,19 +350,16 @@ export async function handleCommand(
         throw new Error('Missing required tabId');
       }
       const tab = tabId;
-      await chrome.tabs.update(tab, { url: params.url as string });
-      await new Promise<void>((resolve) => {
-        const listener = (
-          updatedTabId: number,
-          changeInfo: chrome.tabs.TabChangeInfo,
-        ) => {
-          if (updatedTabId === tab && changeInfo.status === 'complete') {
-            chrome.tabs.onUpdated.removeListener(listener);
-            resolve();
-          }
-        };
-        chrome.tabs.onUpdated.addListener(listener);
-      });
+      const target = params.url as string;
+      await chrome.tabs.update(tab, { url: target });
+      // The wait is bounded and cannot lose its completion event; passing the
+      // target keeps the re-check from accepting the page we are leaving.
+      // See waitForTabComplete.
+      await waitForTabComplete(
+        tab,
+        (params.timeout as number) || DEFAULT_NAV_TIMEOUT_MS,
+        target,
+      );
       const updatedTab = await chrome.tabs.get(tab);
       return { url: updatedTab.url, title: updatedTab.title };
     }
@@ -379,47 +485,7 @@ export async function handleCommand(
         throw new Error('Missing required tabId');
       }
       const tab = tabId;
-      await new Promise<void>((resolve, reject) => {
-        let settled = false;
-        const cleanup = (): void => {
-          clearTimeout(timer);
-          chrome.tabs.onUpdated.removeListener(listener);
-        };
-        const finish = (error?: Error): void => {
-          if (settled) return;
-          settled = true;
-          cleanup();
-          if (error) {
-            reject(error);
-          } else {
-            resolve();
-          }
-        };
-        const timer = setTimeout(() => {
-          finish(new Error('Navigation timeout'));
-        }, timeout);
-        const listener = (
-          updatedTabId: number,
-          changeInfo: chrome.tabs.TabChangeInfo,
-        ) => {
-          if (updatedTabId === tab && changeInfo.status === 'complete') {
-            finish();
-          }
-        };
-        chrome.tabs.onUpdated.addListener(listener);
-        // The navigation may already be complete when this command arrives
-        // (e.g. a remedial wait after `navigate` timed out on a redirect
-        // chain) — no future onUpdated event will fire, so check the current
-        // status instead of waiting for an event that never comes.
-        chrome.tabs
-          .get(tab)
-          .then((current) => {
-            if (current.status === 'complete') finish();
-          })
-          .catch(() => {
-            // Tab lookup failed; rely on the event listener and timeout.
-          });
-      });
+      await waitForTabComplete(tab, timeout);
       const t = await chrome.tabs.get(tab);
       return { url: t.url, title: t.title };
     }
@@ -532,6 +598,45 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
           });
           return;
         }
+        sendResponse({ status: 'error', error: err.message });
+      });
+    return true; // async response
+  }
+
+  // Policy mutation requested by a UI context (side panel / pairing).
+  //
+  // The UI deliberately does not write chrome.storage.local itself. The
+  // serialization queue in policy-state.ts is a module-level variable, so
+  // each JS context has its own copy and its own last-writer-wins window
+  // over the whole state object — a UI write could resurrect a singleUse
+  // grant the service worker had just consumed, or drop the user's takeover
+  // toggle. Routing the mutation through here makes the service worker the
+  // only writer, so its queue is the only one that matters.
+  //
+  // A callback could not cross this boundary, so the UI names an operation
+  // (see policy-operations.ts) instead of supplying the code to run.
+  if (request.type === 'policy_op') {
+    const op = request.op as PolicyOp;
+    updatePolicyState((state) => applyPolicyOp(state, op))
+      .then((state) => {
+        // The badge is cosmetic and must never be able to fail the
+        // operation's acknowledgement. updateBadge awaits a storage read and
+        // three chrome.action calls, all of which can reject — and the panel
+        // reverts its optimistic UI on an error response. If a badge failure
+        // could reach the caller that way, toggling Takeover off would leave
+        // the switch reading "human assist active" while storage said the
+        // agent had the browser: a fail-open on the one control that
+        // overrides all others. Refresh it, but never let it answer for the
+        // write.
+        void updateBadge().catch((err: unknown) => {
+          console.error(
+            'browser-bridge: badge refresh failed after policy op',
+            err,
+          );
+        });
+        sendResponse({ status: 'ok', data: state });
+      })
+      .catch((err: Error) => {
         sendResponse({ status: 'error', error: err.message });
       });
     return true; // async response
