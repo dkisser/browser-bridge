@@ -1,4 +1,8 @@
-import { LOCAL_WS_PORT, WEBSOCKET_PORT } from '@browser-bridge/shared';
+import {
+  LOCAL_HOST,
+  LOCAL_WS_PORT,
+  WEBSOCKET_PORT,
+} from '@browser-bridge/shared';
 
 // Read-only display entry for the settings tab. No `editable` / `onChange`
 // fields exist — settings is inert; the UI never writes back.
@@ -17,8 +21,13 @@ const LAUNCHAGENT_LABEL = 'com.browser-bridge.bridge';
 export function formatHardConfig(): HardConfigEntry[] {
   return [
     {
+      // Built from the same shared host and port the extension actually
+      // dials (ui/bridge-api.ts). This used to be a separate `127.0.0.1`
+      // literal while the extension used `localhost` — the page advertised a
+      // URL the extension never opens, and a user copying it to debug was
+      // debugging something else.
       label: 'Local proxy URL',
-      value: `http://127.0.0.1:${LOCAL_WS_PORT}`,
+      value: `http://${LOCAL_HOST}:${LOCAL_WS_PORT}`,
     },
     {
       label: 'WebSocket port',

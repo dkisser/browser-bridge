@@ -2,6 +2,15 @@
 // mirroring the wiring in src/index.ts. The hidden `bridge serve` subcommand
 // parses the BRIDGE_* environment into a Config (ConfigFromEnv); the e2e
 // spike test drives Run directly.
+//
+// About the bare `src/...` paths in the port-lineage comments throughout this
+// tree: they are the deleted TypeScript control plane, which lived at
+// apps/bridge-core/src/ (and, for the CLI half, apps/cli/src/) before ADR-0012
+// replaced it with this module. Nothing resolves those paths on this branch —
+// grep finds nothing, which is the part that wastes a reader's time. The TS
+// source is still in the `main` worktree, so `git worktree add ../main-ref
+// main` is the next step when a comment points at a `src/` file and you need
+// to know what it did.
 package app
 
 import (
