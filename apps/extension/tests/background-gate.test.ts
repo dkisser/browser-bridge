@@ -713,10 +713,14 @@ describe('takeover is re-checked at the execution point', () => {
     expect(sentToContentScript.length).toBeGreaterThan(0);
   });
 
-  it('records the late denial so the badge and Approvals panel show it', async () => {
-    // A denial this late is still a denial the user has to see. Dropping it
-    // from the denial log would leave the command withdrawn with no trace,
-    // which reads as a glitch rather than as the kill switch working.
+  it('leaves no approval card and no badge count for a takeover refusal', async () => {
+    // A recentDenials entry is an approval request — a card with action
+    // buttons, a number on the badge, something the user is meant to act
+    // on. A takeover refusal is none of those: the user engaged the kill
+    // switch and every command after it was refused as intended. Recording
+    // them made the agent's retries walk the list up to its cap while the
+    // user had nothing to dismiss, and left the panel still saying the
+    // human was in control after they released the browser.
     onNthStorageRead = {
       n: 2,
       run: () => {
@@ -732,8 +736,39 @@ describe('takeover is re-checked at the execution point', () => {
     );
 
     const stored = store.get('policyState') as { recentDenials?: unknown[] };
-    expect(stored.recentDenials).toHaveLength(1);
-    expect(badgeTextUpdates).toBeGreaterThan(0);
+    expect(stored.recentDenials ?? []).toHaveLength(0);
+    // The badge is still refreshed — that is how a stale count gets cleared
+    // — but it is refreshed to empty. Asserting the text rather than the
+    // number of refreshes is the point: what must not survive is the count.
+    expect(lastBadgeText?.text).toBe('');
+  });
+
+  it('still records an ordinary refusal, so the new rule is not a blanket one', async () => {
+    // recordDenial dropping takeover denials must not have swallowed the
+    // refusals that *are* approval requests. This is the direction that says
+    // the filter keys on the reason rather than short-circuiting the write.
+    store.set('policyState', {
+      takeover: true,
+      origins: { [APPROVED]: 'always' },
+    });
+    await handleCommand(makeCommand('click', 1, { selector: '#a' })).catch(
+      () => undefined,
+    );
+    const afterTakeover = store.get('policyState') as {
+      recentDenials?: unknown[];
+    };
+    expect(afterTakeover.recentDenials ?? []).toHaveLength(0);
+
+    // Now a refusal the user can actually act on: an unapproved origin.
+    store.set('policyState', { takeover: false, origins: {} });
+    await handleCommand(makeCommand('click', 1, { selector: '#a' })).catch(
+      () => undefined,
+    );
+    const afterOrigin = store.get('policyState') as {
+      recentDenials?: { reason: string }[];
+    };
+    expect(afterOrigin.recentDenials).toHaveLength(1);
+    expect(afterOrigin.recentDenials?.[0].reason).toBe('origin_not_approved');
   });
 });
 
