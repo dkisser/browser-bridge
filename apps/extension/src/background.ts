@@ -647,7 +647,47 @@ async function preflightSelector(
 }
 
 // Message handler: receives commands from offscreen doc, side panel, and content scripts
-chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
+// isOwnExtensionContext reports whether a message came from one of this
+// extension's own pages rather than from a content script or another
+// extension.
+//
+// The check exists for the two messages below, which are the most privileged
+// things this service worker accepts: `policy_op` can switch Takeover off and
+// mint a `sensitive-field` or `submit` grant, and `ws_command` reaches
+// handleCommand. Neither is reachable by a web page today — the manifest
+// declares no `externally_connectable` and there is no onMessageExternal and
+// no window.postMessage bridge — so this is defence in depth rather than a
+// fix for a live hole. That is the point: the day any of those three is added
+// for an unrelated reason, "a page can release the user's kill switch and
+// grant itself a password-field capability" should already be closed.
+//
+// `sender.id` alone is not enough. A content script's sender carries this
+// extension's own id, so it passes that test; what separates a content script
+// from a panel is `sender.url`, which for a content script is the page's URL
+// rather than a chrome-extension:// one.
+function isOwnExtensionContext(sender: chrome.runtime.MessageSender): boolean {
+  if (sender.id !== chrome.runtime.id) return false;
+  const url = sender.url;
+  if (typeof url !== 'string') return false;
+  return url.startsWith(`chrome-extension://${chrome.runtime.id}/`);
+}
+
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (
+    (request.type === 'policy_op' || request.type === 'ws_command') &&
+    !isOwnExtensionContext(sender)
+  ) {
+    // No detail in the reply: a page that can send this can read the reply,
+    // and telling it which check failed is a free oracle. The user is not
+    // the audience for a spoofed sender.
+    sendResponse({
+      status: 'error',
+      error: 'forbidden_sender',
+      message: 'Message rejected: not an extension context.',
+    });
+    return false;
+  }
+
   // Command from offscreen document (originating from Local Proxy)
   if (request.type === 'ws_command') {
     const envelope = request.envelope as CommandMessage;

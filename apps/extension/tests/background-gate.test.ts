@@ -235,6 +235,9 @@ beforeAll(async () => {
       onInstalled: { addListener: () => {} },
       onStartup: { addListener: () => {} },
       getContexts: async () => [],
+      // The listener now checks the sender's url against this id, so the
+      // mock needs one; without it every policy_op in this file is rejected.
+      id: 'test',
       getURL: (path: string) => `chrome-extension://test/${path}`,
       sendMessage: async () => ({ connected: false }),
       ContextType: { OFFSCREEN_DOCUMENT: 'OFFSCREEN_DOCUMENT' },
@@ -1002,6 +1005,14 @@ describe('navigate waits for completion without losing the event', () => {
 describe('policy_op through the real service-worker listener', () => {
   const listener = () => onMessageListeners[0];
 
+  // What the side panel looks like to the worker: one of the extension's own
+  // pages. The sender check rejects anything else, so every policy_op test
+  // here has to present a real one or it is testing the rejection path.
+  const extensionPageSender = {
+    id: 'test',
+    url: 'chrome-extension://test/sidepanel.html',
+  };
+
   function sendPolicyOp(op: unknown): Promise<unknown> {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(
@@ -1010,7 +1021,7 @@ describe('policy_op through the real service-worker listener', () => {
       );
       const kept = listener()?.(
         { type: 'policy_op', op },
-        { id: 'test' },
+        extensionPageSender,
         (response?: unknown) => {
           clearTimeout(timer);
           resolve(response);
@@ -1380,5 +1391,135 @@ describe('assertTakeoverUnchanged on its own', () => {
 
     const stored = store.get('policyState') as { grants?: unknown[] };
     expect(stored.grants ?? []).toHaveLength(1);
+  });
+});
+
+// `policy_op` can switch Takeover off and mint a `sensitive-field` grant;
+// `ws_command` reaches handleCommand. A page that could send either would
+// release the user's kill switch and grant itself a password-field
+// capability in one message.
+//
+// Nothing on the web can reach this listener today — no
+// `externally_connectable`, no onMessageExternal, no postMessage bridge — so
+// these are defence in depth. The point of testing defence in depth is that
+// it is the half nobody checks after the day it is quietly made reachable.
+describe('the worker rejects privileged messages from a non-extension sender', () => {
+  const listener = () => onMessageListeners[0];
+
+  beforeEach(() => {
+    // Takeover on, so a released policy_op would be visible as a state change
+    // and a rejected one is not.
+    store.set('policyState', { takeover: true, origins: {}, grants: [] });
+  });
+
+  function send(request: unknown, sender: unknown): Promise<unknown> {
+    return new Promise((resolve) => {
+      listener()?.(request, sender, (response?: unknown) => resolve(response));
+    });
+  }
+
+  const spoofed: [string, Record<string, unknown>][] = [
+    [
+      'a content script, which carries our own id and is still not a page',
+      // The important case. sender.id is this extension's id for a content
+      // script too, so an id-only check would wave this through; what
+      // separates it is that sender.url is the page, not a
+      // chrome-extension:// one.
+      { id: 'test', url: 'https://evil.example/page', tab: { id: 7 } },
+    ],
+    [
+      'another extension',
+      {
+        id: 'someotherid',
+        url: 'chrome-extension://someotherid/sidepanel.html',
+      },
+    ],
+    ['no sender at all', {}],
+    [
+      'a bare origin that merely starts with our id',
+      { id: 'test', url: 'chrome-extension://testevil/x' },
+    ],
+    ['a sender with no url', { id: 'test' }],
+  ];
+
+  for (const [name, sender] of spoofed) {
+    it(`refuses policy_op from ${name}`, async () => {
+      const response = (await send(
+        { type: 'policy_op', op: { op: 'set_takeover', desired: false } },
+        sender,
+      )) as { error?: string } | undefined;
+
+      expect(response?.error).toBe('forbidden_sender');
+      // The state must be untouched: the whole point is that the operation
+      // did not happen, not merely that the reply was rude.
+      const stored = store.get('policyState') as { takeover?: boolean };
+      expect(stored?.takeover).toBe(true);
+    });
+  }
+
+  it('refuses a grant-minting policy_op from a spoofed sender', async () => {
+    store.set('policyState', { takeover: false, origins: {}, grants: [] });
+
+    const response = (await send(
+      {
+        type: 'policy_op',
+        op: {
+          op: 'grant_sensitive_field',
+          targetKey: 'x',
+          origin: 'https://evil.example',
+        },
+      },
+      { id: 'test', url: 'https://evil.example/page' },
+    )) as { error?: string } | undefined;
+
+    expect(response?.error).toBe('forbidden_sender');
+    const stored = store.get('policyState') as { grants?: unknown[] };
+    expect(stored?.grants ?? []).toHaveLength(0);
+  });
+
+  it('refuses ws_command from a spoofed sender', async () => {
+    store.set('policyState', { takeover: false, origins: {} });
+    sentToContentScript.length = 0;
+
+    const response = (await send(
+      {
+        type: 'ws_command',
+        envelope: makeCommand('click', 1, { selector: '#a' }),
+      },
+      { id: 'test', url: 'https://evil.example/page' },
+    )) as { error?: string } | undefined;
+
+    expect(response?.error).toBe('forbidden_sender');
+    expect(sentToContentScript).toHaveLength(0);
+  });
+
+  it('still admits the real side panel and the offscreen document', async () => {
+    // The negative half without the positive half is a worker that refuses
+    // everything, which would look identical in production to a worker whose
+    // policy layer is dead.
+    store.set('policyState', { takeover: true, origins: {} });
+
+    for (const url of [
+      'chrome-extension://test/sidepanel.html',
+      'chrome-extension://test/offscreen.html',
+      'chrome-extension://test/settings.html',
+    ]) {
+      const response = (await send(
+        { type: 'policy_op', op: { op: 'set_takeover', desired: false } },
+        { id: 'test', url },
+      )) as { error?: string; status?: string } | undefined;
+      expect(response?.error).toBeUndefined();
+    }
+  });
+
+  it('leaves the other message types alone', async () => {
+    // The guard is scoped to the two privileged types. Widening it would
+    // break the offscreen handshake for no security gain, so ping and the
+    // status messages must still get through from a content script.
+    const response = (await send(
+      { type: 'ping' },
+      { id: 'test', url: 'https://evil.example/page' },
+    )) as { pong?: boolean } | undefined;
+    expect(response).toBeDefined();
   });
 });
