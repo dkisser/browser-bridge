@@ -204,11 +204,20 @@ describe('only the service worker writes policy state', () => {
     // a fixed character count: this file's comments run long, and a window
     // that happens to cover the calls today silently stops covering them the
     // first time someone inserts a paragraph of explanation.
-    const start = background.indexOf("request.type === 'policy_op'");
+    //
+    // The opening anchor includes the `if` and the brace, not just the test
+    // expression. A sender guard in front of the handler also names
+    // `request.type === 'policy_op'` — in a boolean expression, without the
+    // brace — and anchoring on the bare substring found *that* one, so the
+    // window was the guard's few lines and the guard went red for a change
+    // that had not broken anything it claims. A positional anchor that moves
+    // when an unrelated branch is added above is the same failure in slower
+    // motion; the brace makes it specific to the handler.
+    const start = background.indexOf("if (request.type === 'policy_op') {");
     expect(start).toBeGreaterThan(-1);
     const branch = background.slice(
       start,
-      background.indexOf('request.type ===', start + 1),
+      background.indexOf('if (request.type ===', start + 1),
     );
     expect(branch).toContain('updatePolicyState');
     expect(branch).toContain('applyPolicyOp');
