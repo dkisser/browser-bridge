@@ -129,15 +129,18 @@ export function SidePanel() {
     );
   }, [setMessage]);
 
-  // --- Takeover: optimistic toggle, reverted on storage write failure ---
+  // --- Takeover: the switch shows persisted state, not the click ---
+  //
+  // Not optimistic. The value here is what the policy gate enforces, and a
+  // control that renders ahead of the thing it controls is wrong in the one
+  // direction that matters: it says the human has the browser while the agent
+  // still does. See handleTakeoverChange.
   const [takeover, setTakeover] = useState(false);
   // True while at least one storage write is in flight. While true, the
-  // state-sync effect below assumes any state arrival is one of our own
-  // writes (or a write from another surface that our optimistic update
-  // has effectively superseded) and does not touch local state. Without
-  // this gate, out-of-order write landing — or a second tab's write
-  // landing during our pending write — would clobber the user's most
-  // recent click.
+  // state-sync effect below does not touch local state, so a state arrival
+  // landing out of order — or a second panel's write landing during our
+  // pending write — cannot clobber the user's most recent click before its
+  // own write has been applied.
   const hasPendingTakeoverWrite = useRef(false);
   // Last takeover value the UI has been synced to from storage, used to
   // detect external writes once no write is in flight.
@@ -162,25 +165,42 @@ export function SidePanel() {
   const handleTakeoverChange = useCallback(
     (desired: boolean): void => {
       const myGen = ++writeGen.current;
-      setTakeover(desired);
+      // Deliberately NOT optimistic. This used to render the switch first and
+      // persist second, which meant it could show "the human has the browser"
+      // while the policy gate — and the execution-point re-check, which reads
+      // the same persisted value — still saw takeover off and let the command
+      // through.
+      //
+      // That window is one message round trip, which is sub-millisecond when
+      // the service worker is awake and far longer when it is asleep and has
+      // to be woken for the request. For any other switch the optimistic
+      // render is a nicety; for the kill switch it is the switch lying to the
+      // one person reaching for it under pressure. The displayed state is now
+      // the state the policy engine actually enforces, which is the only
+      // version of this control worth having.
       hasPendingTakeoverWrite.current = true;
       void requestPolicyOp({ op: 'set_takeover', desired })
         .then(() => {
           hasPendingTakeoverWrite.current = false;
+          if (writeGen.current !== myGen) {
+            // A newer click already superseded this one. Its own .then will
+            // apply the value the user actually last asked for; applying this
+            // one now would flicker the switch backwards.
+            return;
+          }
+          setTakeover(desired);
+          lastAppliedTakeover.current = desired;
         })
         .catch((error: unknown) => {
           hasPendingTakeoverWrite.current = false;
           if (writeGen.current !== myGen) {
             // A newer click has already superseded this one. The error
             // refers to an action that no longer reflects the user's
-            // current intent — do not revert or surface a banner.
+            // current intent — do not surface a banner.
             return;
           }
-          // Storage write failed and is still the user's latest action —
-          // revert the switch so the UI matches persisted state, and
-          // show the failure.
-          setTakeover(!desired);
-          lastAppliedTakeover.current = !desired;
+          // The write failed, so the switch never moved and there is nothing
+          // to revert: it still shows what the engine enforces. Just say why.
           setMessage(toErrorMessage(error));
         });
     },
@@ -233,9 +253,9 @@ export function SidePanel() {
   // While the policy read is still in flight, the takeover prop renders
   // the hero's neutral 'Loading…' state. Once state has loaded at least
   // once (or the user has clicked during loading), we forward the local
-  // takeover value so optimistic updates from the click survive the next
-  // re-render and the sync effect can update takeover from persisted
-  // state.
+  // takeover value so the switch keeps showing what it showed before the
+  // re-render, and the sync effect can still update takeover once a
+  // persisted state arrives.
   const takeoverLoaded = state !== null;
   const takeoverForHero =
     takeoverLoaded || hasPendingTakeoverWrite.current ? takeover : null;
