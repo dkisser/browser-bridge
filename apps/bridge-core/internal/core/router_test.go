@@ -578,3 +578,73 @@ func makeRouterWithRouteTTL(t *testing.T, ttl time.Duration) (*Router, *StateMan
 	browser := &fakeBrowser{deliver: true}
 	return NewRouter(st, browser, &fakeRegistry{}, log.Default(), WithRouteTTL(ttl)), st, browser
 }
+
+// TestRequestedDeadlineOverridesShorterBackstop is the regression guard for
+// the timeout split: the router's TTL and the caller's deadline used to be
+// independent, and the router's was a flat 30s. A caller that legitimately
+// waited longer — the MCP schema advertises timeout_ms up to 120s — was cut
+// off mid-command and told the service worker had stopped responding, while
+// the extension was still working on it.
+func TestRequestedDeadlineOverridesShorterBackstop(t *testing.T) {
+	r, st, browser := makeRouterWithRouteTTL(t, 30*time.Millisecond)
+	st.SetStatus(StatusOnline)
+	browser.online = true
+	browser.deliver = true
+
+	sender := &fakeSender{}
+	// Ask for a deadline well past the router's own backstop.
+	r.HandleInboundCommand(commandEnvelope(st.BrowserID(), "c1"), sender,
+		WithRouteDeadline(400*time.Millisecond))
+
+	// The 30ms backstop must not fire: a message here is the bug.
+	time.Sleep(120 * time.Millisecond)
+	if msgs := sender.sentMessages(); len(msgs) != 0 {
+		t.Fatalf("sender got %d messages at 120ms; the 30ms backstop fired "+
+			"despite a 400ms requested deadline: %q", len(msgs), msgs[0])
+	}
+
+	// The requested deadline must still fire eventually — the option raises
+	// the backstop, it does not disable it.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if msgs := sender.sentMessages(); len(msgs) > 0 {
+			payload := decodePayload(t, msgs[0])
+			if payload.Status != "error" || payload.Error != "sw_timeout" {
+				t.Fatalf("payload = %+v, want sw_timeout", payload)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("no sw_timeout after the requested deadline")
+}
+
+// TestShorterRequestedDeadlineDoesNotShortenBackstop pins the other half: the
+// TTL is a leak backstop, and a caller passing a small deadline must not be
+// able to make it fire early for everyone else.
+func TestShorterRequestedDeadlineDoesNotShortenBackstop(t *testing.T) {
+	r, st, browser := makeRouterWithRouteTTL(t, 300*time.Millisecond)
+	st.SetStatus(StatusOnline)
+	browser.online = true
+	browser.deliver = true
+
+	sender := &fakeSender{}
+	r.HandleInboundCommand(commandEnvelope(st.BrowserID(), "c1"), sender,
+		WithRouteDeadline(10*time.Millisecond))
+
+	time.Sleep(150 * time.Millisecond)
+	if msgs := sender.sentMessages(); len(msgs) != 0 {
+		t.Fatalf("a 10ms request shortened the 300ms backstop: %q", msgs[0])
+	}
+}
+
+// TestRouteDeadlineReadsBackWhatTheCallerAsked documents the accessor tests
+// use to observe the option through the router interface.
+func TestRouteDeadlineReadsBackWhatTheCallerAsked(t *testing.T) {
+	if got := RouteDeadline(); got != 0 {
+		t.Fatalf("RouteDeadline() with no options = %v, want 0", got)
+	}
+	if got := RouteDeadline(WithRouteDeadline(90 * time.Second)); got != 90*time.Second {
+		t.Fatalf("RouteDeadline() = %v, want 90s", got)
+	}
+}

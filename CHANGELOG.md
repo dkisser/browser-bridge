@@ -4,6 +4,14 @@ All notable changes to Browser Bridge are documented here. The format follows [K
 
 ## [Unreleased]
 
+### Fixed
+- **Takeover no longer bypassable for three commands.** Takeover is the user's kill switch ("the human has the browser"), and `evaluatePolicy` correctly rejected every command under it — but the extension's dispatch path returned early for `tab:list`, `pageinfo`, and a url-less `tab:new` *before* reaching the policy core. An agent could therefore read every open tab's URL and title, and keep opening blank tabs, while the user believed the agent was locked out. The read-only commands now still skip their origin lookups (the only thing that exemption was ever for) but go through the policy gate like everything else, and the blank-`tab:new` case moved into `evaluatePolicy` behind the takeover check as an explicit `blankNewTab` branch. `tab:new` with a url that parses to a protected context (`file://`, `data:`, `about:`) is still hard-denied — the blank-tab shortcut is scoped to "no url was supplied at all".
+- Long MCP commands are no longer cut off by the router's internal backstop. The route TTL (30s) and the caller's `timeout_ms` were independent, and the schema advertises up to 120s, so a `wait_element` / `wait_navigation` / `screenshot` asking for more than 30s was terminated with "Service worker did not respond in time" while the extension was alive and still working on it. The router now takes the caller's deadline (`core.WithRouteDeadline`) and uses it when it exceeds the backstop; the backstop is never allowed to fire before a deadline the caller set.
+- `wait_element` and `wait_navigation` now surface the content script's diagnostic. The in-page wait budget and the transport deadline were the same value, so the control plane's own timer — started earlier — always expired first and the agent saw a bare timeout instead of `Element not found within 10000ms: <selector>`. The page still gets the full budget the caller asked for; the transport gets 500ms of slack on top.
+
+### Changed
+- The Go control plane now declares the wire contract in typed structs (`internal/http/command.go`) instead of restating it as `map[string]any` literals and anonymous structs. Every `params` key used to be a hand-typed string duplicated from the arg struct's json tag with nothing linking the two, so a rename was invisible to the compiler and to the `tools/list` golden fixture. `commandSpec` also pairs each command name, target tab and params struct in one argument so they cannot drift at a call site, and a new test pins the exact key set per command against what the extension reads.
+
 ## [0.4.2] - 2026-09-27
 
 ### Fixed

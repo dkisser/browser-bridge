@@ -27,6 +27,7 @@ export {
   denialKey,
   evaluatePolicy,
   humanDenialMessage,
+  isReadOnlyCommand,
   originOf,
 } from './policy';
 export type {

@@ -20,7 +20,10 @@ import (
 
 // InboundRouter is the slice of core.Router the inbound server calls.
 type InboundRouter interface {
-	HandleInboundCommand(envelope core.Envelope, sender core.TextSender)
+	// HandleInboundCommand takes the same per-command options the MCP layer
+	// passes; the inbound server has no deadline of its own and passes none,
+	// so the router applies its default backstop.
+	HandleInboundCommand(envelope core.Envelope, sender core.TextSender, opts ...core.InboundOption)
 	// RemoveClient drops every inbound route pointing at sender when the
 	// client connection ends; without it a kill -9 / unexpected close pins
 	// the sender in inboundByID until the extension finally answers (which
