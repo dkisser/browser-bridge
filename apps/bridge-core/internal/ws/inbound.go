@@ -224,6 +224,16 @@ func (s *InboundServer) serveConn(c *clientConn) {
 			}
 		case core.TypeCommand:
 			browserID := envelope.BrowserID
+			// Mint an absent id here too, not just in the router. Encode
+			// already substitutes a fresh UUID for an empty one, so without
+			// this the error below would come back stamped with an id the
+			// client never sent and has no way to match — which is the same
+			// key-and-wire disagreement the router was fixed for, one layer
+			// up. No shipped client omits the id; this makes a hand-rolled
+			// one work on the offline path the same as on the routed path.
+			if envelope.ID == "" {
+				envelope.ID = core.NewID()
+			}
 			// Reject only browsers the registry has never seen. Reachability
 			// of a *known* browser is the router's call: it accepts online and
 			// idle_wait (buffering for a fast reconnect) and answers

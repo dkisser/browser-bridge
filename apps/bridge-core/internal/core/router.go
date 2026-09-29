@@ -388,9 +388,9 @@ func (r *Router) removeInbound(id string) {
 // Both timers are armed from the same goroutine with the same instant — the
 // router's time.AfterFunc first, the caller's time.After second — so at
 // equal deadlines the outcome is a race, and when the backstop wins the
-// caller is told "Service worker did not respond in time", blaming a service
-// worker that is in fact still working, instead of its own accurate
-// "timeout: no response for command X within Nms". The margin makes the
+// caller is told the extension never answered, blaming a service worker that
+// is in fact still working, instead of its own accurate "timeout: no
+// response for command X within Nms". The margin makes the
 // caller's own deadline deterministically win and leaves the backstop doing
 // only its real job: releasing a route whose sender never cleaned up.
 const routeBackstopMargin = time.Second
@@ -433,7 +433,14 @@ func (r *Router) fireRouteTimeout(id string, sender TextSender, browserID string
 		// already cleaned this up.
 		return
 	}
-	r.sendError(sender, "sw_timeout", "Service worker did not respond in time", id, browserID)
+	// The route backstop, as opposed to bufferExpiredMessage above: same code,
+	// different situation, and the message says so. Here the command WAS
+	// delivered and the extension simply never answered — the reply would
+	// have come from the offscreen document, so this layer cannot observe the
+	// service worker's state any more than the buffer path can. The two
+	// messages used to name a subsystem the router cannot see, forty lines
+	// apart, with one rewritten and the other not.
+	r.sendError(sender, "sw_timeout", "The extension did not answer in time", id, browserID)
 }
 
 // sendError renders and sends the TS encode('response', {status, error,

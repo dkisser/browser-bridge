@@ -6,11 +6,19 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
-// The tool input schemas below mirror, field for field, the JSON Schemas
-// that xsschema 0.4.x derives from the zod schemas in
-// src/mcp/tools/*.ts (draft-07, additionalProperties: false). They were
-// extracted by running the TS build's own xsschema over the zod schemas;
-// testdata/tools_list_ts.json pins the full tools/list payload.
+// The tool input schemas below started as a field-for-field mirror of the
+// JSON Schemas xsschema 0.4.x derives from the zod schemas in
+// src/mcp/tools/*.ts (draft-07, additionalProperties: false), extracted by
+// running the TS build's own xsschema. That TS control plane is deleted
+// (ADR-0012) and `src/mcp/tools/*.ts` resolves to nothing on this branch.
+//
+// The mirror is now deliberate rather than mechanical, and this file is the
+// contract: the two parameters the extension never implemented
+// (screenshot.fullPage, tab_new.auto_close) were removed here rather than
+// reimplemented, so this schema has *less* than the old TS one and never
+// will again. testdata/tools_list_ts.json pins the payload and records the
+// divergence in its README — read that before "restoring parity", which is
+// the move that puts the two phantom parameters back.
 
 const jsonSchemaDraft07 = "http://json-schema.org/draft-07/schema#"
 

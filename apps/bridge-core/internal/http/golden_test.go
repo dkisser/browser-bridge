@@ -18,13 +18,20 @@ type goldenTool struct {
 	InputSchema json.RawMessage `json:"inputSchema"`
 }
 
-// TestToolsListMatchesTSFixture diffs the Go server's tools/list against the
-// golden export taken from the TS bridge-core's MCP server
-// (testdata/tools_list_ts.json). Comparison is semantic: the served tool
-// order differs by design (go-sdk sorts by name, FastMCP kept registration
-// order; the MCP spec treats the list as a set), and JSON object key order
-// inside schemas is normalized by unmarshalling both sides.
-func TestToolsListMatchesTSFixture(t *testing.T) {
+// TestToolsListMatchesTheContract diffs the Go server's tools/list against
+// testdata/tools_list_ts.json — the contract, which was originally exported
+// from the TS bridge-core's MCP server and has since been hand-edited to
+// record one deliberate divergence. Read testdata/README.md before touching
+// the fixture: regenerating it from a `main` worktree re-adds the two
+// parameters the extension never implemented, which is precisely what three
+// other files now pin as removed. The name deliberately stopped saying "TS"
+// for that reason.
+//
+// Comparison is semantic: the served tool order differs by design (go-sdk
+// sorts by name, FastMCP kept registration order; the MCP spec treats the
+// list as a set), and JSON object key order inside schemas is normalized by
+// unmarshalling both sides.
+func TestToolsListMatchesTheContract(t *testing.T) {
 	data, err := os.ReadFile("testdata/tools_list_ts.json")
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)

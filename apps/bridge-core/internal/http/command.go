@@ -64,7 +64,7 @@ type screenshotResult = core.ScreenshotResult
 
 // sendCommand is sendCommand in src/mcp/command-client.ts with the WS client
 // hop replaced by an in-process router.HandleInboundCommand call. The router
-// path preserves the browser_offline / buffer / sw_timeout behavior, and the
+// path preserves the browser_offline / cannot_buffer / sw_timeout / extension_send_failed behavior, and the
 // timeout text matches the TS client's.
 func (s *MCPServer) sendCommand(ctx context.Context, browserID string, spec commandSpec, timeout time.Duration) (core.ResponsePayload, error) {
 	// Params is a struct value, so it always marshals to an object — the

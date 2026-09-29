@@ -714,11 +714,11 @@ func TestRequestedDeadlineOverridesShorterBackstop(t *testing.T) {
 
 	// The backstop must still fire eventually — the option raises it, it does
 	// not disable it — and only *after* the caller's own deadline, so the
-	// caller reports its own accurate timeout first.
-	backstop := requested + routeBackstopMargin
-	if got := backstop - requested; got != routeBackstopMargin {
-		t.Fatalf("backstop is not the deadline + %v", routeBackstopMargin)
-	}
+	// caller reports its own accurate timeout first. That is carried by the
+	// polling loop below, not asserted here: a previous version checked
+	// `(requested + margin) - requested == margin`, which is true by
+	// construction in int64 nanosecond arithmetic and therefore asserted
+	// nothing at all while reading as a guard on the margin.
 	deadline := time.Now().Add(4 * time.Second)
 	for time.Now().Before(deadline) {
 		if msgs := sender.sentMessages(); len(msgs) > 0 {
