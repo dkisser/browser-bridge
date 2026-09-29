@@ -737,10 +737,11 @@ describe('takeover is re-checked at the execution point', () => {
 
     const stored = store.get('policyState') as { recentDenials?: unknown[] };
     expect(stored.recentDenials ?? []).toHaveLength(0);
-    // The badge is still refreshed — that is how a stale count gets cleared
-    // — but it is refreshed to empty. Asserting the text rather than the
-    // number of refreshes is the point: what must not survive is the count.
-    expect(lastBadgeText?.text).toBe('');
+    // The badge is not merely refreshed to empty — it is never touched. There
+    // is nothing to clear, because a takeover refusal never added to the
+    // count, and a redundant chrome.action call here would be a round-trip
+    // whose only possible outcome is writing back the same number.
+    expect(lastBadgeText).toBeNull();
   });
 
   it('still records an ordinary refusal, so the new rule is not a blanket one', async () => {

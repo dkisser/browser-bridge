@@ -247,11 +247,16 @@ async function assertTakeoverUnchanged(
   );
   if (decision.allow || !decision.denial) return;
 
-  // A denial this late is still a denial the user should see in the badge
-  // and the Approvals panel, exactly as if the gate had produced it — the
-  // difference is only that the command was allowed and then withdrawn.
-  await recordDenial(decision.denial);
-  await updateBadge();
+  // Withdrawn silently, and that is deliberate rather than an oversight.
+  // takeoverDenied only ever produces human_assist_active, and recordDenial
+  // drops exactly that reason — so recording it here would be a call that
+  // cannot write anything, and refreshing the badge after it would recompute
+  // a count that did not move. This comment previously claimed the user would
+  // see the denial in the badge and the Approvals panel, which the very rule
+  // that makes the re-check possible makes false: a takeover refusal is the
+  // user's own kill switch firing, not a request for a decision. What they do
+  // get is the standing Takeover indicator in the side panel, and the agent
+  // still gets the full denial text.
   throw new PolicyDeniedError(decision.denial);
 }
 
@@ -538,13 +543,16 @@ export async function handleCommand(
       // clicks itself afterwards.
       //
       // This is the only command group that needs it, and saying so
-      // matters more than the check itself. Every other branch reaches its
-      // effect with a single `chrome.*` call after the gate and no
-      // intervening await, so a re-check there would be a second queue
-      // round-trip guarding a window of zero width. The commands that
-      // genuinely do wait for a long time — navigate, wait:navigation,
-      // wait:element — spend it after their effect has already happened,
-      // where no re-check could undo anything.
+      // matters more than the check itself. Every other branch's remaining
+      // window is one in-process round-trip — screenshot does await
+      // chrome.tabs.get before capturing, but that is a read that cannot
+      // block, unlike the injection above — so a re-check there would be a
+      // second queue round-trip guarding a window too narrow to lose a race
+      // in. The commands that genuinely do wait for a long time, navigate and
+      // wait:navigation, spend it *after* their effect has already happened,
+      // where no re-check could undo anything. wait:element rides along only
+      // because it shares this dispatch path; its own wait happens in the
+      // page, after this check has already run.
       //
       // What this cannot do: recall a mutation that already reached the
       // page. It closes the window, it does not make the control absolute.
