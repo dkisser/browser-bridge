@@ -177,6 +177,7 @@ let contentScriptResponse: (
 ) => Promise<unknown> = defaultContentScriptResponse;
 
 let handleCommand: typeof background.handleCommand;
+let assertTakeoverUnchanged: typeof background.assertTakeoverUnchanged;
 
 function makeCommand(
   command: CommandType,
@@ -335,7 +336,9 @@ beforeAll(async () => {
   // Static imports would evaluate background.ts before the chrome global
   // exists (the module registers listeners and calls connectOffscreen at load
   // time), so the import is dynamic and ordered after the mock.
-  ({ handleCommand } = await import('../src/background'));
+  ({ handleCommand, assertTakeoverUnchanged } = await import(
+    '../src/background'
+  ));
 });
 
 beforeEach(() => {
@@ -699,6 +702,18 @@ describe('takeover is re-checked at the execution point', () => {
     // withdrawn command that still dispatched would leave the user watching
     // a page act on the browser they just took back.
     expect(sentToContentScript).toHaveLength(0);
+
+    // What this test cannot do, stated here because it is the trap: it
+    // cannot tell you *which* denial site fired. The gate and the re-check
+    // both throw PolicyDeniedError with reason human_assist_active, and
+    // nothing observable happens between them — no event, no await — so a
+    // flip keyed on a read ordinal can land on the gate instead and this
+    // still passes. The read count does not separate the two either; it is
+    // the same under both orderings.
+    //
+    // So this is an integration test of the window: takeover is engaged
+    // during command handling and the command does not reach the page. The
+    // re-check's own behaviour is pinned by the direct test below.
   });
 
   it('leaves the command alone when the human does not take over', async () => {
@@ -1169,5 +1184,201 @@ describe('policy_op through the real service-worker listener', () => {
 
     expect(response.status).toBe('ok');
     expect(response.data.blockedOrigins).toEqual(['evil.example']);
+  });
+});
+
+// The withdrawal above is fail-closed but not free: the gate consumed and
+// persisted the grant before the re-check ran, so a command the re-check then
+// refuses has spent a one-shot approval without ever reaching the page. The
+// surrounding test uses `click`, which consumes nothing, so this interaction
+// was invisible until it was written down.
+//
+// Refunding is not the fix — consumption is what makes a grant
+// un-double-spendable, and putting it back after an await would resurrect one
+// a concurrent command is entitled to believe is gone. So the behaviour is
+// pinned instead: one-shot means one attempt, and the wrong direction to fail
+// in, which is worth a test precisely because it is easy to "fix" later
+// without noticing what the fix would re-open.
+describe('a withdrawn command has still spent its grant', () => {
+  const APPROVED = 'https://approved.site';
+
+  beforeEach(() => {
+    store.set('policyState', {
+      takeover: false,
+      origins: { [APPROVED]: 'always' },
+    });
+    tabUrls.set(1, `${APPROVED}/form`);
+    // The preflight has to classify the target as sensitive, or no
+    // sensitive-field grant is needed and none is ever consumed — the test
+    // would pass for the wrong reason.
+    preflightResult = { sensitive: true };
+  });
+
+  it('burns a one-shot sensitive-field grant without reaching the page', async () => {
+    store.set('policyState', {
+      takeover: false,
+      origins: { [APPROVED]: 'always' },
+      grants: [
+        {
+          capability: 'sensitive-field',
+          expiresAt: Date.now() + 60 * 60 * 1000,
+          singleUse: true,
+        },
+      ],
+    });
+
+    // The user engages takeover after the gate has already consumed, but
+    // before the command would have been dispatched.
+    onNthStorageRead = {
+      n: 2,
+      run: () => {
+        store.set('policyState', {
+          takeover: true,
+          origins: { [APPROVED]: 'always' },
+        });
+      },
+    };
+
+    const failure = await handleCommand(
+      makeCommand('type', 1, { selector: '#pw', text: 'x' }),
+    ).then(
+      () => null,
+      (err: Error & { name?: string; denial?: { reason: string } }) => err,
+    );
+
+    expect(failure?.denial?.reason).toBe('human_assist_active');
+    // Never dispatched — the control worked.
+    expect(sentToContentScript).toHaveLength(0);
+    // And the grant is spent anyway. This is the assertion that makes the
+    // behaviour a decision: it fails if someone "fixes" the asymmetry by
+    // refunding, which is the fix that would re-open double-spend.
+    const stored = store.get('policyState') as { grants?: unknown[] };
+    expect(stored.grants ?? []).toHaveLength(0);
+  });
+
+  it('leaves the grant alone when the re-check does not fire', async () => {
+    // The direction that would be a real regression: a healthy command must
+    // still be able to spend exactly one grant, and a second identical
+    // command must be denied.
+    store.set('policyState', {
+      takeover: false,
+      origins: { [APPROVED]: 'always' },
+      grants: [
+        {
+          capability: 'sensitive-field',
+          expiresAt: Date.now() + 60 * 60 * 1000,
+          singleUse: true,
+        },
+      ],
+    });
+
+    const first = await handleCommand(
+      makeCommand('type', 1, { selector: '#pw', text: 'x' }),
+    ).then(
+      () => null,
+      (err: Error) => err,
+    );
+    expect(first).toBeNull();
+
+    const afterFirst = store.get('policyState') as { grants?: unknown[] };
+    expect(afterFirst.grants ?? []).toHaveLength(0);
+
+    const second = await handleCommand(
+      makeCommand('type', 1, { selector: '#pw', text: 'x' }),
+    ).then(
+      () => null,
+      (err: Error & { denial?: { reason: string } }) => err,
+    );
+    expect(second?.denial?.reason).toBe('approval_required');
+  });
+});
+
+// The re-check's own behaviour, tested directly.
+//
+// The integration test above cannot identify which denial site fired: the gate
+// and this function throw the same error with the same reason, and nothing
+// observable happens between them, so a read-ordinal flip can land on the
+// gate and still satisfy every assertion there. That is not a gap that a
+// cleverer mock closes — it is a property of the code, and the only honest
+// response is to test this function without going through the gate.
+describe('assertTakeoverUnchanged on its own', () => {
+  beforeEach(() => {
+    store.set('policyState', {
+      takeover: false,
+      origins: { 'https://a.test': 'always' },
+    });
+  });
+
+  it('throws human_assist_active when takeover is on', async () => {
+    store.set('policyState', {
+      takeover: true,
+      origins: { 'https://a.test': 'always' },
+    });
+
+    const failure = await assertTakeoverUnchanged(
+      'click',
+      'https://a.test',
+    ).then(
+      () => null,
+      (err: Error & { name?: string; denial?: { reason: string } }) => err,
+    );
+
+    expect(failure?.name).toBe('PolicyDeniedError');
+    expect(failure?.denial?.reason).toBe('human_assist_active');
+  });
+
+  it('resolves when takeover is off', async () => {
+    // The negative direction. A re-check that always denied would pass the
+    // test above while making every DOM command unusable.
+    expect(
+      await assertTakeoverUnchanged('click', 'https://a.test'),
+    ).toBeUndefined();
+  });
+
+  it('carries the origin so the denial names what was refused', async () => {
+    store.set('policyState', {
+      takeover: true,
+      origins: { 'https://a.test': 'always' },
+    });
+
+    const failure = await assertTakeoverUnchanged(
+      'type',
+      'https://a.test',
+    ).then(
+      () => null,
+      (
+        err: Error & {
+          denial?: { reason: string; command: string; origin?: string };
+        },
+      ) => err,
+    );
+
+    expect(failure?.denial?.command).toBe('type');
+    expect(failure?.denial?.origin).toBe('https://a.test');
+  });
+
+  it('consumes nothing', async () => {
+    // It must not be able to spend a grant. decideWithState only writes when
+    // a decision carries `consume`, and takeoverDenied never does — so a
+    // re-check that could consume would be a second way to drain one-shot
+    // approvals, from a place with no gate in front of it.
+    store.set('policyState', {
+      takeover: true,
+      origins: { 'https://a.test': 'always' },
+      grants: [
+        {
+          capability: 'sensitive-field',
+          expiresAt: Date.now() + 60_000,
+          singleUse: true,
+        },
+      ],
+    });
+
+    await assertTakeoverUnchanged('type', 'https://a.test').catch(
+      () => undefined,
+    );
+
+    const stored = store.get('policyState') as { grants?: unknown[] };
+    expect(stored.grants ?? []).toHaveLength(1);
   });
 });

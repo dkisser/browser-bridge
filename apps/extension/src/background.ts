@@ -237,7 +237,14 @@ function waitForTabComplete(
 // The verdict comes from the shared policy core's takeoverDenied rather than
 // from reading `state.takeover` here, so this cannot drift from the rule the
 // gate applied. See the call site for why only the DOM commands need it.
-async function assertTakeoverUnchanged(
+//
+// Exported for its own test. Nothing observable happens between the gate's
+// decision and the read below — no event, no await — so a test cannot drive
+// this function through handleCommand and then prove *this* was the denial
+// rather than the gate's, which throws the same error with the same reason.
+// Testing it directly is the only way to pin what it does, and leaving the
+// integration test to imply otherwise is how it came to be over-claimed.
+export async function assertTakeoverUnchanged(
   command: CommandType,
   origin: string | null,
 ): Promise<void> {
@@ -556,6 +563,19 @@ export async function handleCommand(
       //
       // What this cannot do: recall a mutation that already reached the
       // page. It closes the window, it does not make the control absolute.
+      //
+      // And a command withdrawn here has still spent its grant. The gate
+      // consumed and persisted any single-use capability inside the write
+      // queue, before this point, so a `type` that the re-check then refuses
+      // burns a one-shot sensitive-field approval without ever reaching the
+      // page. Refunding it is not available: the consumption is what makes it
+      // un-double-spendable, and putting the grant back after an await would
+      // resurrect one a concurrent command is entitled to believe is gone.
+      // Spending early fails closed — the user re-approves, nothing the
+      // agent did not authorize ever happened — which is the right direction
+      // for a control whose job is to be inconvenient under pressure. The
+      // cost is that "one-shot" means one *attempt*, not one execution, and
+      // the test below pins that so it stays a decision.
       await assertTakeoverUnchanged(command, origin);
       // A sensitive-field grant consumed at the gate authorizes this one type
       // command; the content script re-verifies the field at execution time.
