@@ -904,6 +904,84 @@ describe('policy_op through the real service-worker listener', () => {
     expect(response.error).toContain('requires a denial with an origin');
   });
 
+  it('serializes concurrent operations from two UI contexts', async () => {
+    // The whole point of routing writes through one queue: two panels (or a
+    // panel and the settings page) acting at once must not lose an update.
+    // Each op is a read-modify-write of the same object, so unserialized
+    // they would restore each other's fields — which is how a consumed
+    // singleUse grant came back to life.
+    store.set('policyState', {
+      takeover: false,
+      origins: { 'https://a.example': 'always' },
+      blockedOrigins: [],
+      recentDenials: [
+        {
+          reason: 'origin_not_approved',
+          command: 'click',
+          origin: 'https://b.example',
+        },
+      ],
+    });
+
+    // Two operations that write *different* fields, so a lost update shows up
+    // as one of them being missing. Unserialized, each reads the pre-write
+    // state and writes the whole object back, and the loser restores the
+    // winner's fields.
+    const [approve, block] = (await Promise.all([
+      sendPolicyOp({
+        op: 'denial_action',
+        action: 'approve-always',
+        targetKey: 'origin_not_approved|https://b.example|click',
+      }),
+      sendPolicyOp({ op: 'add_block', entry: 'evil.example' }),
+    ])) as unknown as { status: string }[];
+
+    expect(approve.status).toBe('ok');
+    expect(block.status).toBe('ok');
+
+    const stored = store.get('policyState') as {
+      origins: Record<string, string>;
+      blockedOrigins: string[];
+    };
+    // Both writes survived, whatever order the queue ran them in.
+    expect(stored.origins['https://a.example']).toBe('always');
+    expect(stored.origins['https://b.example']).toBe('always');
+    expect(stored.blockedOrigins).toContain('evil.example');
+  });
+
+  it('answers with an error when the storage write itself fails', async () => {
+    // chrome.storage.local.set can reject (quota, or a context invalidated
+    // mid-request). The caller must hear about it rather than be told the
+    // policy changed.
+    const realSet = (
+      globalThis as unknown as {
+        chrome: { storage: { local: { set: unknown } } };
+      }
+    ).chrome.storage.local.set;
+    (
+      globalThis as unknown as {
+        chrome: { storage: { local: { set: unknown } } };
+      }
+    ).chrome.storage.local.set = async () => {
+      throw new Error('QUOTA_BYTES quota exceeded');
+    };
+    try {
+      const response = (await sendPolicyOp({
+        op: 'set_takeover',
+        desired: true,
+      })) as { status: string; error: string };
+
+      expect(response.status).toBe('error');
+      expect(response.error).toContain('quota');
+    } finally {
+      (
+        globalThis as unknown as {
+          chrome: { storage: { local: { set: unknown } } };
+        }
+      ).chrome.storage.local.set = realSet;
+    }
+  });
+
   it('keeps serving operations after one fails', async () => {
     store.set('policyState', {
       takeover: false,

@@ -39,5 +39,14 @@ export async function requestPolicyOp(op: PolicyOp): Promise<PolicyState> {
   if (response.status === 'error') {
     throw new Error(response.error);
   }
+  // Anything that is not an explicit ok is a failure, not a success with an
+  // undefined state: a malformed or future-shaped reply would otherwise read
+  // as a completed write, and the panel would go on as though the policy
+  // changed when nothing did.
+  if (response.status !== 'ok') {
+    throw new Error(
+      'The extension background returned an unexpected response to a policy change.',
+    );
+  }
   return response.data;
 }
