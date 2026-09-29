@@ -58,6 +58,12 @@ function fireTabUpdated(
 ): void {
   for (const listener of [...onUpdatedListeners]) listener(tabId, changeInfo);
 }
+
+// Yield long enough for a chain of already-resolved promises (the detached
+// badge refresh) to run to completion.
+function settle(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
 let badgeTextUpdates = 0;
 let lastBadgeText: { text: string } | null = null;
 
@@ -738,6 +744,14 @@ describe('policy_op through the real service-worker listener', () => {
     // The write actually landed, not just a well-formed reply.
     const stored = store.get('policyState') as { takeover: boolean };
     expect(stored.takeover).toBe(true);
+    // And the badge really was refreshed. Without this, deleting the
+    // updateBadge() call entirely would leave every other test green — the
+    // badge is fire-and-forget precisely so its failure cannot reach the
+    // caller, which also means nothing else would notice it stopping.
+    // The refresh is deliberately not awaited by the handler, so give it a
+    // tick to land rather than assuming an ordering that no longer exists.
+    await settle();
+    expect(badgeTextUpdates).toBeGreaterThan(0);
   });
 
   it('answers even when the badge refresh fails', async () => {
