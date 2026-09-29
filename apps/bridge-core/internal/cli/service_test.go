@@ -776,7 +776,7 @@ func TestUninstallAbortsWithoutYes(t *testing.T) {
 	e := testEnv(t, "linux")
 	r := newFakeRunner()
 	var out bytes.Buffer
-	if err := Uninstall(context.Background(), e, r, false, strings.NewReader("n\n"), &out); err != nil {
+	if err := Uninstall(context.Background(), e, r, false, false, strings.NewReader("n\n"), &out); err != nil {
 		t.Fatalf("Uninstall: %v", err)
 	}
 	if !strings.Contains(out.String(), "aborted") {
@@ -787,9 +787,49 @@ func TestUninstallAbortsWithoutYes(t *testing.T) {
 	}
 }
 
-func TestUninstallYes(t *testing.T) {
+// A plain uninstall removes the install but keeps the data dir (ADR-0017):
+// the pairing config — and later the audit trail and agent memory — must
+// survive "uninstall and reinstall to fix a weird problem".
+func TestUninstallKeepsDataDir(t *testing.T) {
 	e := testEnv(t, "linux")
 	r := newFakeRunner()
+	if err := os.MkdirAll(filepath.Join(e.BBHome, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(e.BBHome, "version"), []byte("v9.9.9"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := filepath.Join(e.DataDir(), "config.json")
+	if err := os.MkdirAll(e.DataDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg, []byte(`{"browserId":"b-keepme"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := Uninstall(context.Background(), e, r, true, false, strings.NewReader(""), &out); err != nil {
+		t.Fatalf("Uninstall: %v", err)
+	}
+	if _, err := os.Stat(cfg); err != nil {
+		t.Errorf("data/config.json removed by plain uninstall: %v", err)
+	}
+	for _, p := range []string{filepath.Join(e.BBHome, "bin"), filepath.Join(e.BBHome, "version")} {
+		if _, err := os.Lstat(p); !os.IsNotExist(err) {
+			t.Errorf("%s still present", p)
+		}
+	}
+	if !strings.Contains(out.String(), "kept "+e.DataDir()) {
+		t.Errorf("out missing kept-notice:\n%s", out.String())
+	}
+}
+
+// --purge wipes the data dir along with everything else.
+func TestUninstallPurge(t *testing.T) {
+	e := testEnv(t, "linux")
+	r := newFakeRunner()
+	if err := os.MkdirAll(e.DataDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	// Plant an extension dir and a dangling ~/.local/bin/bridge symlink.
 	if err := os.MkdirAll(e.ExtensionDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -803,7 +843,7 @@ func TestUninstallYes(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	if err := Uninstall(context.Background(), e, r, true, strings.NewReader(""), &out); err != nil {
+	if err := Uninstall(context.Background(), e, r, true, true, strings.NewReader(""), &out); err != nil {
 		t.Fatalf("Uninstall: %v", err)
 	}
 	for _, p := range []string{e.BBHome, e.ExtensionDir, link} {
@@ -815,6 +855,46 @@ func TestUninstallYes(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("out missing %q:\n%s", want, out.String())
 		}
+	}
+}
+
+// ---- log rotation ---------------------------------------------------------
+
+func TestRotateLogFileRollsOversizedLog(t *testing.T) {
+	e := testEnv(t, "linux")
+	if err := os.MkdirAll(e.LogDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(e.LogFile(), make([]byte, maxLogBytes+1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rotateLogFile(e.LogFile())
+	if _, err := os.Stat(e.LogFile()); !os.IsNotExist(err) {
+		t.Errorf("oversized log not rotated away: %v", err)
+	}
+	st, err := os.Stat(e.LogFile() + ".1")
+	if err != nil {
+		t.Fatalf("rotated log missing: %v", err)
+	}
+	if st.Size() != int64(maxLogBytes+1) {
+		t.Errorf("rotated log size = %d, want %d", st.Size(), maxLogBytes+1)
+	}
+}
+
+func TestRotateLogFileKeepsSmallLog(t *testing.T) {
+	e := testEnv(t, "linux")
+	if err := os.MkdirAll(e.LogDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(e.LogFile(), []byte("small"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rotateLogFile(e.LogFile())
+	if _, err := os.Stat(e.LogFile()); err != nil {
+		t.Errorf("small log rotated away: %v", err)
+	}
+	if _, err := os.Stat(e.LogFile() + ".1"); !os.IsNotExist(err) {
+		t.Errorf("unexpected .1 generation: %v", err)
 	}
 }
 

@@ -11,10 +11,12 @@ export interface HardConfigEntry {
   readonly value: string;
 }
 
-// The five entries shown in the settings tab. Paths follow the install
-// layout managed by the Go `bridge` binary (apps/bridge-core/internal/service):
+// The six entries shown in the settings tab. Paths follow the install
+// layout managed by the Go `bridge` binary (apps/bridge-core/internal/cli):
 // BB_HOME=~/.browser-bridge, the LaunchAgent label is com.browser-bridge.bridge,
-// the CLI binary lives at BB_HOME/bin/bridge.
+// the CLI binary lives at BB_HOME/bin/bridge, and persistent data (pairing
+// config today, audit trail and agent memory later) lives at BB_HOME/data
+// (ADR-0017).
 const BB_HOME = '~/.browser-bridge';
 const LAUNCHAGENT_LABEL = 'com.browser-bridge.bridge';
 
@@ -36,6 +38,10 @@ export function formatHardConfig(): HardConfigEntry[] {
     {
       label: 'Log directory',
       value: `${BB_HOME}/logs`,
+    },
+    {
+      label: 'Data directory',
+      value: `${BB_HOME}/data`,
     },
     {
       label: 'LaunchAgent plist',

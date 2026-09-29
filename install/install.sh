@@ -55,6 +55,12 @@ write_artifacts() {
   local version="$1"
   mkdir -p "$BB_HOME"
   echo "$version" > "$BB_HOME/version"
+  # The persistent-data dir (ADR-0017): pairing config today, audit trail and
+  # agent memory later. 0700 because the pairing token hash lives inside.
+  # Upgrades only ever write bin/, extension/ and version — data/ and the
+  # runtime dirs (logs/, run/) are never touched.
+  mkdir -p "$BB_HOME/data"
+  chmod 700 "$BB_HOME/data"
   mkdir -p "$HOME/.local/bin"
   ln -sf "$BB_HOME/bin/bridge" "$HOME/.local/bin/bridge"
 }
@@ -194,6 +200,16 @@ download_extension() {
   if [[ -d "$BB_HOME/extension" ]] && [[ -n "$(ls -A "$BB_HOME/extension" 2>/dev/null)" ]]; then
     mv "$BB_HOME/extension" "$BB_HOME/extension.bak.$(date +%s)"
   fi
+  # extension.bak.* dirs would otherwise accumulate forever; keep only the
+  # newest (one rollback is enough). Glob expansion is sorted and the epoch
+  # suffixes are fixed-width, so array order is chronological.
+  shopt -s nullglob
+  local backups=( "$BB_HOME"/extension.bak.* )
+  shopt -u nullglob
+  local i
+  for (( i = 0; i < ${#backups[@]} - 1; i++ )); do
+    rm -rf "${backups[$i]}"
+  done
   mkdir -p "$BB_HOME/extension"
   unzip -q "${tmpdir}/${zipname}" -d "$BB_HOME/extension"
 

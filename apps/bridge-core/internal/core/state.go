@@ -16,6 +16,15 @@ const DefaultBufferTimeout = 5 * time.Second
 
 const configFileName = "config.json"
 
+// DataDirName is the persistent-data dir under $BB_HOME (ADR-0017): it
+// survives upgrades and `bridge service uninstall`. The pairing config is
+// its only resident today; the audit trail and agent memory land here later.
+//
+// Exported because the CLI must agree with this exactly: `bridge service
+// uninstall` keeps $BB_HOME by skipping this name, so a divergent copy would
+// rm -rf the live pairing config on a plain uninstall.
+const DataDirName = "data"
+
 // fileConfig is the on-disk shape. Only these two fields survive a load —
 // the TS load destructures exactly them so ghost fields from pre-merge
 // configs (apiToken, serverUrl) are never re-serialized on save.
@@ -54,20 +63,23 @@ type StateManager struct {
 	bufferTimeout time.Duration
 }
 
-// NewStateManager loads (or initializes) the config under $BB_HOME, falling
-// back to ~/.browser-bridge. A load failure (missing file, bad JSON, missing
-// browserId) produces a fresh config with a generated browserId, mirroring
-// the TS fall-through; a failure to persist that fresh config is fatal, as
-// in TS.
+// NewStateManager loads (or initializes) the config under $BB_HOME/data
+// (falling back to ~/.browser-bridge/data), migrating a pre-ADR-0017
+// root-level config.json first. A load failure (missing file, bad JSON,
+// missing browserId) produces a fresh config with a generated browserId,
+// mirroring the TS fall-through; a failure to persist that fresh config is
+// fatal, as in TS.
 func NewStateManager(opts ...StateOption) (*StateManager, error) {
-	dir := os.Getenv("BB_HOME")
-	if dir == "" {
+	bbHome := os.Getenv("BB_HOME")
+	if bbHome == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return nil, fmt.Errorf("resolve home directory: %w", err)
 		}
-		dir = filepath.Join(home, ".browser-bridge")
+		bbHome = filepath.Join(home, ".browser-bridge")
 	}
+	dir := filepath.Join(bbHome, DataDirName)
+	migrateLegacyConfig(bbHome, dir)
 	m := &StateManager{
 		dir:           dir,
 		status:        StatusOffline,
@@ -85,6 +97,29 @@ func NewStateManager(opts ...StateOption) (*StateManager, error) {
 		return nil, fmt.Errorf("write initial config: %w", err)
 	}
 	return m, nil
+}
+
+// migrateLegacyConfig moves a pre-ADR-0017 root-level $BB_HOME/config.json
+// into the data dir, so an upgrade never silently un-pairs the extension.
+// When both locations hold a config the data dir wins and the legacy file is
+// left alone (it also softens a downgrade: an old binary still finds its
+// config). Best-effort: a failure only means the load below starts fresh, so
+// it is logged to stderr (bridge-core.log) rather than being fatal.
+func migrateLegacyConfig(bbHome, dataDir string) {
+	legacy := filepath.Join(bbHome, configFileName)
+	if _, err := os.Stat(legacy); err != nil {
+		return
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, configFileName)); err == nil {
+		return
+	}
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		fmt.Fprintf(os.Stderr, "config migration: create %s: %v\n", dataDir, err)
+		return
+	}
+	if err := os.Rename(legacy, filepath.Join(dataDir, configFileName)); err != nil {
+		fmt.Fprintf(os.Stderr, "config migration: move %s into %s: %v\n", legacy, dataDir, err)
+	}
 }
 
 func newBrowserID() string {

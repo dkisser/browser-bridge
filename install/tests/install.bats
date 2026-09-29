@@ -142,6 +142,38 @@ SCRIPT
   [[ "$output" == *"bb.zip"* ]]
 }
 
+@test "download_extension keeps only the newest extension.bak.* backup" {
+  bash_path=$(find_modern_bash)
+  mkdir -p "$BB_TEST_TMP/www" "$BB_TEST_TMP/stage"
+  echo "real-content" > "$BB_TEST_TMP/stage/bb.zip"
+  ( cd "$BB_TEST_TMP/stage" && zip -q "$BB_TEST_TMP/www/browser-bridge-extension-v9.9.9.zip" bb.zip )
+  ( cd "$BB_TEST_TMP/www" && shasum -a 256 browser-bridge-extension-v9.9.9.zip > browser-bridge-extension-v9.9.9.zip.sha256 )
+  start_mock_http 18747
+
+  # Two stale backups from earlier upgrades plus the live extension dir.
+  mkdir -p "$BB_TEST_TMP/bb-home/extension.bak.1000000000" \
+           "$BB_TEST_TMP/bb-home/extension.bak.1000000001" \
+           "$BB_TEST_TMP/bb-home/extension"
+  echo old > "$BB_TEST_TMP/bb-home/extension/old-file"
+
+  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_dl.sh"
+  cat >> "$BB_TEST_TMP/test_dl.sh" <<'SCRIPT'
+ORG='127.0.0.1:18747'
+REPO='browser-bridge'
+resolve_version() { echo 'v9.9.9'; }
+download_extension
+SCRIPT
+  BB_HOME="$BB_TEST_TMP/bb-home" run "$bash_path" "$BB_TEST_TMP/test_dl.sh"
+  stop_mock_http
+  [ "$status" -eq 0 ]
+  # The two stale backups are gone; only this run's fresh backup remains.
+  [[ ! -d "$BB_TEST_TMP/bb-home/extension.bak.1000000000" ]]
+  [[ ! -d "$BB_TEST_TMP/bb-home/extension.bak.1000000001" ]]
+  local remaining=( "$BB_TEST_TMP/bb-home"/extension.bak.* )
+  [[ ${#remaining[@]} -eq 1 ]]
+  [[ -f "${remaining[0]}/old-file" ]]
+}
+
 # ---------------------------------------------------------------------------
 # Task 10: download_runtime
 # ---------------------------------------------------------------------------
@@ -465,6 +497,59 @@ SCRIPT
   [ "$status" -eq 0 ]
   [[ -f "$BB_TEST_TMP/bb-home/version" ]]
   [[ "$(cat "$BB_TEST_TMP/bb-home/version")" == "v9.9.9" ]]
+}
+
+# ADR-0017 contract test: an upgrade overwrites bin/, extension/ and version
+# but must never touch data/ (pairing config today, audit trail and agent
+# memory later). Runs the real install flow twice against the mock server
+# with two different versions.
+@test "install.sh upgrade preserves data/ (ADR-0017)" {
+  mkdir -p "$BB_TEST_TMP/www" "$BB_TEST_TMP/stage"
+  local v tarball_path tarball_name
+  for v in v9.9.9 v9.9.10; do
+    echo "fake-extension-content" > "$BB_TEST_TMP/stage/bb.zip"
+    ( cd "$BB_TEST_TMP/stage" && zip -q "$BB_TEST_TMP/www/browser-bridge-extension-$v.zip" bb.zip )
+    ( cd "$BB_TEST_TMP/www" && shasum -a 256 "browser-bridge-extension-$v.zip" > "browser-bridge-extension-$v.zip.sha256" )
+    tarball_path=$(make_fake_runtime_tarball "$v" arm64)
+    tarball_name=$(basename "$tarball_path")
+    cp "$tarball_path" "$BB_TEST_TMP/www/$tarball_name"
+    cp "${tarball_path}.sha256" "$BB_TEST_TMP/www/${tarball_name}.sha256"
+  done
+
+  make_fake_uname Linux
+  start_mock_http 18772
+  bash_path=$(find_modern_bash)
+
+  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_upgrade.sh"
+  cat >> "$BB_TEST_TMP/test_upgrade.sh" <<'SCRIPT'
+BB_INSTALL_ARCH=arm64
+ORG='127.0.0.1:18772'
+main --no-skills
+SCRIPT
+
+  # First install (v9.9.9). write_artifacts creates data/ itself.
+  BB_HOME="$BB_TEST_TMP/bb-home" \
+  BB_VERSION="v9.9.9" \
+  run "$bash_path" "$BB_TEST_TMP/test_upgrade.sh"
+  [ "$status" -eq 0 ]
+  [[ -d "$BB_TEST_TMP/bb-home/data" ]]
+
+  # Plant persistent data: the pairing config and a stand-in for a future
+  # audit-trail file.
+  mkdir -p "$BB_TEST_TMP/bb-home/data/audit"
+  echo '{"browserId":"b-keepme99"}' > "$BB_TEST_TMP/bb-home/data/config.json"
+  echo '{"op":"navigate"}' > "$BB_TEST_TMP/bb-home/data/audit/sentinel.jsonl"
+
+  # Upgrade to v9.9.10.
+  BB_HOME="$BB_TEST_TMP/bb-home" \
+  BB_VERSION="v9.9.10" \
+  run "$bash_path" "$BB_TEST_TMP/test_upgrade.sh"
+  stop_mock_http
+
+  [ "$status" -eq 0 ]
+  [[ "$(cat "$BB_TEST_TMP/bb-home/version")" == "v9.9.10" ]]
+  [[ "$(cat "$BB_TEST_TMP/bb-home/data/config.json")" == '{"browserId":"b-keepme99"}' ]]
+  [[ "$(cat "$BB_TEST_TMP/bb-home/data/audit/sentinel.jsonl")" == '{"op":"navigate"}' ]]
 }
 
 @test "install.sh enables auto-start by default on macOS" {
