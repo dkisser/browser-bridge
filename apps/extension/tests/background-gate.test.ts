@@ -1384,10 +1384,18 @@ describe('a withdrawn command has still spent its grant', () => {
 
     // The user engages takeover after the gate has already consumed, but
     // before the command would have been dispatched.
+    //
+    // The hook must SPREAD the state it is replacing. This used to set a fresh
+    // object literal with no `grants` key at all, which made the assertion
+    // below read `?? []` on an object that had never held a grant — so it
+    // passed even with the gate's consumption branch deleted outright, which
+    // is the stronger half of the claim it was making. Spreading keeps the
+    // consumed array visible as an empty one, which is what "burned" means.
     onNthStorageRead = {
       n: 2,
       run: () => {
         store.set('policyState', {
+          ...(store.get('policyState') as Record<string, unknown>),
           takeover: true,
           origins: { [APPROVED]: 'always' },
         });
@@ -1406,7 +1414,9 @@ describe('a withdrawn command has still spent its grant', () => {
     expect(sentToContentScript).toHaveLength(0);
     // And the grant is spent anyway. This is the assertion that makes the
     // behaviour a decision: it fails if someone "fixes" the asymmetry by
-    // refunding, which is the fix that would re-open double-spend.
+    // refunding, which is the fix that would re-open double-spend, and it
+    // fails if the gate stops consuming at all. Verified: with the
+    // consumption branch removed from `decideWithState`, this is red.
     const stored = store.get('policyState') as { grants?: unknown[] };
     expect(stored.grants ?? []).toHaveLength(0);
   });

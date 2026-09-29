@@ -33,14 +33,17 @@ describe('the panel routes the switch through takeover-sync', () => {
     return SIDE_PANEL.slice(start, end);
   }
 
-  it('never sets the display from the value the click asked for', () => {
-    // The optimistic render, by whatever name. `setTakeover(desired)` is the
-    // form it took before the machine existed and `setTakeover(!desired)` the
-    // form of the revert that followed it. A reintroduction spelled some
-    // other way is the behaviour tests' problem, but these two spellings are
-    // worth refusing outright.
-    expect(SIDE_PANEL).not.toContain('setTakeover(desired)');
-    expect(SIDE_PANEL).not.toContain('setTakeover(!desired)');
+  it('never sets the display directly — only through the machine', () => {
+    // Every spelling, not two of them. The panel is meant to have exactly one
+    // way to move the switch: `applySync`, which writes what the machine says
+    // the engine enforces. Enumerating `setTakeover(desired)` and
+    // `setTakeover(!desired)` caught the two forms the old code used and let
+    // through `setTakeover(opening.desired)` in the success path, which renders
+    // the click's own request — the precise thing this guard exists to refuse,
+    // and the reason the two files give an impression of coverage neither has.
+    // The handler body contains `applySync` and no direct setter, so this is a
+    // claim about the whole shape rather than about particular spellings.
+    expect(handler()).not.toContain('setTakeover');
   });
 
   it('opens the window through click() and closes it through settle()', () => {

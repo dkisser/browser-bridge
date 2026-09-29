@@ -562,11 +562,18 @@ export async function handleCommand(
       //
       // This is the only command group that needs it, and saying so
       // matters more than the check itself. Every other branch's remaining
-      // window is one in-process round-trip — screenshot does await
-      // chrome.tabs.get before capturing, but that is a read that cannot
-      // block, unlike the injection above — so a re-check there would be a
-      // second queue round-trip guarding a window too narrow to lose a race
-      // in. The commands that genuinely do wait for a long time, navigate and
+      // window is far narrower than this one: `screenshot` does await
+      // `chrome.tabs.get` before capturing, and that is an IPC round trip to
+      // the browser process which a busy or wedged browser can delay
+      // arbitrarily — it is not the non-blocking read an earlier version of
+      // this comment called it. What keeps it out of scope is that the window
+      // is short and its payoff is bounded: `captureVisibleTab` only ever
+      // photographs the window's currently active tab, so the worst case is a
+      // screenshot of a different tab than the one that was approved, not a
+      // mutation the user did not authorize. That is a narrower exposure than
+      // an agent clicking a page they just took back, and paying for it with
+      // a second queue round trip on every screenshot is the worse trade. The
+      // commands that genuinely do wait for a long time, navigate and
       // wait:navigation, spend it *after* their effect has already happened,
       // where no re-check could undo anything. wait:element rides along only
       // because it shares this dispatch path; its own wait happens in the

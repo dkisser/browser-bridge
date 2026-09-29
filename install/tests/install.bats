@@ -550,6 +550,20 @@ SCRIPT
   [[ "$(cat "$BB_TEST_TMP/bb-home/version")" == "v9.9.10" ]]
   [[ "$(cat "$BB_TEST_TMP/bb-home/data/config.json")" == '{"browserId":"b-keepme99"}' ]]
   [[ "$(cat "$BB_TEST_TMP/bb-home/data/audit/sentinel.jsonl")" == '{"op":"navigate"}' ]]
+
+  # The exact contents, not just the survival of the two planted files. Every
+  # previous assertion here passed with an installer that wrote a third file
+  # into data/ alongside them — and "the installer never writes inside data/"
+  # is the half of ADR-0017's preservation contract that is easy to break
+  # silently, because a new marker file changes nothing a user would notice
+  # until the day it shadows a real data file. Verified: with
+  # `printf '{}' > "$BB_HOME/data/install-marker.json"` added to
+  # write_artifacts, every assertion above still passed and this one fails.
+  # `ls -A` is sorted, so the expectation is order-independent.
+  run bash -c "ls -A '$BB_TEST_TMP/bb-home/data'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "audit
+config.json" ]
 }
 
 @test "install.sh enables auto-start by default on macOS" {
