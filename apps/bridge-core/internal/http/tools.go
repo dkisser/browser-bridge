@@ -312,10 +312,19 @@ func (s *MCPServer) executeSetBrowser(_ context.Context, req *mcp.CallToolReques
 // --- Navigation ---
 
 func (s *MCPServer) executeNavigate(ctx context.Context, req *mcp.CallToolRequest, args navigateArgs) (*mcp.CallToolResult, any, error) {
+	// The extension's own wait for the page to reach 'complete' gets the
+	// caller's budget, and the transport gets the slack on top — the same
+	// arrangement as the wait commands, so a stalled navigation reports
+	// "Navigation timeout" from the extension rather than a bare control-plane
+	// timeout on a command that is still running.
+	budget := s.commandTimeout(args.TimeoutMS)
 	return s.runMessageTool(ctx, req, "navigate", commandSpec{
 		name:   "navigate",
 		tabID:  args.TabID,
-		params: navParams{URL: args.URL, TabID: args.TabID},
+		params: navParams{URL: args.URL, TabID: args.TabID, Timeout: int(budget.Milliseconds())},
+		// waitBudget makes transportTimeout use budget+waitSlack, and
+		// signals that params carries an in-page budget.
+		waitBudget: budget,
 	}, args.TimeoutMS, "Navigation failed",
 		fmt.Sprintf("Navigated to %s in tab %d", args.URL, args.TabID))
 }

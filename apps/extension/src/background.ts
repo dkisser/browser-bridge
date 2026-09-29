@@ -110,6 +110,11 @@ async function queryOffscreenStatus(): Promise<boolean> {
   }
 }
 
+// Fallback when the control plane sends no `timeout` for navigate. Long
+// enough for a slow redirect chain on a modest connection, short enough that
+// a hung navigation surfaces an error instead of pinning the command.
+const DEFAULT_NAV_TIMEOUT_MS = 30_000;
+
 // The offscreen document cannot read chrome.storage, so the SW owns the
 // pairing token and pushes it here. Idempotent: safe to call on every
 // service-worker wake and on every pairing-token change.
@@ -119,6 +124,61 @@ async function connectOffscreen(): Promise<void> {
   await chrome.runtime
     .sendMessage({ type: 'connect_ws', token: state.pairingToken })
     .catch(() => {});
+}
+
+// waitForTabComplete resolves once the tab reports status 'complete'.
+//
+// The listener can only be registered *after* the navigation is kicked off
+// (chrome.tabs.update resolves once the navigation is initiated, not once it
+// loads), so a page that finishes first loses its event entirely — a lost
+// wakeup that left the promise pending forever and the listener leaked. Three
+// things prevent that, and all three are needed:
+//
+//   - the current status is re-checked right after registration, covering the
+//     event that already fired;
+//   - a timeout bounds the wait, so a navigation that stalls mid-chain
+//     (a slow redirect, a download response) fails with a real error instead
+//     of pinning the command until the caller's own deadline;
+//   - finish() is idempotent and always removes the listener, so no path
+//     leaks one.
+//
+// `wait:navigation` had all of this; `navigate` had none of it, which is how a
+// fast-loading target hung until the control plane gave up on it and reported
+// a service worker that was perfectly healthy.
+function waitForTabComplete(tabId: number, timeout: number): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const listener = (
+      updatedTabId: number,
+      changeInfo: chrome.tabs.TabChangeInfo,
+    ) => {
+      if (updatedTabId === tabId && changeInfo.status === 'complete') finish();
+    };
+    function finish(error?: Error): void {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      chrome.tabs.onUpdated.removeListener(listener);
+      if (error) {
+        reject(error);
+      } else {
+        resolve();
+      }
+    }
+    timer = setTimeout(() => {
+      finish(new Error('Navigation timeout'));
+    }, timeout);
+    chrome.tabs.onUpdated.addListener(listener);
+    chrome.tabs
+      .get(tabId)
+      .then((current) => {
+        if (current.status === 'complete') finish();
+      })
+      .catch(() => {
+        // Tab lookup failed; rely on the event listener and timeout.
+      });
+  });
 }
 
 // Policy enforcement point (ADR-0006..0009): every command is evaluated
@@ -242,18 +302,12 @@ export async function handleCommand(
       }
       const tab = tabId;
       await chrome.tabs.update(tab, { url: params.url as string });
-      await new Promise<void>((resolve) => {
-        const listener = (
-          updatedTabId: number,
-          changeInfo: chrome.tabs.TabChangeInfo,
-        ) => {
-          if (updatedTabId === tab && changeInfo.status === 'complete') {
-            chrome.tabs.onUpdated.removeListener(listener);
-            resolve();
-          }
-        };
-        chrome.tabs.onUpdated.addListener(listener);
-      });
+      // The wait is bounded and cannot lose its completion event; see
+      // waitForTabComplete.
+      await waitForTabComplete(
+        tab,
+        (params.timeout as number) || DEFAULT_NAV_TIMEOUT_MS,
+      );
       const updatedTab = await chrome.tabs.get(tab);
       return { url: updatedTab.url, title: updatedTab.title };
     }
@@ -379,47 +433,7 @@ export async function handleCommand(
         throw new Error('Missing required tabId');
       }
       const tab = tabId;
-      await new Promise<void>((resolve, reject) => {
-        let settled = false;
-        const cleanup = (): void => {
-          clearTimeout(timer);
-          chrome.tabs.onUpdated.removeListener(listener);
-        };
-        const finish = (error?: Error): void => {
-          if (settled) return;
-          settled = true;
-          cleanup();
-          if (error) {
-            reject(error);
-          } else {
-            resolve();
-          }
-        };
-        const timer = setTimeout(() => {
-          finish(new Error('Navigation timeout'));
-        }, timeout);
-        const listener = (
-          updatedTabId: number,
-          changeInfo: chrome.tabs.TabChangeInfo,
-        ) => {
-          if (updatedTabId === tab && changeInfo.status === 'complete') {
-            finish();
-          }
-        };
-        chrome.tabs.onUpdated.addListener(listener);
-        // The navigation may already be complete when this command arrives
-        // (e.g. a remedial wait after `navigate` timed out on a redirect
-        // chain) — no future onUpdated event will fire, so check the current
-        // status instead of waiting for an event that never comes.
-        chrome.tabs
-          .get(tab)
-          .then((current) => {
-            if (current.status === 'complete') finish();
-          })
-          .catch(() => {
-            // Tab lookup failed; rely on the event listener and timeout.
-          });
-      });
+      await waitForTabComplete(tab, timeout);
       const t = await chrome.tabs.get(tab);
       return { url: t.url, title: t.title };
     }

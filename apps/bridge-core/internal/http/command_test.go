@@ -37,9 +37,12 @@ func TestWireParamKeys(t *testing.T) {
 		wantOmitted []string
 	}{
 		{
+			// navigate carries the in-page completion budget so the
+			// extension can bound its wait; the extension falls back to
+			// DEFAULT_NAV_TIMEOUT_MS if an older control plane omits it.
 			tool:     "navigate",
 			args:     map[string]any{"url": "https://example.com", "tab_id": 1},
-			wantKeys: []string{"tabId", "url"},
+			wantKeys: []string{"tabId", "timeout", "url"},
 		},
 		{
 			tool:     "tab_list",

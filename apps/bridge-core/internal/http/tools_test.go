@@ -33,8 +33,10 @@ func TestCommandTools(t *testing.T) {
 			args:        map[string]any{"url": "https://example.com", "tab_id": 2},
 			respond:     ok,
 			wantCommand: "navigate",
-			wantParams:  map[string]any{"url": "https://example.com", "tabId": float64(2)},
-			wantText:    "Navigated to https://example.com in tab 2",
+			// The in-page completion budget the extension needs to bound
+			// its own wait for status 'complete'.
+			wantParams: map[string]any{"url": "https://example.com", "tabId": float64(2), "timeout": float64(10000)},
+			wantText:   "Navigated to https://example.com in tab 2",
 		},
 		{
 			name:        "go_back",

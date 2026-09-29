@@ -26,6 +26,24 @@ const sentToContentScript: Record<string, unknown>[] = [];
 // rejected. A url-less tab:new that opens a tab is the regression these guard.
 const createdTabs: { url?: string; active?: boolean }[] = [];
 const queriedTabs: unknown[] = [];
+// chrome.tabs.get reports no `status` unless a test sets one, so the default
+// stays 'loading' — the pre-existing behavior for every other test here. The
+// navigation tests set it explicitly to drive both the "already finished" and
+// "still loading" paths.
+const tabStatuses = new Map<number, string>();
+// Live onUpdated listener registry, so a test can fire the event that a real
+// navigation produces — and assert the handler removes it again.
+let onUpdatedListeners: ((
+  tabId: number,
+  changeInfo: chrome.tabs.TabChangeInfo,
+) => void)[] = [];
+
+function fireTabUpdated(
+  tabId: number,
+  changeInfo: chrome.tabs.TabChangeInfo,
+): void {
+  for (const listener of [...onUpdatedListeners]) listener(tabId, changeInfo);
+}
 let badgeTextUpdates = 0;
 let lastBadgeText: { text: string } | null = null;
 
@@ -167,7 +185,12 @@ beforeAll(async () => {
         url: tabUrls.get(tabId) ?? 'about:blank',
         windowId: 1,
         active: true,
+        status: tabStatuses.get(tabId) ?? 'loading',
       }),
+      update: async (tabId: number, props: { url?: string }) => {
+        if (props.url !== undefined) tabUrls.set(tabId, props.url);
+        return { id: tabId, url: tabUrls.get(tabId), windowId: 1 };
+      },
       sendMessage: async (_tabId: number, message: Record<string, unknown>) => {
         if (message.type === 'ping') return { type: 'pong' };
         if (message.type === 'preflight') {
@@ -197,7 +220,18 @@ beforeAll(async () => {
       },
       group: async (opts: { createProperties?: unknown; groupId?: number }) =>
         opts.groupId ?? 7,
-      onUpdated: { addListener: () => {}, removeListener: () => {} },
+      onUpdated: {
+        addListener: (
+          fn: (tabId: number, changeInfo: chrome.tabs.TabChangeInfo) => void,
+        ) => {
+          onUpdatedListeners.push(fn);
+        },
+        removeListener: (
+          fn: (tabId: number, changeInfo: chrome.tabs.TabChangeInfo) => void,
+        ) => {
+          onUpdatedListeners = onUpdatedListeners.filter((l) => l !== fn);
+        },
+      },
       onRemoved: { addListener: () => {} },
     },
     scripting: { executeScript: async () => {} },
@@ -234,6 +268,8 @@ beforeEach(() => {
   sentToContentScript.length = 0;
   createdTabs.length = 0;
   queriedTabs.length = 0;
+  tabStatuses.clear();
+  onUpdatedListeners = [];
   badgeTextUpdates = 0;
   lastBadgeText = null;
   preflightResult = { sensitive: false };
@@ -536,5 +572,87 @@ describe('takeover covers the whole dispatch path', () => {
 
     expect(result).toEqual({ id: 99, url: undefined });
     expect(createdTabs).toHaveLength(1);
+  });
+});
+
+// navigate's wait for the page to reach status 'complete' had no bound, no
+// cleanup, and no check for an event that had already fired — while
+// wait:navigation, doing the identical wait, had all three. A page that
+// finished loading between chrome.tabs.update resolving and the listener
+// being registered lost its completion event permanently: the promise never
+// settled, the response never went back, and the caller saw a timeout on a
+// service worker that was perfectly healthy.
+describe('navigate waits for completion without losing the event', () => {
+  const URL = 'https://example.com/page';
+
+  beforeEach(() => {
+    store.set('policyState', { takeover: false, origins: { 'https://example.com': 'always' } });
+  });
+
+  it('completes when the page already reached complete before listening', async () => {
+    // The lost-wakeup case: the tab is already complete, so no further
+    // onUpdated event will ever fire for this navigation.
+    tabUrls.set(1, URL);
+    tabStatuses.set(1, 'complete');
+
+    const result = await handleCommand(
+      makeCommand('navigate', 1, { url: URL }),
+    );
+
+    expect(result).toEqual({ url: URL, title: undefined });
+  });
+
+  it('completes on the completion event and removes its listener', async () => {
+    tabUrls.set(1, 'about:blank');
+    tabStatuses.set(1, 'loading');
+
+    const pending = handleCommand(makeCommand('navigate', 1, { url: URL }));
+    // Let the gate and the tab update run before the page finishes loading.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(onUpdatedListeners.length).toBeGreaterThan(0);
+
+    fireTabUpdated(1, { status: 'complete' });
+    const result = await pending;
+
+    expect(result).toEqual({ url: URL, title: undefined });
+    // No leaked listener: the service worker would otherwise accumulate one
+    // per navigation for the life of the process.
+    expect(onUpdatedListeners).toHaveLength(0);
+  });
+
+  it('fails with a navigation timeout instead of hanging forever', async () => {
+    tabUrls.set(1, 'about:blank');
+    tabStatuses.set(1, 'loading');
+
+    // A page that never reaches complete — a stalled redirect, a slow
+    // response. Before the fix this promise never settled at all.
+    const failure = await handleCommand(
+      makeCommand('navigate', 1, { url: URL, timeout: 20 }),
+    ).then(
+      () => null,
+      (err: Error) => err,
+    );
+
+    expect(failure?.message).toBe('Navigation timeout');
+    expect(onUpdatedListeners).toHaveLength(0);
+  });
+
+  it('ignores completion events for other tabs', async () => {
+    tabUrls.set(1, 'about:blank');
+    tabStatuses.set(1, 'loading');
+
+    const pending = handleCommand(
+      makeCommand('navigate', 1, { url: URL, timeout: 20 }),
+    );
+    await new Promise((r) => setTimeout(r, 0));
+
+    // A different tab finishing must not resolve this one.
+    fireTabUpdated(99, { status: 'complete' });
+    const failure = await pending.then(
+      () => null,
+      (err: Error) => err,
+    );
+
+    expect(failure?.message).toBe('Navigation timeout');
   });
 });

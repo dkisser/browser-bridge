@@ -28,10 +28,17 @@ package core
 // extension distinguishes "not provided" from "provided as false"
 // (`params.submit === true`, `params.active === true`).
 
-// NavParams is navigate: { url, tabId }.
+// NavParams is navigate: { url, tabId, timeout }.
+//
+// Timeout is the in-page budget for the navigation to reach 'complete'. The
+// extension used to wait for that event with no bound and no way to notice
+// it had already fired, so a fast-loading target lost its completion event
+// and the command hung until the caller gave up. The control plane sends its
+// own budget (minus waitSlack) the same way it does for the wait commands.
 type NavParams struct {
-	URL   string `json:"url"`
-	TabID int    `json:"tabId"`
+	URL     string `json:"url"`
+	TabID   int    `json:"tabId"`
+	Timeout int    `json:"timeout"`
 }
 
 // TabParams is every command that only names its target tab:
