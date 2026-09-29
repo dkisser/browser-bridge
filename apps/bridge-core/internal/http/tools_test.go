@@ -95,10 +95,10 @@ func TestCommandTools(t *testing.T) {
 		{
 			name:        "tab_new with all optionals",
 			tool:        "tab_new",
-			args:        map[string]any{"url": "https://example.com", "active": true, "auto_close": true},
+			args:        map[string]any{"url": "https://example.com", "active": true},
 			respond:     ok,
 			wantCommand: "tab:new",
-			wantParams:  map[string]any{"url": "https://example.com", "active": true, "auto_close": true},
+			wantParams:  map[string]any{"url": "https://example.com", "active": true},
 			wantText:    "New tab opened",
 		},
 		{
@@ -596,7 +596,7 @@ func TestScreenshot(t *testing.T) {
 	}{
 		{
 			name:      "dataUrl renders image content",
-			args:      map[string]any{"tab_id": 1, "fullPage": true},
+			args:      map[string]any{"tab_id": 1},
 			data:      `{"dataUrl":"data:image/png;base64,aGVsbG8="}`,
 			wantMIME:  "image/png",
 			wantImage: []byte("hello"),
@@ -654,10 +654,9 @@ func TestScreenshot(t *testing.T) {
 			if !reflect.DeepEqual(image.Data, tt.wantImage) {
 				t.Errorf("image data = %q, want %q", image.Data, tt.wantImage)
 			}
-			// fullPage must reach the extension verbatim.
 			commands := router.captured()
-			if fullPage, ok := commands[0].params["fullPage"]; tt.args["fullPage"] == true && (!ok || fullPage != true) {
-				t.Errorf("params = %#v, want fullPage true", commands[0].params)
+			if _, ok := commands[0].params["tabId"]; !ok {
+				t.Errorf("params = %#v, want tabId to reach the extension", commands[0].params)
 			}
 		})
 	}
@@ -689,5 +688,63 @@ func TestCommandReachesAReconnectingBrowser(t *testing.T) {
 	}
 	if commands[0].browserID != "b-1" {
 		t.Errorf("routed to %q, want b-1", commands[0].browserID)
+	}
+}
+
+// `screenshot.fullPage` and `tab_new.auto_close` were declared in the schema,
+// marshalled onto the wire, and read by nothing. An agent asking for a
+// full-page capture got a viewport screenshot, a success response, and no way
+// to tell the difference — it would go on to report the whole page as
+// captured. They were removed rather than implemented (see testdata/README.md
+// for why neither is a small patch).
+//
+// What this pins is the property that makes removal worth doing: the schemas
+// are closed, so a client still passing one is told, rather than quietly
+// handed a confidently wrong answer. Silently ignoring it was the original
+// defect, and a schema that does not mention the key is the only way to make
+// that un-reachable rather than merely un-done.
+func TestRemovedParametersAreRejectedNotIgnored(t *testing.T) {
+	cases := []struct {
+		name    string
+		tool    string
+		args    map[string]any
+		wantSub string
+	}{
+		{
+			name:    "screenshot fullPage",
+			tool:    "screenshot",
+			args:    map[string]any{"tab_id": 1, "fullPage": true},
+			wantSub: "fullPage",
+		},
+		{
+			name:    "tab_new auto_close",
+			tool:    "tab_new",
+			args:    map[string]any{"url": "https://example.com", "auto_close": true},
+			wantSub: "auto_close",
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			router := &fakeRouter{script: func(capturedCommand) (core.ResponsePayload, bool) {
+				t.Errorf("router was reached for %q; the schema should have "+
+					"rejected the call before any command was built", tt.name)
+				return core.ResponsePayload{Status: "ok"}, true
+			}}
+			session := newTestClient(t, newTestServer(router, []core.BrowserConnection{onlineBrowser("b-1")}))
+
+			result := callTool(t, session, tt.tool, tt.args)
+			if !result.IsError {
+				t.Fatalf("call succeeded; a parameter the extension ignores must not be accepted")
+			}
+			// The error has to name the offending key, or the caller has no
+			// idea which argument to drop.
+			if text := resultText(t, result); !strings.Contains(text, tt.wantSub) {
+				t.Errorf("error %q does not name %q", text, tt.wantSub)
+			}
+			if got := router.captured(); len(got) != 0 {
+				t.Errorf("router saw %d commands, want 0", len(got))
+			}
+		})
 	}
 }
