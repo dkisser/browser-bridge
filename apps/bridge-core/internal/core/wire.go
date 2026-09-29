@@ -2,22 +2,6 @@ package core
 
 import "time"
 
-// InPageTimeoutSlack is the headroom between an in-page wait budget handed to
-// the extension and the deadline a caller waits for the answer.
-//
-// The extension rejects with "Navigation timeout" or "Element not found
-// within Nms" when its own budget expires. A caller's clock starts when the
-// command is written; the extension's starts only once the router has
-// delivered it. With equal budgets the caller always gives up first, so the
-// one diagnostic worth seeing arrives after nobody is listening, and the
-// user is told a control plane that was behaving correctly has stopped
-// responding.
-//
-// Declared once here because two callers need it and they drifted when each
-// held its own copy: the MCP tools and the CLI budget the in-page wait
-// identically, so a change to one must change the other.
-const InPageTimeoutSlack = 500 * time.Millisecond
-
 // The wire contract, restated on the Go side.
 //
 // packages/shared/src/types.ts is the single source of truth for the command
@@ -38,6 +22,22 @@ const InPageTimeoutSlack = 500 * time.Millisecond
 // snapshot shape. One declaration per shape now, with the json tag as the
 // declaration of the key. internal/http/command_test.go pins the marshaled
 // form against the keys the extension reads.
+
+// InPageTimeoutSlack is the headroom between an in-page wait budget handed to
+// the extension and the deadline a caller waits for the answer.
+//
+// The extension rejects with "Navigation timeout" or "Element not found
+// within Nms" when its own budget expires. A caller's clock starts when the
+// command is written; the extension's starts only once the router has
+// delivered it. With equal budgets the caller always gives up first, so the
+// one diagnostic worth seeing arrives after nobody is listening, and the
+// user is told a control plane that was behaving correctly has stopped
+// responding.
+//
+// Declared once here because two callers need it and they drifted when each
+// held its own copy: the MCP tools and the CLI budget the in-page wait
+// identically, so a change to one must change the other.
+const InPageTimeoutSlack = 500 * time.Millisecond
 
 // --- CommandPayload.params, one struct per wire shape ---
 //

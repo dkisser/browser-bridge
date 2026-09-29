@@ -53,7 +53,7 @@ func TestResponseError(t *testing.T) {
 				},
 			},
 			fallback: "fb",
-			want:     "Blocked: https://example.com needs a submit approval (approval_required).",
+			want:     "Refused: https://example.com (approval_required, capability submit).",
 		},
 		{
 			name: "denial with origin but no capability",
@@ -66,7 +66,7 @@ func TestResponseError(t *testing.T) {
 				},
 			},
 			fallback: "fb",
-			want:     "Blocked: https://example.com (origin_not_approved).",
+			want:     "Refused: https://example.com (origin_not_approved).",
 		},
 		{
 			name: "denial with neither origin nor capability falls back to the command",
@@ -75,13 +75,13 @@ func TestResponseError(t *testing.T) {
 				Denied: &core.Denial{Reason: "human_assist_active", Command: "click"},
 			},
 			fallback: "fb",
-			want:     "Blocked: click (human_assist_active).",
+			want:     "Refused: click (human_assist_active).",
 		},
 		{
 			name:     "denial with no command at all still says something",
 			payload:  core.ResponsePayload{Status: "error", Denied: &core.Denial{Reason: "origin_blocked"}},
 			fallback: "fb",
-			want:     "Blocked: origin_blocked.",
+			want:     "Refused: policy (origin_blocked).",
 		},
 	}
 
@@ -107,7 +107,7 @@ func TestResponseErrorDenialOutranksTheBareError(t *testing.T) {
 			Origin:  "https://example.com",
 		},
 	}
-	if got, want := responseError(withDenial, "fb"), "Blocked: https://example.com (origin_not_approved)."; got != want {
+	if got, want := responseError(withDenial, "fb"), "Refused: https://example.com (origin_not_approved)."; got != want {
 		t.Errorf("responseError = %q, want %q", got, want)
 	}
 	without := withDenial

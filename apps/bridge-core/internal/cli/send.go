@@ -59,7 +59,6 @@ func sendCommand(ctx context.Context, g *globals, command string, params map[str
 	return payload.Data, nil
 }
 
-// responseError is the TS `payload.message ?? payload.error ?? fallback`.
 // cliTransportTimeout is how long the CLI waits for a command's response.
 //
 // Normally that is just --timeout. When the command carries an in-page
@@ -67,6 +66,16 @@ func sendCommand(ctx context.Context, g *globals, command string, params map[str
 // transport must outlast it — otherwise the one diagnostic worth seeing
 // arrives after the caller has already stopped listening. Whichever deadline
 // is longer wins, so a deliberately small --timeout is still honoured.
+//
+// The in-page budget is identified by the presence of `timeout` in params
+// rather than declared per command. The MCP layer declares it explicitly
+// (commandSpec.waitBudget), which is the better idiom, but the CLI's wait
+// commands are built by their own constructors rather than the
+// browserCommands table, so a table flag would cover navigate and silently
+// skip both wait commands — the exact drift this constant was deduplicated
+// to prevent. Every CLI command that sets params.timeout (navigate,
+// wait:element, wait:navigation) is bounding the extension's own wait; keep
+// it that way, or give this an explicit per-command field instead.
 func cliTransportTimeout(g *globals, params map[string]any) time.Duration {
 	deadline := time.Duration(g.timeout) * time.Millisecond
 	inPage, ok := params["timeout"].(int)
@@ -79,29 +88,37 @@ func cliTransportTimeout(g *globals, params map[string]any) time.Duration {
 	return deadline
 }
 
+// responseError renders a command failure: the extension's human-readable
+// message when it sent one, then the bare error code, then the caller's
+// fallback — the TS `payload.message ?? payload.error ?? fallback`.
 func responseError(payload core.ResponsePayload, fallback string) string {
 	if payload.Message != "" {
 		return payload.Message
 	}
-	// Fallback for a producer that sends the structured denial without a
-	// human-readable message. The extension does not currently — it always
-	// fills Message via humanDenialMessage — so this branch does not fire
-	// today; it exists so a future producer cannot regress into printing a
-	// bare reason code with no indication of which origin or capability was
-	// refused.
+	// Identifies what was refused, for the case where a producer sends the
+	// structured denial without a human-readable message. The extension does
+	// not currently — it always fills Message via humanDenialMessage — so
+	// this does not fire today.
+	//
+	// Deliberately *identifying* rather than advisory. humanDenialMessage in
+	// packages/shared/src/policy.ts is the canonical renderer, and some of its
+	// reasons carry security-relevant guidance — the origin_not_approved
+	// message explicitly tells the reader not to work around the gate with
+	// other tools. A second, thinner renderer in Go would drift from that and
+	// quietly drop the guidance; naming the refusal is all this can honestly
+	// do, so the comment points at the real one instead of imitating it.
 	if d := payload.Denied; d != nil {
 		subject := d.Origin
 		if subject == "" {
 			subject = d.Command
 		}
-		switch {
-		case d.Capability != "":
-			return fmt.Sprintf("Blocked: %s needs a %s approval (%s).", subject, d.Capability, d.Reason)
-		case subject != "":
-			return fmt.Sprintf("Blocked: %s (%s).", subject, d.Reason)
-		default:
-			return fmt.Sprintf("Blocked: %s.", d.Reason)
+		if subject == "" {
+			subject = "policy"
 		}
+		if d.Capability != "" {
+			return fmt.Sprintf("Refused: %s (%s, capability %s).", subject, d.Reason, d.Capability)
+		}
+		return fmt.Sprintf("Refused: %s (%s).", subject, d.Reason)
 	}
 	if payload.Error != "" {
 		return payload.Error

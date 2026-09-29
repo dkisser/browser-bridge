@@ -91,33 +91,44 @@ describe('only the service worker writes policy state', () => {
     // inside this branch the operation reaches the storage layer's write
     // path, because that call is what puts it in the service worker's
     // serialization queue.
+    //
+    // The branch is delimited by the next `if (request.type ===` rather than
+    // a fixed character count: this file's comments run long, and a window
+    // that happens to cover the calls today silently stops covering them the
+    // first time someone inserts a paragraph of explanation.
+    const start = background.indexOf("request.type === 'policy_op'");
+    expect(start).toBeGreaterThan(-1);
     const branch = background.slice(
-      background.indexOf("request.type === 'policy_op'"),
-      background.indexOf("request.type === 'policy_op'") + 800,
+      start,
+      background.indexOf('request.type ===', start + 1),
     );
     expect(branch).toContain('updatePolicyState');
     expect(branch).toContain('applyPolicyOp');
   });
 
-  it('the operations the service worker applies are exhaustive over PolicyOp', () => {
-    // A new operation added to the PolicyOp union without a reducer case
-    // would be a silent no-op at runtime; TypeScript's exhaustiveness makes it
-    // a compile error instead, and this test fails if the union and the
-    // switch ever drift apart in the emitted behavior.
+  it('the service worker handles every operation the UI can name', () => {
+    // What this actually guarantees, stated plainly because the stronger
+    // claim is false: every operation currently declared in the PolicyOp
+    // union has a case in the service worker's reducer, so naming it in the
+    // UI cannot be a silent no-op.
+    //
+    // It does NOT detect drift in either direction. An operation added to the
+    // union *and* implemented would leave this test green, and one added to
+    // the union without a case is a TypeScript error that this test never
+    // sees — the exhaustiveness of `applyPolicyOp` is enforced by the
+    // compiler, not here. Claiming otherwise would be a test that sounds
+    // load-bearing and is not.
     const operations = readFileSync(
       join(SRC_DIR, 'policy-operations.ts'),
       'utf8',
     );
-    const opNames = [
-      'denial_action',
-      'remove_origin',
-      'add_block',
-      'remove_block',
-      'remove_download',
-      'set_takeover',
-      'set_pairing_token',
-    ];
-    for (const op of opNames) {
+    const union = operations.slice(
+      operations.indexOf('export type PolicyOp'),
+      operations.indexOf('// denyChanges'),
+    );
+    const declared = [...union.matchAll(/op: '([a-z_]+)'/g)].map((m) => m[1]);
+    expect(declared.length).toBeGreaterThan(0);
+    for (const op of declared) {
       expect(operations).toContain(`case '${op}':`);
     }
   });
