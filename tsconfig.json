@@ -6,6 +6,7 @@
   "include": [
     "packages/shared/src/**/*",
     "apps/extension/src/**/*",
+    "apps/extension/tests/**/*",
     "apps/extension/vite.config.ts",
     "packages/shared/tests/**/*"
   ]

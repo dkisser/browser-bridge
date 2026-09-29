@@ -53,7 +53,7 @@ const store = new Map<string, unknown>();
 
 function clickDenial(
   origin: string,
-  command = 'click',
+  command: Parameters<typeof recordDenial>[0]['command'] = 'click',
 ): Parameters<typeof recordDenial>[0] {
   return {
     reason: 'origin_not_approved',
@@ -109,8 +109,10 @@ describe('handleDenialAction — stable key resolution', () => {
   });
 
   it('dismisses the targeted denial without shifting siblings', async () => {
-    const denialA = clickDenial('https://a.example', 'type');
-    const denialB = clickDenial('https://b.example', 'submit');
+    const denialA = clickDenial('https://a.example', 'click');
+    // 'submit' is a GrantCapability, not a CommandType — passing it here was
+    // invisible until these tests were type-checked.
+    const denialB = clickDenial('https://b.example', 'type');
     await recordDenial(denialA);
     await recordDenial(denialB);
     const keyA = `${denialA.reason}|${denialA.origin ?? ''}|${denialA.command}`;
