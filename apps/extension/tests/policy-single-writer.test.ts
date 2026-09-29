@@ -30,14 +30,17 @@ const ALLOWED_WRITERS = new Set([
   join(SRC_DIR, 'policy-state.ts'),
 ]);
 
-// Anchor on the module specifier rather than on the write function names, so
-// renaming updatePolicyState cannot turn this guard into a silent no-op that
-// stays green. The write patterns are matched broadly, including direct
-// chrome.storage.local writes — the shape the original bug would take if a
-// module bypassed policy-state entirely.
-const IMPORTS_POLICY_STATE = /from\s+'[^']*policy-state'/;
-const WRITES_POLICY =
-  /\b(updatePolicyState|setPolicyState|decideWithState|setAgentGroupAvailability)\s*\(|chrome\.storage\.local\.(set|remove|clear)\s*\(/;
+// A module outside the allow-list must not mutate policy state at all, by
+// either route: through a policy-state mutator, or by writing
+// chrome.storage.local directly. The direct-write branch is deliberately NOT
+// conditioned on importing policy-state — a module that bypassed the storage
+// layer entirely is exactly the case worth catching, and gating it on the
+// import would make the pattern unreachable for the shape it exists to
+// detect. The only cost is that a future module writing some *other* storage
+// key must be allow-listed with a reason, which is a decision worth making
+// consciously anyway.
+const MUTATES_POLICY =
+  /\b(updatePolicyState|setPolicyState|decideWithState|recordDenial|clearSessionScoped|setAgentGroupAvailability)\s*\(|chrome\.storage\.(local|sync|session)\.(set|remove|clear)\s*\(/;
 
 function sourceFilesIn(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -56,7 +59,7 @@ describe('only the service worker writes policy state', () => {
   for (const file of sourceFilesIn(SRC_DIR)) {
     if (ALLOWED_WRITERS.has(file)) continue;
     const source = readFileSync(file, 'utf8');
-    if (IMPORTS_POLICY_STATE.test(source) && WRITES_POLICY.test(source)) {
+    if (MUTATES_POLICY.test(source)) {
       offenders.push(file.slice(SRC_DIR.length + 1));
     }
   }
@@ -74,11 +77,19 @@ describe('only the service worker writes policy state', () => {
   it('the service worker handles policy_op inside its own queue', () => {
     const background = readFileSync(join(SRC_DIR, 'background.ts'), 'utf8');
     expect(background).toContain("request.type === 'policy_op'");
-    // The operation must run through updatePolicyState — that call is what
-    // puts it in the service worker's serialization queue.
-    expect(background).toMatch(
-      /updatePolicyState\(\(state\)\s*=>\s*applyPolicyOp\(state,\s*op\)\)/,
+    // Scope to the handler body rather than matching one exact expression.
+    // A regex over `updatePolicyState((state) => applyPolicyOp(state, op))`
+    // fails on a legitimate refactor that merely added a cast or reformatted
+    // the call — a guard that cries wolf gets deleted. What matters is that
+    // inside this branch the operation reaches the storage layer's write
+    // path, because that call is what puts it in the service worker's
+    // serialization queue.
+    const branch = background.slice(
+      background.indexOf("request.type === 'policy_op'"),
+      background.indexOf("request.type === 'policy_op'") + 800,
     );
+    expect(branch).toContain('updatePolicyState');
+    expect(branch).toContain('applyPolicyOp');
   });
 
   it('the operations the service worker applies are exhaustive over PolicyOp', () => {

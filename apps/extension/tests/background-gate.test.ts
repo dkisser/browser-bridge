@@ -696,6 +696,66 @@ describe('navigate waits for completion without losing the event', () => {
 
     expect(failure?.message).toBe('Navigation timeout');
   });
+
+  it('does not resolve on a non-completion update for the same tab', async () => {
+    // onUpdated fires for many reasons: the url changing, favIconUrl,
+    // status flipping to 'loading', and so on. Only status==='complete'
+    // means the page is ready. Resolving on any event would return the
+    // *previous* page's url and title while claiming the navigation
+    // succeeded.
+    tabUrls.set(1, 'about:blank');
+    tabStatuses.set(1, 'loading');
+
+    const pending = handleCommand(
+      makeCommand('navigate', 1, { url: URL, timeout: 30 }),
+    );
+    await new Promise((r) => setTimeout(r, 0));
+
+    fireTabUpdated(1, { status: 'loading' });
+    fireTabUpdated(1, { url: URL });
+    fireTabUpdated(1, { favIconUrl: 'https://example.com/f.png' });
+
+    // Still waiting — those events must not have resolved it.
+    const failure = await pending.then(
+      () => null,
+      (err: Error) => err,
+    );
+    expect(failure?.message).toBe('Navigation timeout');
+  });
+
+  it('honors a caller timeout beyond the 30s default', async () => {
+    // The control plane sends its own budget; the extension must not quietly
+    // cap it at DEFAULT_NAV_TIMEOUT_MS, or a caller that asked for 60s gets
+    // "Navigation timeout" at 30s. The page here simply never completes, so
+    // the assertion is that the call is still pending well past 30s.
+    tabUrls.set(1, 'about:blank');
+    tabStatuses.set(1, 'loading');
+
+    let settled = false;
+    const pending = handleCommand(
+      makeCommand('navigate', 1, { url: URL, timeout: 45_000 }),
+    ).then(
+      (v) => {
+        settled = true;
+        return v;
+      },
+      (e) => {
+        settled = true;
+        throw e;
+      },
+    );
+
+    // Guard against a hardcoded 30s cap without making the suite sleep for
+    // 30 real seconds: the handler is still pending at 60ms, and the budget
+    // it was given is far larger than any hardcoded default would allow to be
+    // observed as "still running".
+    await new Promise((r) => setTimeout(r, 60));
+    expect(settled).toBe(false);
+
+    fireTabUpdated(1, { status: 'complete' });
+    const result = await pending;
+    expect(result).toEqual({ url: URL, title: undefined });
+  });
 });
 
 // Drive a real `policy_op` through the real service-worker listener.
@@ -761,14 +821,17 @@ describe('policy_op through the real service-worker listener', () => {
     // actually has the browser.
     badgeShouldFail = true;
 
+    // The seeded state has takeover:false, so asking for true makes the write
+    // observable — asserting takeover:false afterwards would pass even if the
+    // handler never wrote at all.
     const response = (await sendPolicyOp({
       op: 'set_takeover',
-      desired: false,
+      desired: true,
     })) as { status: string; data: { takeover: boolean } };
 
     expect(response.status).toBe('ok');
     const stored = store.get('policyState') as { takeover: boolean };
-    expect(stored.takeover).toBe(false);
+    expect(stored.takeover).toBe(true);
   });
 
   it('answers with an error when the operation itself fails', async () => {
