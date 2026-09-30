@@ -289,9 +289,14 @@ not a large number, and it is the honest one: the pseudo-tree already tells an
 agent how to find a *named control*, so what a card adds is knowing *which of a
 page's several readable containers is the one worth reading*. The smallest
 saving in the table is the control-finding task, deliberately — it is there to
-keep the claim from growing past what was measured. The decisions and the full
-reasoning are in [ADR-0018](docs/adr/0018-structural-trace.md) through
-[ADR-0022](docs/adr/0022-optional-model-call-for-compression.md).
+keep the claim from growing past what was measured. The decisions are in [ADR-0018](docs/adr/0018-structural-trace.md) through
+[ADR-0022](docs/adr/0022-optional-model-call-for-compression.md), and what
+building and measuring them changed is in
+[ADR-0023](docs/adr/0023-a-card-carries-no-handles.md),
+[ADR-0024](docs/adr/0024-site-card-as-implemented.md) and
+[ADR-0025](docs/adr/0025-what-the-baseline-taught.md) — decision records here are
+append-only, so corrections land in a new file rather than in the one they correct.
+[docs/adr/README.md](docs/adr/README.md) has the full index.
 
 ---
 

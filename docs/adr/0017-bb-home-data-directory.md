@@ -4,7 +4,7 @@
 (`bin/`, `extension/`, `version` — overwritten on every upgrade), runtime
 state (`logs/`, `run/`, `launchagents/` — regenerable), and the only piece of
 persistent data, the pairing `config.json`, sitting loose next to them. With
-the audit trail and agent memory planned, persistent data needed an
+the audit trail and agent memory (SQLite) planned, persistent data needed an
 explicit home and an explicit preservation contract.
 
 **Decision:** all persistent data lives under `$BB_HOME/data/` (mode 0700 —
@@ -23,9 +23,7 @@ documented-only.
 *Audit trail* (`data/`, durable record of what the agent did, read by the
 user). Both were colloquially "logs", which is why putting an audit log under
 `data/` felt wrong; they are different things and now have different homes
-(see CONTEXT.md). *(The parenthetical "(SQLite)" in the previous paragraph was
-a guess about agent memory's storage, not a decision; ADR-0021 replaces it with
-hand-written files once the CGO-free build constraint was checked.)*
+(see CONTEXT.md).
 
 **Considered options:** `state/` (rejected — the XDG state dir by definition
 also holds logs, which would re-mix what we just separated); separate `data/`
