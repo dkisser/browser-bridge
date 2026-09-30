@@ -5,9 +5,18 @@
 // Only chrome.runtime is available in this context — chrome.storage is not, so
 // the SW pushes the pairing token here via the connect_ws message.
 
-import { LOCAL_WS_PORT } from '@browser-bridge/shared';
+import { LOCAL_HOST, LOCAL_WS_PORT } from '@browser-bridge/shared';
 
-const LOCAL_WS_URL = `ws://localhost:${LOCAL_WS_PORT}`;
+// The same LOCAL_HOST the settings tab displays and ui/bridge-api.ts fetches.
+// This is the one that most needs it: it is the extension's persistent
+// connection to the proxy, so a host that resolves to ::1 on a machine whose
+// /etc/hosts lists it first means the agent never pairs at all. A display
+// string being wrong is a cosmetic problem; this one is the product not
+// working.
+// Exported so a test can pin it. This is the extension's only outbound
+// address, it has no test otherwise, and the one-line test is the cheapest
+// possible guard against the loopback literal coming back.
+export const LOCAL_WS_URL = `ws://${LOCAL_HOST}:${LOCAL_WS_PORT}`;
 
 let ws: WebSocket | null = null;
 let currentToken: string | null = null;

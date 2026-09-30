@@ -50,6 +50,36 @@ when the checklist is deleted.
    `BRIDGE_API_KEYS` is required (i.e. non-loopback deployment), or any
    non-loopback bind is added.
 
+   > **Amended**: the premise "nothing on the loopback interface is untrusted"
+   > does not hold, and the decision below rests on the *threat model* rather
+   > than on that premise. A browser is not on the loopback interface, and a
+   > page it renders can reach `127.0.0.1` without a click, a local process, or
+   > an extension. WebSocket upgrades are not subject to CORS or preflight, so
+   > the browser applies no gate.
+   >
+   > Concretely, on 3001 the inbound upgrade sets `InsecureSkipVerify: true`
+   > (`internal/ws/inbound.go`), which disables the library's own cross-origin
+   > rejection, and the bearer it defers to is `NoopAuthorizer` — now
+   > `internal/ws/auth.go`, not the TS provider named above, since the Go
+   > control plane is what serves the port. A hostile page can enumerate
+   > browsers, request `tab:list`, and read every open tab's URL and title,
+   > then issue the commands classified `UNRESTRICTED_COMMANDS`. The exposure
+   > is bounded: the extension's policy gate still runs, so Takeover refuses,
+   > and a page cannot mint `sensitive-field` or `submit` grants.
+   >
+   > The sibling server on 3002 does not have this problem — it rejects web
+   > origins outright (`internal/ws/browserserver.go`) and requires a bearer
+   > token. The asymmetry is unintentional and is what an audit noticed.
+   >
+   > **Accepted** by maintainer decision for the local single-user threat model
+   > this product targets. The revisit criteria above cannot fire on their own
+   > terms: they presuppose a non-loopback deployment, and this is not one.
+   > The trigger that would actually matter is a change in use rather than in
+   > configuration — serving more than one person or machine from this
+   > control plane, or exposing it beyond the host. The fix when that day
+   > comes is small and already exists on 3002: reject web origins on the
+   > upgrade.
+
 ## Consequences
 
 - README's Security section keeps its single-sentence pointer to this

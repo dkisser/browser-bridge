@@ -180,13 +180,23 @@ export async function ensureContentScript(
  * Wraps a mid-command "Receiving end does not exist" as
  * {@link ContentScriptUnavailableError} with reason `no_listener` so the
  * caller doesn't have to pattern-match the Chrome error string.
+ *
+ * `beforeSend` runs after the content script is listening and immediately
+ * before the message goes out. That is the only seam where a check is worth
+ * having: everything above is awaits that can take real time on a cold tab
+ * (a `tabs.get`, a ping, an `executeScript`, and a listener wait of up to
+ * two seconds), and everything below is the part the caller cannot take
+ * back. A check placed before `ensureContentScript` covers a window that has
+ * already closed by the time the command is delivered.
  */
 export async function dispatchToContentScript(
   chrome: ChromeLike,
   tabId: number,
   message: Record<string, unknown>,
+  beforeSend?: () => void | Promise<void>,
 ): Promise<unknown> {
   await ensureContentScript(chrome, tabId);
+  await beforeSend?.();
 
   try {
     const response = (await chrome.tabs.sendMessage(tabId, message)) as

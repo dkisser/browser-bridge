@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"time"
 
+	"browser-bridge/internal/app"
+
 	"browser-bridge/internal/core"
 )
 
@@ -74,13 +76,21 @@ func EnvFromOSEnv() (*Env, error) {
 		return nil, fmt.Errorf("resolve home directory: %w", err)
 	}
 	e := &Env{
-		BBHome:           orEnv("BB_HOME", filepath.Join(home, ".browser-bridge")),
-		ExtensionDir:     orEnv("BB_EXTENSION_DIR", filepath.Join(home, "Browser-Bridge")),
-		HomeDir:          home,
-		GOOS:             resolveGOOS(),
-		WSHost:           orEnv("BRIDGE_WS_HOSTNAME", "127.0.0.1"),
-		LocalHost:        orEnv("BRIDGE_LOCAL_HOSTNAME", "127.0.0.1"),
-		MCPHost:          orEnv("BRIDGE_MCP_HOSTNAME", "127.0.0.1"),
+		BBHome:       orEnv("BB_HOME", filepath.Join(home, ".browser-bridge")),
+		ExtensionDir: orEnv("BB_EXTENSION_DIR", filepath.Join(home, "Browser-Bridge")),
+		HomeDir:      home,
+		GOOS:         resolveGOOS(),
+		// The app package's constants, not a second copy of the literal. These
+		// three used to be spelled out here, and the effect was that
+		// app.DefaultInboundHost / DefaultBrowserHost / DefaultMCPHost read as
+		// the authority while being dead in the path that actually runs:
+		// childEnv always exports BRIDGE_*_HOSTNAME, so the daemon never sees
+		// an empty hostname and setDefaults never reaches these fields. Change
+		// a constant and the supervisor would still hand the old host to the
+		// daemon, with nothing to notice.
+		WSHost:           orEnv("BRIDGE_WS_HOSTNAME", app.DefaultInboundHost),
+		LocalHost:        orEnv("BRIDGE_LOCAL_HOSTNAME", app.DefaultBrowserHost),
+		MCPHost:          orEnv("BRIDGE_MCP_HOSTNAME", app.DefaultMCPHost),
 		APIKeys:          os.Getenv("BRIDGE_API_KEYS"),
 		UpdateOrg:        orEnv("ORG", "dkisser"),
 		UpdateRepo:       orEnv("REPO", "browser-bridge"),

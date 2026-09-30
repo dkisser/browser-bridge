@@ -54,6 +54,24 @@ const onMessageListeners: ((
 // being invalidated mid-request.
 let badgeShouldFail = false;
 
+// Fires inside the Nth chrome.storage.local read of a test, so the world can
+// change between two of the handler's *own* reads.
+//
+// This is not mock-cooking the decision: the handler really does read policy
+// state twice on a DOM command — once for the gate's verdict, once for the
+// Takeover re-check at the execution point — and flipping takeover between
+// them is exactly the real-world sequence, a user reaching for the kill
+// switch while a command is already in flight. The mock stays faithful (reads
+// are reads, storage is the single source of truth); it only chooses *when*
+// the world changes.
+let storageReads = 0;
+let onNthStorageRead: { n: number; run: () => void } | null = null;
+// The injection boundary, which is a different seam from a storage read: it is
+// inside the dispatch path, after the execution-point re-check that a
+// read-ordinal flip targets. See the cold-tab test below.
+let onExecuteScript: (() => void) | null = null;
+let pingFailuresBeforeInjection = 0;
+
 function fireTabUpdated(
   tabId: number,
   changeInfo: chrome.tabs.TabChangeInfo,
@@ -164,6 +182,7 @@ let contentScriptResponse: (
 ) => Promise<unknown> = defaultContentScriptResponse;
 
 let handleCommand: typeof background.handleCommand;
+let assertTakeoverUnchanged: typeof background.assertTakeoverUnchanged;
 
 function makeCommand(
   command: CommandType,
@@ -183,8 +202,18 @@ beforeAll(async () => {
   (globalThis as Record<string, unknown>).chrome = {
     storage: {
       local: {
-        get: async (key: string): Promise<Record<string, unknown>> =>
-          store.has(key) ? { [key]: store.get(key) } : {},
+        get: async (key: string): Promise<Record<string, unknown>> => {
+          storageReads += 1;
+          if (
+            onNthStorageRead !== null &&
+            storageReads === onNthStorageRead.n
+          ) {
+            const { run } = onNthStorageRead;
+            onNthStorageRead = null;
+            run();
+          }
+          return store.has(key) ? { [key]: store.get(key) } : {};
+        },
         set: async (entries: Record<string, unknown>): Promise<void> => {
           for (const [key, value] of Object.entries(entries)) {
             store.set(key, value);
@@ -211,6 +240,9 @@ beforeAll(async () => {
       onInstalled: { addListener: () => {} },
       onStartup: { addListener: () => {} },
       getContexts: async () => [],
+      // The listener now checks the sender's url against this id, so the
+      // mock needs one; without it every policy_op in this file is rejected.
+      id: 'test',
       getURL: (path: string) => `chrome-extension://test/${path}`,
       sendMessage: async () => ({ connected: false }),
       ContextType: { OFFSCREEN_DOCUMENT: 'OFFSCREEN_DOCUMENT' },
@@ -238,7 +270,21 @@ beforeAll(async () => {
         return { id: tabId, url: tabUrls.get(tabId), windowId: 1 };
       },
       sendMessage: async (_tabId: number, message: Record<string, unknown>) => {
-        if (message.type === 'ping') return { type: 'pong' };
+        if (message.type === 'ping') {
+          // Failing the first N pings is how a test reaches the *injection*
+          // path: ensureContentScript returns early when the listener already
+          // answers, so the default mock never injects, and a test that cannot
+          // inject cannot observe anything that happens around the injection.
+          // waitForListener pings again afterwards, so only the pre-injection
+          // pings need to fail.
+          if (pingFailuresBeforeInjection > 0) {
+            pingFailuresBeforeInjection -= 1;
+            throw new Error(
+              'Could not establish connection. Receiving end does not exist.',
+            );
+          }
+          return { type: 'pong' };
+        }
         if (message.type === 'preflight') {
           // Mirrors `content.ts:570`'s post-fix wire shape
           // (`sendResponse({ status: 'ok', data })` where `data` is
@@ -280,7 +326,18 @@ beforeAll(async () => {
       },
       onRemoved: { addListener: () => {} },
     },
-    scripting: { executeScript: async () => {} },
+    scripting: {
+      executeScript: async () => {
+        // The injection boundary. Everything the content script needs before
+        // it can listen happens inside this call, and it is the slowest await
+        // in the dispatch path on a cold tab — which is exactly why a
+        // takeover check that runs *before* it covers a window that has
+        // already been closed by the time the command is sent.
+        const hook = onExecuteScript;
+        onExecuteScript = null;
+        if (hook) hook();
+      },
+    },
     // agent-group.ts degrades to "grouping disabled" when these reject, which
     // is its real behavior when Chrome withholds the tabGroups permission.
     // Mocking the happy path keeps this suite's console readable; the
@@ -312,12 +369,16 @@ beforeAll(async () => {
   // Static imports would evaluate background.ts before the chrome global
   // exists (the module registers listeners and calls connectOffscreen at load
   // time), so the import is dynamic and ordered after the mock.
-  ({ handleCommand } = await import('../src/background'));
+  ({ handleCommand, assertTakeoverUnchanged } = await import(
+    '../src/background'
+  ));
 });
 
 beforeEach(() => {
   store.clear();
   tabUrls.clear();
+  onExecuteScript = null;
+  pingFailuresBeforeInjection = 0;
   sentToContentScript.length = 0;
   createdTabs.length = 0;
   queriedTabs.length = 0;
@@ -326,6 +387,8 @@ beforeEach(() => {
   onUpdatedListeners = [];
   badgeShouldFail = false;
   badgeTextUpdates = 0;
+  storageReads = 0;
+  onNthStorageRead = null;
   lastBadgeText = null;
   preflightResult = { sensitive: false };
   contentScriptResponse = defaultContentScriptResponse;
@@ -630,6 +693,246 @@ describe('takeover covers the whole dispatch path', () => {
   });
 });
 
+// Takeover was enforced at the gate and nowhere else. The gate reads policy
+// state inside the write queue, and a takeover flip is applied in that same
+// queue, so a command still queued when the user hit the switch does see it —
+// but nothing re-checked after the decision, and DOM commands have a real
+// window between the two: sendToContentScript calls ensureContentScript
+// first, which injects the content script when the tab does not have one yet.
+describe('takeover is re-checked at the execution point', () => {
+  const APPROVED = 'https://approved.site';
+
+  beforeEach(() => {
+    store.set('policyState', {
+      takeover: false,
+      origins: { [APPROVED]: 'always' },
+    });
+    tabUrls.set(1, `${APPROVED}/form`);
+  });
+
+  it('withdraws a command when the human takes over after the gate allowed it', async () => {
+    // Read 1 is the gate's verdict, read 2 is the execution-point re-check.
+    // Flipping between them is the sequence this whole re-check exists for:
+    // the user reaching for the kill switch while a command is in flight.
+    onNthStorageRead = {
+      n: 2,
+      run: () => {
+        store.set('policyState', {
+          takeover: true,
+          origins: { [APPROVED]: 'always' },
+        });
+      },
+    };
+
+    const failure = await handleCommand(
+      makeCommand('click', 1, { selector: '#a' }),
+    ).then(
+      () => null,
+      (err: Error & { name?: string; denial?: { reason: string } }) => err,
+    );
+
+    expect(failure?.name).toBe('PolicyDeniedError');
+    expect(failure?.denial?.reason).toBe('human_assist_active');
+    // The point of the re-check: the click never reached the page. A
+    // withdrawn command that still dispatched would leave the user watching
+    // a page act on the browser they just took back.
+    expect(sentToContentScript).toHaveLength(0);
+
+    // What this test cannot do, stated here because it is the trap: it
+    // cannot tell you *which* denial site fired. The gate and the re-check
+    // both throw PolicyDeniedError with reason human_assist_active, and
+    // nothing observable happens between them — no event, no await — so a
+    // flip keyed on a read ordinal can land on the gate instead and this
+    // still passes. The read count does not separate the two either; it is
+    // the same under both orderings.
+    //
+    // So this is an integration test of the window: takeover is engaged
+    // during command handling and the command does not reach the page. The
+    // re-check's own behaviour is pinned by the direct test below.
+  });
+
+  it('withdraws a command when the human takes over during content-script injection', async () => {
+    // The window the re-check's own comment claims to close.
+    //
+    // That comment says the gate "cannot cover the stretch between its
+    // decision and the DOM actually changing" because sendToContentScript
+    // injects the content script first, "which is a real await — long enough
+    // on a cold tab". But the re-check ran *before* that await, not across
+    // it: ensureContentScript (a tabs.get, a ping, an executeScript, and a
+    // listener wait that can take up to 2s) all happened between the check
+    // and the dispatch. Engaging Takeover anywhere in there was a no-op.
+    //
+    // Keyed on the injection rather than on a storage read ordinal on
+    // purpose. A read ordinal pins the test to an internal call count, and
+    // the read that mattered was never in the window at all — the existing
+    // test above flips on read 2, which is the one instant the check does
+    // cover, so it passed while the seam sat in the wrong place.
+    pingFailuresBeforeInjection = 1;
+    onExecuteScript = () => {
+      store.set('policyState', {
+        takeover: true,
+        origins: { [APPROVED]: 'always' },
+      });
+    };
+
+    const failure = await handleCommand(
+      makeCommand('click', 1, { selector: '#a' }),
+    ).then(
+      () => null,
+      (err: Error & { name?: string; denial?: { reason: string } }) => err,
+    );
+
+    expect(failure?.name).toBe('PolicyDeniedError');
+    expect(failure?.denial?.reason).toBe('human_assist_active');
+    // The whole point: the click did not reach the page. The user took the
+    // browser back while it was being prepared, and it clicked anyway.
+    expect(sentToContentScript).toHaveLength(0);
+  });
+
+  it('re-checks every command that shares the DOM dispatch path', async () => {
+    // The re-check is attached to a `case` block listing nine commands, and
+    // the tests above drive exactly one of them. A refactor that split the
+    // block — a read group and a mutation group is the obvious split, and the
+    // comment above it already argues per-group reasoning — and passed
+    // `beforeSend` in only one arm would leave seven commands with no
+    // execution-point re-check while every test stayed green. Verified: with
+    // the re-check narrowed to `click || type`, the full suite passes.
+    //
+    // Driven off the same seam as the test above, because the seam is the
+    // thing under test. Each command needs params its own handler would
+    // accept; `type` additionally needs a preflight answer, which the mock
+    // already returns as non-sensitive by default.
+    const DOM_COMMANDS: [CommandType, Record<string, unknown>][] = [
+      ['click', { selector: '#a' }],
+      ['type', { selector: '#a', text: 'hi' }],
+      ['select', { selector: '#a', value: 'v' }],
+      ['scroll', { selector: '#a', direction: 'down' }],
+      ['hover', { selector: '#a' }],
+      ['gettext', { selector: '#a' }],
+      ['gethtml', { selector: '#a' }],
+      ['snapshot', {}],
+      ['wait:element', { selector: '#a' }],
+    ];
+
+    for (const [command, params] of DOM_COMMANDS) {
+      store.set('policyState', {
+        takeover: false,
+        origins: { [APPROVED]: 'always' },
+      });
+      tabUrls.set(1, `${APPROVED}/form`);
+      sentToContentScript.length = 0;
+      pingFailuresBeforeInjection = 1;
+      onExecuteScript = () => {
+        store.set('policyState', {
+          takeover: true,
+          origins: { [APPROVED]: 'always' },
+        });
+      };
+
+      const failure = await handleCommand(makeCommand(command, 1, params)).then(
+        () => null,
+        (err: Error & { name?: string }) => err,
+      );
+
+      // Named per command, so a failure says which arm lost its re-check
+      // rather than pointing at the loop.
+      expect({ command, denied: failure?.name }).toEqual({
+        command,
+        denied: 'PolicyDeniedError',
+      });
+      expect({ command, dispatched: sentToContentScript.length }).toEqual({
+        command,
+        dispatched: 0,
+      });
+    }
+  });
+
+  it('still injects and dispatches when nobody takes over mid-flight', async () => {
+    // The other direction for the same seam. A `beforeSend` that refused
+    // unconditionally would pass the test above by refusing everything, and
+    // the existing "leaves the command alone" test does not reach the
+    // injection path at all, so nothing would notice.
+    pingFailuresBeforeInjection = 1;
+    const result = await handleCommand(
+      makeCommand('click', 1, { selector: '#a' }),
+    );
+
+    expect(result).toEqual({ clicked: '#a' });
+    expect(sentToContentScript.length).toBeGreaterThan(0);
+  });
+
+  it('leaves the command alone when the human does not take over', async () => {
+    // The other direction. A re-check that denied unconditionally would pass
+    // the test above by refusing everything, and this is what says it is
+    // reading the state rather than always saying no.
+    const result = await handleCommand(
+      makeCommand('click', 1, { selector: '#a' }),
+    );
+
+    expect(result).toEqual({ clicked: '#a' });
+    expect(sentToContentScript.length).toBeGreaterThan(0);
+  });
+
+  it('leaves no approval card and no badge count for a takeover refusal', async () => {
+    // A recentDenials entry is an approval request — a card with action
+    // buttons, a number on the badge, something the user is meant to act
+    // on. A takeover refusal is none of those: the user engaged the kill
+    // switch and every command after it was refused as intended. Recording
+    // them made the agent's retries walk the list up to its cap while the
+    // user had nothing to dismiss, and left the panel still saying the
+    // human was in control after they released the browser.
+    onNthStorageRead = {
+      n: 2,
+      run: () => {
+        store.set('policyState', {
+          takeover: true,
+          origins: { [APPROVED]: 'always' },
+        });
+      },
+    };
+
+    await handleCommand(makeCommand('click', 1, { selector: '#a' })).catch(
+      () => undefined,
+    );
+
+    const stored = store.get('policyState') as { recentDenials?: unknown[] };
+    expect(stored.recentDenials ?? []).toHaveLength(0);
+    // The badge is not merely refreshed to empty — it is never touched. There
+    // is nothing to clear, because a takeover refusal never added to the
+    // count, and a redundant chrome.action call here would be a round-trip
+    // whose only possible outcome is writing back the same number.
+    expect(lastBadgeText).toBeNull();
+  });
+
+  it('still records an ordinary refusal, so the new rule is not a blanket one', async () => {
+    // recordDenial dropping takeover denials must not have swallowed the
+    // refusals that *are* approval requests. This is the direction that says
+    // the filter keys on the reason rather than short-circuiting the write.
+    store.set('policyState', {
+      takeover: true,
+      origins: { [APPROVED]: 'always' },
+    });
+    await handleCommand(makeCommand('click', 1, { selector: '#a' })).catch(
+      () => undefined,
+    );
+    const afterTakeover = store.get('policyState') as {
+      recentDenials?: unknown[];
+    };
+    expect(afterTakeover.recentDenials ?? []).toHaveLength(0);
+
+    // Now a refusal the user can actually act on: an unapproved origin.
+    store.set('policyState', { takeover: false, origins: {} });
+    await handleCommand(makeCommand('click', 1, { selector: '#a' })).catch(
+      () => undefined,
+    );
+    const afterOrigin = store.get('policyState') as {
+      recentDenials?: { reason: string }[];
+    };
+    expect(afterOrigin.recentDenials).toHaveLength(1);
+    expect(afterOrigin.recentDenials?.[0].reason).toBe('origin_not_approved');
+  });
+});
+
 // navigate's wait for the page to reach status 'complete' had no bound, no
 // cleanup, and no check for an event that had already fired — while
 // wait:navigation, doing the identical wait, had all three. A page that
@@ -844,6 +1147,14 @@ describe('navigate waits for completion without losing the event', () => {
 describe('policy_op through the real service-worker listener', () => {
   const listener = () => onMessageListeners[0];
 
+  // What the side panel looks like to the worker: one of the extension's own
+  // pages. The sender check rejects anything else, so every policy_op test
+  // here has to present a real one or it is testing the rejection path.
+  const extensionPageSender = {
+    id: 'test',
+    url: 'chrome-extension://test/sidepanel.html',
+  };
+
   function sendPolicyOp(op: unknown): Promise<unknown> {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(
@@ -852,7 +1163,7 @@ describe('policy_op through the real service-worker listener', () => {
       );
       const kept = listener()?.(
         { type: 'policy_op', op },
-        { id: 'test' },
+        extensionPageSender,
         (response?: unknown) => {
           clearTimeout(timer);
           resolve(response);
@@ -891,9 +1202,11 @@ describe('policy_op through the real service-worker listener', () => {
 
   it('answers even when the badge refresh fails', async () => {
     // The badge is cosmetic. If its failure could reach the caller, the panel
-    // would revert its optimistic UI while the write had already landed —
-    // for Takeover that shows the user "human assist active" while the agent
-    // actually has the browser.
+    // would show an error for an operation whose write had already landed —
+    // and since the switch no longer renders ahead of the write, it would
+    // still read "human assist active" while the engine had already handed
+    // the browser to the agent. A kill switch the user is told failed, and
+    // then tries again, is worse than one that is merely slow.
     badgeShouldFail = true;
 
     // The seeded state has takeover:false, so asking for true makes the write
@@ -1026,5 +1339,472 @@ describe('policy_op through the real service-worker listener', () => {
 
     expect(response.status).toBe('ok');
     expect(response.data.blockedOrigins).toEqual(['evil.example']);
+  });
+});
+
+// The withdrawal above is fail-closed but not free: the gate consumed and
+// persisted the grant before the re-check ran, so a command the re-check then
+// refuses has spent a one-shot approval without ever reaching the page. The
+// surrounding test uses `click`, which consumes nothing, so this interaction
+// was invisible until it was written down.
+//
+// Refunding is not the fix — consumption is what makes a grant
+// un-double-spendable, and putting it back after an await would resurrect one
+// a concurrent command is entitled to believe is gone. So the behaviour is
+// pinned instead: one-shot means one attempt, and the wrong direction to fail
+// in, which is worth a test precisely because it is easy to "fix" later
+// without noticing what the fix would re-open.
+describe('a withdrawn command has still spent its grant', () => {
+  const APPROVED = 'https://approved.site';
+
+  beforeEach(() => {
+    store.set('policyState', {
+      takeover: false,
+      origins: { [APPROVED]: 'always' },
+    });
+    tabUrls.set(1, `${APPROVED}/form`);
+    // The preflight has to classify the target as sensitive, or no
+    // sensitive-field grant is needed and none is ever consumed — the test
+    // would pass for the wrong reason.
+    preflightResult = { sensitive: true };
+  });
+
+  it('burns a one-shot sensitive-field grant without reaching the page', async () => {
+    store.set('policyState', {
+      takeover: false,
+      origins: { [APPROVED]: 'always' },
+      grants: [
+        {
+          capability: 'sensitive-field',
+          expiresAt: Date.now() + 60 * 60 * 1000,
+          singleUse: true,
+        },
+      ],
+    });
+
+    // The user engages takeover after the gate has already consumed, but
+    // before the command would have been dispatched.
+    //
+    // The hook must SPREAD the state it is replacing. This used to set a fresh
+    // object literal with no `grants` key at all, which made the assertion
+    // below read `?? []` on an object that had never held a grant — so it
+    // passed even with the gate's consumption branch deleted outright, which
+    // is the stronger half of the claim it was making. Spreading keeps the
+    // consumed array visible as an empty one, which is what "burned" means.
+    onNthStorageRead = {
+      n: 2,
+      run: () => {
+        store.set('policyState', {
+          ...(store.get('policyState') as Record<string, unknown>),
+          takeover: true,
+          origins: { [APPROVED]: 'always' },
+        });
+      },
+    };
+
+    const failure = await handleCommand(
+      makeCommand('type', 1, { selector: '#pw', text: 'x' }),
+    ).then(
+      () => null,
+      (err: Error & { name?: string; denial?: { reason: string } }) => err,
+    );
+
+    expect(failure?.denial?.reason).toBe('human_assist_active');
+    // Never dispatched — the control worked.
+    expect(sentToContentScript).toHaveLength(0);
+    // And the grant is spent anyway. This is the assertion that makes the
+    // behaviour a decision: it fails if someone "fixes" the asymmetry by
+    // refunding, which is the fix that would re-open double-spend, and it
+    // fails if the gate stops consuming at all. Verified: with the
+    // consumption branch removed from `decideWithState`, this is red.
+    const stored = store.get('policyState') as { grants?: unknown[] };
+    expect(stored.grants ?? []).toHaveLength(0);
+  });
+
+  it('leaves the grant alone when the re-check does not fire', async () => {
+    // The direction that would be a real regression: a healthy command must
+    // still be able to spend exactly one grant, and a second identical
+    // command must be denied.
+    store.set('policyState', {
+      takeover: false,
+      origins: { [APPROVED]: 'always' },
+      grants: [
+        {
+          capability: 'sensitive-field',
+          expiresAt: Date.now() + 60 * 60 * 1000,
+          singleUse: true,
+        },
+      ],
+    });
+
+    const first = await handleCommand(
+      makeCommand('type', 1, { selector: '#pw', text: 'x' }),
+    ).then(
+      () => null,
+      (err: Error) => err,
+    );
+    expect(first).toBeNull();
+
+    const afterFirst = store.get('policyState') as { grants?: unknown[] };
+    expect(afterFirst.grants ?? []).toHaveLength(0);
+
+    const second = await handleCommand(
+      makeCommand('type', 1, { selector: '#pw', text: 'x' }),
+    ).then(
+      () => null,
+      (err: Error & { denial?: { reason: string } }) => err,
+    );
+    expect(second?.denial?.reason).toBe('approval_required');
+  });
+});
+
+// The re-check's own behaviour, tested directly.
+//
+// The integration test above cannot identify which denial site fired: the gate
+// and this function throw the same error with the same reason, and nothing
+// observable happens between them, so a read-ordinal flip can land on the
+// gate and still satisfy every assertion there. That is not a gap that a
+// cleverer mock closes — it is a property of the code, and the only honest
+// response is to test this function without going through the gate.
+describe('assertTakeoverUnchanged on its own', () => {
+  beforeEach(() => {
+    store.set('policyState', {
+      takeover: false,
+      origins: { 'https://a.test': 'always' },
+    });
+  });
+
+  it('throws human_assist_active when takeover is on', async () => {
+    store.set('policyState', {
+      takeover: true,
+      origins: { 'https://a.test': 'always' },
+    });
+
+    const failure = await assertTakeoverUnchanged(
+      'click',
+      'https://a.test',
+    ).then(
+      () => null,
+      (err: Error & { name?: string; denial?: { reason: string } }) => err,
+    );
+
+    expect(failure?.name).toBe('PolicyDeniedError');
+    expect(failure?.denial?.reason).toBe('human_assist_active');
+  });
+
+  it('resolves when takeover is off', async () => {
+    // The negative direction. A re-check that always denied would pass the
+    // test above while making every DOM command unusable.
+    expect(
+      await assertTakeoverUnchanged('click', 'https://a.test'),
+    ).toBeUndefined();
+  });
+
+  it('carries the origin so the denial names what was refused', async () => {
+    store.set('policyState', {
+      takeover: true,
+      origins: { 'https://a.test': 'always' },
+    });
+
+    const failure = await assertTakeoverUnchanged(
+      'type',
+      'https://a.test',
+    ).then(
+      () => null,
+      (
+        err: Error & {
+          denial?: { reason: string; command: string; origin?: string };
+        },
+      ) => err,
+    );
+
+    expect(failure?.denial?.command).toBe('type');
+    expect(failure?.denial?.origin).toBe('https://a.test');
+  });
+
+  it('consumes nothing', async () => {
+    // It must not be able to spend a grant. decideWithState only writes when
+    // a decision carries `consume`, and takeoverDenied never does — so a
+    // re-check that could consume would be a second way to drain one-shot
+    // approvals, from a place with no gate in front of it.
+    store.set('policyState', {
+      takeover: true,
+      origins: { 'https://a.test': 'always' },
+      grants: [
+        {
+          capability: 'sensitive-field',
+          expiresAt: Date.now() + 60_000,
+          singleUse: true,
+        },
+      ],
+    });
+
+    await assertTakeoverUnchanged('type', 'https://a.test').catch(
+      () => undefined,
+    );
+
+    const stored = store.get('policyState') as { grants?: unknown[] };
+    expect(stored.grants ?? []).toHaveLength(1);
+  });
+});
+
+// `policy_op` can switch Takeover off and mint a `sensitive-field` grant;
+// `ws_command` reaches handleCommand. A page that could send either would
+// release the user's kill switch and grant itself a password-field
+// capability in one message.
+//
+// Nothing on the web can reach this listener today — no
+// `externally_connectable`, no onMessageExternal, no postMessage bridge — so
+// these are defence in depth. The point of testing defence in depth is that
+// it is the half nobody checks after the day it is quietly made reachable.
+describe('the worker rejects privileged messages from a non-extension sender', () => {
+  const listener = () => onMessageListeners[0];
+
+  beforeEach(() => {
+    // Takeover on, so a released policy_op would be visible as a state change
+    // and a rejected one is not.
+    store.set('policyState', { takeover: true, origins: {}, grants: [] });
+  });
+
+  function send(request: unknown, sender: unknown): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+      // A listener that never calls its sendResponse leaves this pending
+      // forever, and the case then fails as a whole-suite timeout that names
+      // no test. Rejecting here names the case, and the window is short
+      // because nothing in this file does real I/O — the handler is either
+      // synchronous or a resolved microtask away.
+      const timer = setTimeout(
+        () => reject(new Error('the worker listener never answered')),
+        500,
+      );
+      listener()?.(request, sender, (response?: unknown) => {
+        clearTimeout(timer);
+        resolve(response);
+      });
+    });
+  }
+
+  // For handlers that legitimately never reply. Resolves with a sentinel
+  // rather than hanging, because "no response" is the pass condition there
+  // and a plain await cannot tell it from a listener that forgot to answer.
+  const NO_REPLY = Symbol('no-reply');
+  async function sendExpectingSilence(
+    request: unknown,
+    sender: unknown,
+  ): Promise<unknown | typeof NO_REPLY> {
+    const pending = send(request, sender);
+    // The race below is what decides this case. If it loses, the rejection
+    // `send` is about to produce has no consumer left, and an unhandled
+    // rejection fails the run even though this case passed.
+    pending.catch(() => {});
+    const raced = await Promise.race([
+      pending,
+      new Promise((resolve) => setTimeout(() => resolve(NO_REPLY), 25)),
+    ]);
+    return raced;
+  }
+
+  const spoofed: [string, Record<string, unknown>][] = [
+    [
+      'a content script, which carries our own id and is still not a page',
+      // The important case. sender.id is this extension's id for a content
+      // script too, so an id-only check would wave this through; what
+      // separates it is that sender.url is the page, not a
+      // chrome-extension:// one.
+      { id: 'test', url: 'https://evil.example/page', tab: { id: 7 } },
+    ],
+    [
+      'another extension',
+      {
+        id: 'someotherid',
+        url: 'chrome-extension://someotherid/sidepanel.html',
+      },
+    ],
+    ['no sender at all', {}],
+    [
+      'a bare origin that merely starts with our id',
+      { id: 'test', url: 'chrome-extension://testevil/x' },
+    ],
+    [
+      // The one that separates `startsWith` from `includes`. The case above
+      // cannot: `chrome-extension://testevil/x` contains no
+      // `chrome-extension://test/` substring, so a substring check rejects it
+      // for the same reason the prefix check does. This URL is an ordinary
+      // https page that happens to *embed* our origin in a query string,
+      // which a content script on it would report. Verified against an
+      // `includes` implementation: rejected by `startsWith`, admitted by
+      // `includes`.
+      'a hostile page whose URL merely embeds our origin',
+      { id: 'test', url: 'https://evil.example/?r=chrome-extension://test/x' },
+    ],
+    [
+      // The reverse direction. Chrome assigns `sender.url` from the sending
+      // extension, so a mismatched id is not reachable today — but the check
+      // is there, and without this row deleting it changed nothing the suite
+      // could see.
+      'a mismatched id carrying our own origin in the url',
+      { id: 'someotherid', url: 'chrome-extension://test/sidepanel.html' },
+    ],
+    ['a sender with no url', { id: 'test' }],
+  ];
+
+  for (const [name, sender] of spoofed) {
+    it(`refuses policy_op from ${name}`, async () => {
+      const response = (await send(
+        { type: 'policy_op', op: { op: 'set_takeover', desired: false } },
+        sender,
+      )) as { error?: string } | undefined;
+
+      expect(response?.error).toBe('forbidden_sender');
+      // The state must be untouched: the whole point is that the operation
+      // did not happen, not merely that the reply was rude.
+      const stored = store.get('policyState') as { takeover?: boolean };
+      expect(stored?.takeover).toBe(true);
+    });
+  }
+
+  it('refuses a grant-minting policy_op from a spoofed sender', async () => {
+    store.set('policyState', { takeover: false, origins: {}, grants: [] });
+
+    const response = (await send(
+      {
+        type: 'policy_op',
+        op: {
+          op: 'grant_sensitive_field',
+          targetKey: 'x',
+          origin: 'https://evil.example',
+        },
+      },
+      { id: 'test', url: 'https://evil.example/page' },
+    )) as { error?: string } | undefined;
+
+    expect(response?.error).toBe('forbidden_sender');
+    const stored = store.get('policyState') as { grants?: unknown[] };
+    expect(stored?.grants ?? []).toHaveLength(0);
+  });
+
+  it('refuses ws_command from a spoofed sender', async () => {
+    // The origin is approved on purpose. With an unapproved origin the gate
+    // denies first and the content-script array is empty whichever way the
+    // guard goes, so the "never dispatched" assertion below was passing
+    // because of the seed rather than because of the guard — and it would
+    // have passed with the guard deleted entirely.
+    store.set('policyState', {
+      takeover: false,
+      origins: { 'https://approved.site': 'always' },
+    });
+    tabUrls.set(1, 'https://approved.site/form');
+    sentToContentScript.length = 0;
+
+    const response = (await send(
+      {
+        type: 'ws_command',
+        envelope: makeCommand('click', 1, { selector: '#a' }),
+      },
+      { id: 'test', url: 'https://evil.example/page' },
+    )) as { error?: string } | undefined;
+
+    expect(response?.error).toBe('forbidden_sender');
+    // Drain the event loop before asserting. The dispatch path is several
+    // awaits deep — policy gate, serialized queue, a storage read, then the
+    // injection sequence — so a guard that ran *after* the handler had
+    // already started would still produce the right reply, and a single tick
+    // would still see an empty array because the dispatch had not landed.
+    // Verified: with the guard moved after the handler starts, the click
+    // reaches the page and this assertion is green unless the loop is
+    // drained. 20 ticks is well past the chain's depth; it is a bound, not a
+    // guess at a magic number that would need re-tuning if a step were added.
+    for (let i = 0; i < 20; i += 1) await settle();
+    expect(sentToContentScript).toHaveLength(0);
+  });
+
+  it('still admits the side panel and the settings page, and the write lands', async () => {
+    // The negative half without the positive half is a worker that refuses
+    // everything, which would look identical in production to a worker whose
+    // policy layer is dead. So this asserts the *state* moved, not merely
+    // that nothing was rejected: the previous version checked only the
+    // absence of an error, so making applySetTakeover a no-op left it green.
+    for (const url of [
+      'chrome-extension://test/sidepanel.html',
+      'chrome-extension://test/settings.html',
+    ]) {
+      store.set('policyState', { takeover: true, origins: {}, grants: [] });
+      const response = (await send(
+        { type: 'policy_op', op: { op: 'set_takeover', desired: false } },
+        { id: 'test', url },
+      )) as { error?: string } | undefined;
+
+      expect(response?.error).toBeUndefined();
+      const stored = store.get('policyState') as { takeover?: boolean };
+      expect(stored.takeover).toBe(false);
+    }
+  });
+
+  it('still admits the offscreen document on the message it actually sends', async () => {
+    // The offscreen document is the only sender of `ws_command` — it holds
+    // the WebSocket and relays what the proxy sends. The previous version
+    // sent it a `policy_op`, which the offscreen document never sends, so a
+    // guard that severed the command channel for `offscreen.html` still
+    // passed: the extension's entire agent-facing path was untested.
+    store.set('policyState', {
+      takeover: false,
+      origins: { 'https://approved.site': 'always' },
+    });
+    // The gate reads the origin off the tab, so approving an origin in
+    // storage is not enough — without this the tab is about:blank, the
+    // origin resolves to null and the command is denied as origin_blocked
+    // before dispatch, for a reason that has nothing to do with the guard.
+    tabUrls.set(1, 'https://approved.site/form');
+    sentToContentScript.length = 0;
+
+    const response = (await send(
+      {
+        type: 'ws_command',
+        envelope: makeCommand('click', 1, { selector: '#a' }),
+      },
+      { id: 'test', url: 'chrome-extension://test/offscreen.html' },
+    )) as { error?: string; status?: string } | undefined;
+
+    expect(response?.error).toBeUndefined();
+    // It reached the content script, which is the whole point.
+    expect(sentToContentScript.length).toBeGreaterThan(0);
+  });
+
+  it('leaves the other message types alone', async () => {
+    // The guard is scoped to the two privileged types. Widening it to every
+    // type would break the offscreen handshake for no security gain, so ping
+    // has to still get through from a content script.
+    //
+    // Asserting the *reply shape*, not merely that something came back: the
+    // rejection is also a defined response, so `toBeDefined()` passed even
+    // with the guard widened to everything — which is the exact regression
+    // this case exists to catch. The pong marker is the discriminator.
+    const response = (await send(
+      { type: 'ping' },
+      { id: 'test', url: 'https://evil.example/page' },
+    )) as { type?: string; error?: string } | undefined;
+
+    expect(response?.error).toBeUndefined();
+    expect(response?.type).toBe('pong');
+  });
+
+  it('leaves ws_status alone, which returns no reply at all', async () => {
+    // The offscreen document reports its socket state with this, and the
+    // handler returns false without calling sendResponse — so the only thing
+    // observable is the *service worker state* it records. A guard that
+    // swallowed it would silently freeze the status indicator, with no
+    // response to assert on.
+    store.set('policyState', { takeover: false, origins: {} });
+    sentToContentScript.length = 0;
+
+    const response = await sendExpectingSilence(
+      { type: 'ws_status', connected: true },
+      { id: 'test', url: 'https://evil.example/page' },
+    );
+    // Silence is the pass condition, and specifically not a forbidden_sender
+    // reply: had the guard been widened to cover this type, it would have
+    // answered, and the offscreen socket state would have stopped updating
+    // with nothing in any response to show for it.
+    expect(response).toBe(NO_REPLY);
   });
 });

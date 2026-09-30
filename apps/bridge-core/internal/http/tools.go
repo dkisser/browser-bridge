@@ -256,7 +256,6 @@ type navigateArgs struct {
 type tabNewArgs struct {
 	URL       *string `json:"url,omitempty"`
 	Active    *bool   `json:"active,omitempty"`
-	AutoClose *bool   `json:"auto_close,omitempty"`
 	TimeoutMS *int    `json:"timeout_ms,omitempty"`
 }
 
@@ -361,9 +360,8 @@ func (s *MCPServer) executeTabNew(ctx context.Context, req *mcp.CallToolRequest,
 	return s.runMessageTool(ctx, req, "tab_new", commandSpec{
 		name: "tab:new",
 		params: tabNewParams{
-			URL:       args.URL,
-			Active:    args.Active,
-			AutoClose: args.AutoClose,
+			URL:    args.URL,
+			Active: args.Active,
 		},
 	}, args.TimeoutMS, "tab:new failed", "New tab opened")
 }

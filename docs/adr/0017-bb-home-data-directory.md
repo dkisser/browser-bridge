@@ -12,8 +12,13 @@ the pairing token hash is sensitive). `config.json` moves to
 `data/config.json`; the daemon migrates a pre-existing root-level
 `config.json` on startup with an atomic rename (the StateManager is its only
 reader/writer, so migration cannot race an installer). The preservation
-contract is: install.sh / `bridge service update` only ever write `bin/`,
-`extension/`, and `version`; `bridge service uninstall` keeps `data/` and
+contract is: install.sh / `bridge service update` only ever write *into*
+`bin/`, `extension/`, and `version`, and only ever *create* `data/` — they
+`mkdir -p` it and re-apply its 0700 mode, and never write a file inside it.
+Saying "only ever write these three" and leaving it at that was false by the
+two lines of its own implementation; the distinction is create-the-directory
+versus put-content-in-it, and the BATS test enforces the second. `bridge
+service uninstall` keeps `data/` and
 only `--purge` removes it. A BATS test installs twice with planted data
 sentinels and asserts they survive, so the contract is enforced rather than
 documented-only.

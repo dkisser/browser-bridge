@@ -148,7 +148,24 @@ export async function decideWithState(
 // storage layer.
 export { denialKey };
 
+// Denials that are the user's own kill switch firing are not recorded.
+//
+// A recentDenials entry is an approval request: the side panel renders it as
+// a card with action buttons, and the badge counts it as something waiting on
+// the user. A `human_assist_active` denial is none of that — the user
+// deliberately took the browser, and every command the agent then tried was
+// refused exactly as intended. Recording them meant the agent's retries
+// walked the list up to its cap while the user did nothing and had nothing to
+// dismiss, and then, once they released the browser, the panel and the badge
+// went on reporting refusals in terms that still said the human was in
+// control. Nothing ever cleared them: recordDenial only ever prepends.
+//
+// The refusal itself is unchanged and still reaches the caller as a
+// human_assist_active denial — the agent is told to stop, in as much detail
+// as before. What is dropped is the claim that the user has a decision to
+// make about it.
 export async function recordDenial(denial: Denial): Promise<void> {
+  if (denial.reason === 'human_assist_active') return;
   await updatePolicyState((state) => ({
     recentDenials: [
       denial,

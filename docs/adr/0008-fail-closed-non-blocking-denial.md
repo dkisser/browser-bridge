@@ -1,6 +1,12 @@
 # Denials are fail-closed and non-blocking
 
-When a gated command is stopped, it is denied immediately with a machine-readable reason code (e.g. `human_assist_active`, `origin_not_approved`, `action_out_of_scope`, `approval_denied`) and an Approval card is shown in the extension popup; the agent relays the reason to the human through its own channel and retries after approval. The request is never held open waiting for the human. Decided alongside the working-scope model: with Approval and Takeover both in play, the denial contract is the seams between agent, extension, and human.
+When a gated command is stopped, it is denied immediately with a machine-readable reason code (e.g. `human_assist_active`, `origin_not_approved`, `action_out_of_scope`, `approval_required`) and an Approval card is shown in the extension side panel; the agent relays the reason to the human through its own channel and retries after approval. The request is never held open waiting for the human. Decided alongside the working-scope model: with Approval and Takeover both in play, the denial contract is the seams between agent, extension, and human.
+
+**Amended: not every denial produces an Approval card.** The clause above originally named `human_assist_active` in the same breath as the card, and that was wrong. An Approval card is a *request for a decision*; a Takeover denial is the user's own kill switch firing as intended, and there is no decision for them to make. Recording them meant the agent's retries walked the card list to its cap while the user did nothing, and once the user released the browser the panel and the badge went on reporting refusals worded as though the human were still in control. `recordDenial` now drops `human_assist_active`, and releasing Takeover purges any written before that rule existed.
+
+The decision itself is unchanged: still denied immediately, still with the reason code, still nothing held open. What changed is that the denial stops manufacturing work for the user. A card appears for a denial the user can act on — an unapproved origin, a required capability.
+
+The panel name changed from "popup" to "side panel" in ADR-0010; this line was never updated, which is the sort of thing that makes a reader distrust the rest of the paragraph.
 
 ## Considered Options
 

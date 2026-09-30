@@ -54,15 +54,14 @@ func TestWireParamKeys(t *testing.T) {
 			tool:        "tab_new",
 			args:        map[string]any{},
 			wantKeys:    []string{},
-			wantOmitted: []string{"active", "auto_close", "url"},
+			wantOmitted: []string{"active", "url"},
 		},
 		{
 			// Absent optionals must be dropped, not sent as false: the
 			// extension reads `params.active === true`.
-			tool:        "tab_new",
-			args:        map[string]any{"url": "https://example.com", "active": true},
-			wantKeys:    []string{"active", "url"},
-			wantOmitted: []string{"auto_close"},
+			tool:     "tab_new",
+			args:     map[string]any{"url": "https://example.com", "active": true},
+			wantKeys: []string{"active", "url"},
 		},
 		{
 			tool:     "type",
@@ -82,10 +81,9 @@ func TestWireParamKeys(t *testing.T) {
 			wantOmitted: []string{"selector"},
 		},
 		{
-			tool:        "screenshot",
-			args:        map[string]any{"tab_id": 1},
-			wantKeys:    []string{"tabId"},
-			wantOmitted: []string{"fullPage"},
+			tool:     "screenshot",
+			args:     map[string]any{"tab_id": 1},
+			wantKeys: []string{"tabId"},
 		},
 		{
 			tool:     "scroll",

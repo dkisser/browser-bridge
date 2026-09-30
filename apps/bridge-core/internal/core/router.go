@@ -19,6 +19,25 @@ import (
 // daemon's MCP defaultTimeout (10s) for callers that do not.
 const defaultRouteTTL = 30 * time.Second
 
+// bufferExpiredMessage is what a caller reads when its command sat in the
+// buffer until the budget ran out.
+//
+// It used to say "Service worker did not wake up", which blames a layer the
+// router cannot observe and that is usually not the layer at fault. The
+// command is buffered because the extension has no connection to us, and
+// HandleBrowserDisconnect puts it there for any reason that ends one — the
+// offscreen document being torn down, a network blip, an extension reload.
+// Whether the service worker then wakes and reconnects is downstream of
+// something the router has no handle on, so asserting that it did not is a
+// guess, and a wrong one sends the operator to inspect the service worker
+// when the connection is what actually went away.
+//
+// The error code stays sw_timeout: it is the contract identifier clients
+// match on, and it is accurate about what happened to the command — it was
+// never delivered, and it stopped waiting. Only the human-readable half,
+// which never had to be a stable identifier, stops naming a subsystem.
+const bufferExpiredMessage = "The browser was not connected, and no connection arrived before the command expired"
+
 // Browser is the browser-server half the router talks to (BrowserServer in
 // router.ts).
 type Browser interface {
@@ -134,6 +153,21 @@ func (r *Router) HandleInboundCommand(envelope Envelope, sender TextSender, opts
 		opt(&o)
 	}
 
+	// An inbound client may omit the id. It is minted here, at the top, rather
+	// than left to Encode further down, because the id is the routing key and
+	// the two must be the same value.
+	//
+	// Encode also mints one for an empty id, and doing it there was too late:
+	// the route below was registered under "" while the frame that went to the
+	// extension carried a fresh UUID, so the response — which echoes the id it
+	// was given — could never match the route. A client that omitted the id
+	// had every response dropped on the floor and its route pinned until the
+	// TTL, including on the happy path where the extension answered promptly.
+	// Nothing validated that the id was non-empty, so nothing surfaced it.
+	if envelope.ID == "" {
+		envelope.ID = NewID()
+	}
+
 	r.mu.Lock()
 	r.inboundByID[envelope.ID] = sender
 	r.mu.Unlock()
@@ -182,7 +216,7 @@ func (r *Router) HandleInboundCommand(envelope Envelope, sender TextSender, opts
 		if target == nil {
 			return
 		}
-		r.sendError(target, "sw_timeout", "Service worker did not wake up", envelope.ID, envelope.BrowserID)
+		r.sendError(target, "sw_timeout", bufferExpiredMessage, envelope.ID, envelope.BrowserID)
 		r.removeInbound(envelope.ID)
 	})
 	if !buffered {
@@ -271,12 +305,38 @@ func (r *Router) HandleBrowserConnect() {
 	// and the command is silently dropped — neither forwarded nor answered,
 	// with the caller left to time out on its own.
 	buffered, ok := r.state.GetBufferedCommand()
+	// The envelope id, needed to answer the caller if the replay below
+	// fails. GetBufferedCommand hands back the encoded frame rather than the
+	// envelope, and the frame *is* an envelope, so it decodes back.
+	var bufferedID string
+	if ok {
+		if env, err := Decode(buffered); err == nil {
+			bufferedID = env.ID
+		}
+	}
 
 	r.state.SetStatus(StatusOnline)
 	r.registry.SetStatus(r.state.BrowserID(), StatusOnline)
 
-	if ok {
-		r.browser.SendToExtension(buffered)
+	if !ok {
+		return
+	}
+	if r.browser.SendToExtension(buffered) {
+		return
+	}
+	// The third site that can lose a command after it has been accepted, and
+	// the only one where every safety net is already disarmed. GetBufferedCommand
+	// cleared the buffer and stopped its timeout, so onTimeout will not fire;
+	// the buffered path never armed a route TTL, so nothing else will either.
+	// The command is already unsendable — the upgrade this handler is
+	// reacting to has not produced a usable connection — so the only honest
+	// thing left is to fail the caller now instead of leaving it to discover
+	// the loss by timing out on its own deadline.
+	if target := r.lookupInbound(bufferedID); target != nil {
+		r.sendError(target, "extension_send_failed",
+			"The extension reconnected but the command could not be delivered.",
+			bufferedID, r.state.BrowserID())
+		r.removeInbound(bufferedID)
 	}
 }
 
@@ -328,9 +388,9 @@ func (r *Router) removeInbound(id string) {
 // Both timers are armed from the same goroutine with the same instant — the
 // router's time.AfterFunc first, the caller's time.After second — so at
 // equal deadlines the outcome is a race, and when the backstop wins the
-// caller is told "Service worker did not respond in time", blaming a service
-// worker that is in fact still working, instead of its own accurate
-// "timeout: no response for command X within Nms". The margin makes the
+// caller is told the extension never answered, blaming a service worker that
+// is in fact still working, instead of its own accurate "timeout: no
+// response for command X within Nms". The margin makes the
 // caller's own deadline deterministically win and leaves the backstop doing
 // only its real job: releasing a route whose sender never cleaned up.
 const routeBackstopMargin = time.Second
@@ -373,7 +433,14 @@ func (r *Router) fireRouteTimeout(id string, sender TextSender, browserID string
 		// already cleaned this up.
 		return
 	}
-	r.sendError(sender, "sw_timeout", "Service worker did not respond in time", id, browserID)
+	// The route backstop, as opposed to bufferExpiredMessage above: same code,
+	// different situation, and the message says so. Here the command WAS
+	// delivered and the extension simply never answered — the reply would
+	// have come from the offscreen document, so this layer cannot observe the
+	// service worker's state any more than the buffer path can. The two
+	// messages used to name a subsystem the router cannot see, forty lines
+	// apart, with one rewritten and the other not.
+	r.sendError(sender, "sw_timeout", "The extension did not answer in time", id, browserID)
 }
 
 // sendError renders and sends the TS encode('response', {status, error,

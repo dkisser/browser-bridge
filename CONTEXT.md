@@ -87,7 +87,7 @@ The top region of the side panel, always visible. Shows the Browser connection d
 _Avoid_: header, toolbar
 
 **Side panel tab**:
-One of the tabs in the strip below the state bar — Approvals, Origins, Blocklist, Downloads, Settings. Side panel tabs are view selectors, not extension UI surfaces; the same policy state is shown across them.
+One of the tabs in the strip below the state bar — Approvals, Origins, Blocklist, Downloads. Side panel tabs are view selectors, not extension UI surfaces; the same policy state is shown across them.
 _Avoid_: tab page, workspace tab
 
 **Default view**:
@@ -95,7 +95,7 @@ What the user sees first when the side panel opens. State bar plus the Approvals
 _Avoid_: landing view, last-view
 
 **Settings tab**:
-A separate extension options page opened via `chrome.runtime.openOptionsPage()` from the side panel's state bar. Dedicated to read-only display of hard configuration (WebSocket port, local-proxy URL, LaunchAgent plist path, log path, CLI binary path). Inert: never edits. Not a side panel tab — the side panel's tabs are Approvals, Origins, Blocklist, Downloads only.
+A separate extension options page opened via `chrome.runtime.openOptionsPage()` from the side panel's state bar. Dedicated to read-only display of hard configuration (WebSocket port, local-proxy URL, log path, data path, LaunchAgent plist path, CLI binary path). Inert: never edits. Not a side panel tab — the side panel's tabs are Approvals, Origins, Blocklist, Downloads only.
 _Avoid_: options page, preferences
 
 **Hard configuration**:

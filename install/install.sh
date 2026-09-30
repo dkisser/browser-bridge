@@ -57,8 +57,9 @@ write_artifacts() {
   echo "$version" > "$BB_HOME/version"
   # The persistent-data dir (ADR-0017): pairing config today, audit trail and
   # agent memory later. 0700 because the pairing token hash lives inside.
-  # Upgrades only ever write bin/, extension/ and version — data/ and the
-  # runtime dirs (logs/, run/) are never touched.
+  # Upgrades only ever write into bin/, extension/ and version. data/ is
+  # created and its mode re-applied on every install, but nothing is ever
+  # written inside it; the runtime dirs (logs/, run/) are not touched at all.
   mkdir -p "$BB_HOME/data"
   chmod 700 "$BB_HOME/data"
   mkdir -p "$HOME/.local/bin"

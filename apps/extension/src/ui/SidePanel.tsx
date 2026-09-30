@@ -24,6 +24,13 @@ import {
 } from './policy-actions';
 import { requestPolicyOp } from './policy-ops';
 import styles from './SidePanel.module.css';
+import {
+  click,
+  createTakeoverSync,
+  observe,
+  settle,
+  type TakeoverSync,
+} from './takeover-sync';
 
 const TABS = [
   { id: 'approvals', label: 'Approvals' },
@@ -129,62 +136,51 @@ export function SidePanel() {
     );
   }, [setMessage]);
 
-  // --- Takeover: optimistic toggle, reverted on storage write failure ---
+  // --- Takeover: the switch shows persisted state, not the click ---
+  //
+  // Not optimistic, and the value here is not this component's to decide. It
+  // is whatever takeover-sync says the engine enforces, and takeover-sync
+  // moves only on an observation or on a write it knows landed. The panel
+  // used to keep the equivalent bookkeeping in three refs, which could only
+  // be tested by reading this file and counting occurrences of a variable
+  // name — a guard that passes when the behaviour is wrong. The logic is a
+  // pure module now (takeover-sync.ts) so the cases are executed.
   const [takeover, setTakeover] = useState(false);
-  // True while at least one storage write is in flight. While true, the
-  // state-sync effect below assumes any state arrival is one of our own
-  // writes (or a write from another surface that our optimistic update
-  // has effectively superseded) and does not touch local state. Without
-  // this gate, out-of-order write landing — or a second tab's write
-  // landing during our pending write — would clobber the user's most
-  // recent click.
-  const hasPendingTakeoverWrite = useRef(false);
-  // Last takeover value the UI has been synced to from storage, used to
-  // detect external writes once no write is in flight.
-  const lastAppliedTakeover = useRef(false);
-  // Monotonic generation counter, bumped on every click. writeGen.current
-  // is the generation of the *most recent* click; the closure variable
-  // `myGen` captured at the time of a given click is the generation of
-  // *that* click. The catch below compares the two so a failing older
-  // click can tell it has been superseded by a newer one and skip both
-  // the revert and the persistent error banner.
-  const writeGen = useRef(0);
+  const takeoverSync = useRef<TakeoverSync>(createTakeoverSync(false));
+  const applySync = useCallback((next: TakeoverSync): void => {
+    const prev = takeoverSync.current;
+    takeoverSync.current = next;
+    if (next.displayed !== prev.displayed) setTakeover(next.displayed);
+  }, []);
 
   useEffect(() => {
     if (state === null) return;
-    if (hasPendingTakeoverWrite.current) return;
-    if (state.takeover !== lastAppliedTakeover.current) {
-      setTakeover(state.takeover);
-      lastAppliedTakeover.current = state.takeover;
-    }
-  }, [state]);
+    applySync(observe(takeoverSync.current, state.takeover));
+  }, [state, applySync]);
 
   const handleTakeoverChange = useCallback(
     (desired: boolean): void => {
-      const myGen = ++writeGen.current;
-      setTakeover(desired);
-      hasPendingTakeoverWrite.current = true;
+      const opening = click(takeoverSync.current, desired);
+      const myGen = opening.gen;
+      applySync(opening);
+
       void requestPolicyOp({ op: 'set_takeover', desired })
         .then(() => {
-          hasPendingTakeoverWrite.current = false;
+          applySync(settle(takeoverSync.current, myGen, true));
         })
         .catch((error: unknown) => {
-          hasPendingTakeoverWrite.current = false;
-          if (writeGen.current !== myGen) {
-            // A newer click has already superseded this one. The error
-            // refers to an action that no longer reflects the user's
-            // current intent — do not revert or surface a banner.
-            return;
-          }
-          // Storage write failed and is still the user's latest action —
-          // revert the switch so the UI matches persisted state, and
-          // show the failure.
-          setTakeover(!desired);
-          lastAppliedTakeover.current = !desired;
+          // A newer click superseded this one. Its error refers to an action
+          // that no longer reflects the user's current intent, so no banner;
+          // and the window it still holds must not be released here, or a
+          // parked observation would apply against a write still in flight.
+          if (takeoverSync.current.gen !== myGen) return;
+          applySync(settle(takeoverSync.current, myGen, false));
+          // The write failed, so the switch never moved and there is nothing
+          // to revert: it still shows what the engine enforces. Just say why.
           setMessage(toErrorMessage(error));
         });
     },
-    [setMessage],
+    [applySync, setMessage],
   );
 
   const handleOpenSettings = useCallback(
@@ -233,12 +229,12 @@ export function SidePanel() {
   // While the policy read is still in flight, the takeover prop renders
   // the hero's neutral 'Loading…' state. Once state has loaded at least
   // once (or the user has clicked during loading), we forward the local
-  // takeover value so optimistic updates from the click survive the next
-  // re-render and the sync effect can update takeover from persisted
-  // state.
+  // takeover value so the switch keeps showing what it showed before the
+  // re-render, and the sync effect can still update takeover once a
+  // persisted state arrives.
   const takeoverLoaded = state !== null;
   const takeoverForHero =
-    takeoverLoaded || hasPendingTakeoverWrite.current ? takeover : null;
+    takeoverLoaded || takeoverSync.current.pending ? takeover : null;
 
   return (
     <div className={styles.app}>

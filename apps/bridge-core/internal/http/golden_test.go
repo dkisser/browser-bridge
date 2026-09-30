@@ -3,7 +3,9 @@ package http
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -16,13 +18,20 @@ type goldenTool struct {
 	InputSchema json.RawMessage `json:"inputSchema"`
 }
 
-// TestToolsListMatchesTSFixture diffs the Go server's tools/list against the
-// golden export taken from the TS bridge-core's MCP server
-// (testdata/tools_list_ts.json). Comparison is semantic: the served tool
-// order differs by design (go-sdk sorts by name, FastMCP kept registration
-// order; the MCP spec treats the list as a set), and JSON object key order
-// inside schemas is normalized by unmarshalling both sides.
-func TestToolsListMatchesTSFixture(t *testing.T) {
+// TestToolsListMatchesTheContract diffs the Go server's tools/list against
+// testdata/tools_list_ts.json — the contract, which was originally exported
+// from the TS bridge-core's MCP server and has since been hand-edited to
+// record one deliberate divergence. Read testdata/README.md before touching
+// the fixture: regenerating it from a `main` worktree re-adds the two
+// parameters the extension never implemented, which is precisely what three
+// other files now pin as removed. The name deliberately stopped saying "TS"
+// for that reason.
+//
+// Comparison is semantic: the served tool order differs by design (go-sdk
+// sorts by name, FastMCP kept registration order; the MCP spec treats the
+// list as a set), and JSON object key order inside schemas is normalized by
+// unmarshalling both sides.
+func TestToolsListMatchesTheContract(t *testing.T) {
 	data, err := os.ReadFile("testdata/tools_list_ts.json")
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)
@@ -95,6 +104,41 @@ func TestToolsListMatchesTSFixture(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("Go serves extra tool %q absent from the TS fixture", name)
+		}
+	}
+}
+
+// docs/mcp-setup.md carries a hand-maintained table of the same 22 tools the
+// golden fixture pins, and it drifted: `snapshot` was missing entirely and
+// `list_browsers` listed no parameters. The fixture is the contract, so the
+// doc being behind it means the first thing a new user reads disagrees with
+// the first thing a client fetches — and nothing caught it, because the doc is
+// prose.
+//
+// This pins the tool *names* only. Parameter-level parity would mean parsing a
+// markdown table into schema shapes, and a test that elaborate would be a
+// worse thing to maintain than the drift it prevents. A missing tool is the
+// failure worth catching automatically; a mistyped parameter column is not.
+func TestDocsListEveryToolTheFixturePins(t *testing.T) {
+	data, err := os.ReadFile("testdata/tools_list_ts.json")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	var fixture []goldenTool
+	if uerr := json.Unmarshal(data, &fixture); uerr != nil {
+		t.Fatalf("parse fixture: %v", uerr)
+	}
+
+	// From internal/http, the repo root is four levels up.
+	doc, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "docs", "mcp-setup.md"))
+	if err != nil {
+		t.Fatalf("read docs/mcp-setup.md: %v", err)
+	}
+	for _, tool := range fixture {
+		row := "| `" + tool.Name + "` |"
+		if !strings.Contains(string(doc), row) {
+			t.Errorf("docs/mcp-setup.md has no row for tool %q; the table has "+
+				"drifted from the tools/list contract", tool.Name)
 		}
 	}
 }

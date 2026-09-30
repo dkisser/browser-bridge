@@ -71,9 +71,8 @@ type BlankParams struct{}
 
 // TabNewParams is tab:new.
 type TabNewParams struct {
-	URL       *string `json:"url,omitempty"`
-	Active    *bool   `json:"active,omitempty"`
-	AutoClose *bool   `json:"auto_close,omitempty"`
+	URL    *string `json:"url,omitempty"`
+	Active *bool   `json:"active,omitempty"`
 }
 
 // SelectorTabParams is click / hover / gettext / gethtml.
@@ -117,8 +116,7 @@ type SnapshotParams struct {
 
 // ScreenshotParams is screenshot.
 type ScreenshotParams struct {
-	FullPage *bool `json:"fullPage,omitempty"`
-	TabID    int   `json:"tabId"`
+	TabID int `json:"tabId"`
 }
 
 // WaitParams is wait:element / wait:navigation, carrying the in-page wait

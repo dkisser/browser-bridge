@@ -572,8 +572,15 @@ func TestBufferedCommandExpiresIntoSWTimeout(t *testing.T) {
 	}
 	var payload core.ResponsePayload
 	mustUnmarshal(t, resp.Payload, &payload)
-	if payload.Status != "error" || payload.Error != "sw_timeout" || payload.Message != "Service worker did not wake up" {
+	// Only the code is asserted. It is the identifier clients match on and
+	// it says what happened to the command; the message is prose about a
+	// condition the router can only partly observe, and pinning it here
+	// would make rewording that prose a test failure for no gain.
+	if payload.Status != "error" || payload.Error != "sw_timeout" {
 		t.Fatalf("payload = %s, want sw_timeout", resp.Payload)
+	}
+	if payload.Message == "" {
+		t.Fatal("sw_timeout carried no message; the caller gets a code and no explanation")
 	}
 }
 

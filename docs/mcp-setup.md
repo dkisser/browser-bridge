@@ -57,10 +57,10 @@ tab-scoped tool below requires `tab_id: number` — use the ids reported by
 
 | Tool | Description | Parameters |
 |---|---|---|
-| `list_browsers` | List connected browsers and their status. Call this first before any other tool | — |
+| `list_browsers` | List connected browsers and their status. Call this first before any other tool | `timeout_ms?: number` |
 | `set_browser` | Pin a browser for this MCP session. `browserId` must come from `list_browsers` | `browserId: string` |
 | `tab_list` | List all open tabs — call this before any tab-scoped tool to obtain a valid `tab_id` | `timeout_ms?: number` |
-| `tab_new` | Open a new tab (background by default) | `url?: string`, `active?: boolean`, `auto_close?: boolean`, `timeout_ms?: number` |
+| `tab_new` | Open a new tab (background by default) | `url?: string`, `active?: boolean`, `timeout_ms?: number` |
 | `tab_close` | Close a tab by ID | `tab_id: number`, `timeout_ms?: number` |
 | `tab_switch` | Switch to a tab by ID | `tab_id: number`, `timeout_ms?: number` |
 | `navigate` | Navigate a specific tab to a URL | `url: string`, `tab_id: number`, `timeout_ms?: number` |
@@ -74,7 +74,8 @@ tab-scoped tool below requires `tab_id: number` — use the ids reported by
 | `hover` | Hover over an element | `selector: string`, `tab_id: number`, `timeout_ms?: number` |
 | `get_text` | Get the text content of an element | `selector: string`, `tab_id: number`, `timeout_ms?: number` |
 | `get_html` | Get the raw inner HTML of an element | `selector: string`, `tab_id: number`, `timeout_ms?: number` |
-| `screenshot` | Capture a PNG screenshot of a tab (returns image content) | `tab_id: number`, `fullPage?: boolean`, `timeout_ms?: number` |
+| `snapshot` | Take a compact, budgeted snapshot of the page's interactive elements and headings, with stable `@eN` refs usable as `selector` elsewhere | `selector?: string`, `filter?: interactive\|full`, `max_chars?: number`, `tab_id: number`, `timeout_ms?: number` |
+| `screenshot` | Capture a PNG screenshot of a tab (returns image content) | `tab_id: number`, `timeout_ms?: number` |
 | `pageinfo` | Get title, URL, and active status of a specific tab | `tab_id: number`, `timeout_ms?: number` |
 | `wait_element` | Wait for an element to appear | `selector: string`, `tab_id: number`, `timeout_ms?: number` |
 | `wait_navigation` | Wait for page navigation to complete | `tab_id: number`, `timeout_ms?: number` |

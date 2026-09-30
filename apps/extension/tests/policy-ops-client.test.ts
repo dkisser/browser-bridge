@@ -9,10 +9,11 @@ import { requestPolicyOp } from '../src/ui/policy-ops';
 // real error handling here was executed by no test.
 //
 // The two failure branches matter most. "The worker answered with an error" is
-// the ordinary path, and it is what makes the side panel revert an optimistic
-// UI change. "The worker never answered" is the path that shipped as a
-// silent hang: a handler that forgot to call sendResponse leaves the port open
-// until Chrome tears it down, which is minutes, not seconds.
+// the ordinary path, and it is the one the panel now trusts: it shows the
+// message and leaves the switch where the engine left it. "The worker never
+// answered" is the path that shipped as a silent hang: a handler that forgot
+// to call sendResponse leaves the port open until Chrome tears it down, which
+// is minutes, not seconds.
 
 let sendMessage: (message: unknown) => Promise<unknown> | undefined;
 let sent: unknown[] = [];

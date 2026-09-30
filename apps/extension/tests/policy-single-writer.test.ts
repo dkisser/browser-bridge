@@ -200,16 +200,56 @@ describe('only the service worker writes policy state', () => {
     // path, because that call is what puts it in the service worker's
     // serialization queue.
     //
-    // The branch is delimited by the next `if (request.type ===` rather than
-    // a fixed character count: this file's comments run long, and a window
-    // that happens to cover the calls today silently stops covering them the
-    // first time someone inserts a paragraph of explanation.
-    const start = background.indexOf("request.type === 'policy_op'");
+    // The opening anchor includes the `if` and the brace, not just the test
+    // expression. A sender guard in front of the handler also names
+    // `request.type === 'policy_op'` — in a boolean expression, without the
+    // brace — and anchoring on the bare substring found *that* one, so the
+    // window was the guard's few lines and the guard went red for a change
+    // that had not broken anything it claims.
+    //
+    // The window ends where the branch's own braces close, matched by
+    // counting. It used to end at the next `if (request.type ===`, which is
+    // wrong twice over: that anchor sits *after* this branch, so the window
+    // ran on past the closing brace and could be satisfied by a later
+    // handler; and when no such anchor followed, `indexOf` returned -1 and
+    // `slice(start, -1)` handed back the rest of the file — where
+    // `updatePolicyState` appears in the `chrome.tabs.onRemoved` listener. A
+    // guard that quietly stops guarding is worse than no guard, because
+    // renaming every later branch was enough to make it vacuous.
+    //
+    // Counting braces is not exact — a brace inside a string or comment
+    // throws it off. That fails in the safe direction: a count that lands
+    // early makes these assertions red, and one that runs long still stops at
+    // a `}` it did not open, so the window stays inside the file rather than
+    // escaping to the end.
+    const start = background.indexOf("if (request.type === 'policy_op') {");
     expect(start).toBeGreaterThan(-1);
-    const branch = background.slice(
-      start,
-      background.indexOf('request.type ===', start + 1),
-    );
+    let depth = 0;
+    let end = -1;
+    for (let i = start; i < background.length; i += 1) {
+      if (background[i] === '{') depth += 1;
+      else if (background[i] === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          end = i;
+          break;
+        }
+      }
+    }
+    expect(end).toBeGreaterThan(start);
+    // Comments are stripped so an explanatory note naming the two calls
+    // cannot satisfy the assertions on its own. Verified: the calls moved
+    // out of the branch and the branch given a comment that names both —
+    // green before this line, red after it. The `//` is not taken for a
+    // comment start when it is part of `://`, the same trap the
+    // localhost sweep in offscreen-endpoint.test.ts documents.
+    const branch = background
+      .slice(start, end + 1)
+      .split('\n')
+      .map((line) =>
+        line.replace(/\/\*.*?\*\//g, '').replace(/(^|[^:])\/\/.*$/, '$1'),
+      )
+      .join('\n');
     expect(branch).toContain('updatePolicyState');
     expect(branch).toContain('applyPolicyOp');
   });

@@ -2,6 +2,15 @@
 // mirroring the wiring in src/index.ts. The hidden `bridge serve` subcommand
 // parses the BRIDGE_* environment into a Config (ConfigFromEnv); the e2e
 // spike test drives Run directly.
+//
+// About the bare `src/...` paths in the port-lineage comments throughout this
+// tree: they are the deleted TypeScript control plane, which lived at
+// apps/bridge-core/src/ (and, for the CLI half, apps/cli/src/) before ADR-0012
+// replaced it with this module. Nothing resolves those paths on this branch —
+// grep finds nothing, which is the part that wastes a reader's time. The TS
+// source is still in the `main` worktree, so `git worktree add ../main-ref
+// main` is the next step when a comment points at a `src/` file and you need
+// to know what it did.
 package app
 
 import (
@@ -122,13 +131,30 @@ func Run(ctx context.Context, cfg Config) error {
 	})
 
 	// Start order matches index.ts: browser, inbound, MCP.
+	//
+	// A failure part-way through has to unwind what already started. The
+	// servers before the failing one are bound and accepting, and a caller
+	// that handles this error instead of exiting is left with listeners it
+	// has no handle to — `bridge serve` surfaces the failure and the process
+	// can outlive it. Each Shutdown is a no-op for a server that never
+	// started, so the unwind can be written once for all three.
+	shutdownOne := func(name string, fn func(context.Context) error) {
+		sctx, scancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer scancel()
+		if err := fn(sctx); err != nil {
+			logger.Printf("%s shutdown: %v", name, err)
+		}
+	}
 	if err := browser.Start(ctx); err != nil {
 		return err
 	}
 	if err := in.Start(ctx); err != nil {
+		shutdownOne("browser", browser.Shutdown)
 		return err
 	}
 	if err := mcpSrv.Start(ctx); err != nil {
+		shutdownOne("inbound", in.Shutdown)
+		shutdownOne("browser", browser.Shutdown)
 		return err
 	}
 
@@ -143,13 +169,6 @@ func Run(ctx context.Context, cfg Config) error {
 	// MCP shutdown race the deadline. The browserserver and mcpserver each
 	// do their own http.Server.Shutdown, which already takes a 5s timeout,
 	// so the budget is the natural one for each.
-	shutdownOne := func(name string, fn func(context.Context) error) {
-		sctx, scancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer scancel()
-		if err := fn(sctx); err != nil {
-			logger.Printf("%s shutdown: %v", name, err)
-		}
-	}
 	shutdownOne("inbound", in.Shutdown)
 	shutdownOne("browser", browser.Shutdown)
 	// Wait for the MCP server's watcher goroutine to finish closing the

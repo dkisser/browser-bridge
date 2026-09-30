@@ -62,7 +62,7 @@ export interface ResponsePayload {
   // send a command to a content script and the underlying chrome.tabs API
   // rejected for one of the reasons above. `error` / `message` carry the
   // human-readable text; MCP tools should branch on `reason` for recovery
-  // hints (see `withRecoveryHint` in apps/websocket/src/mcp/command-client.ts).
+  // hints (see `withRecoveryHint` in the Go control plane, internal/http).
   reason?: ContentScriptUnavailableReason;
 }
 

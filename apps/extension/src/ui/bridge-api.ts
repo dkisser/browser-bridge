@@ -1,7 +1,9 @@
-import { LOCAL_WS_PORT } from '@browser-bridge/shared';
+import { LOCAL_HOST, LOCAL_WS_PORT } from '@browser-bridge/shared';
 import { requestPolicyOp } from './policy-ops';
 
-export const API_BASE = `http://localhost:${LOCAL_WS_PORT}`;
+// The settings tab displays this same address, so both read the one
+// declaration in shared/constants rather than each spelling it out.
+export const API_BASE = `http://${LOCAL_HOST}:${LOCAL_WS_PORT}`;
 
 export interface StatusResponse {
   success: boolean;

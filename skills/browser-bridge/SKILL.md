@@ -46,7 +46,7 @@ Every tab-scoped tool takes `tab_id: number` (MCP) / `--tab <id>` (CLI), plus an
 | `list_browsers` | `bridge browser:list` | call first |
 | `set_browser` | `--browser <id>` flag | pin one browser when several are online |
 | `tab_list` | `tab:list` | source of valid `tab_id`s; each entry reports `inAgentGroup` |
-| `tab_new(url?, active?, auto_close?)` | `tab:new [url]` | background by default; returns the new id; the tab joins the 'browser-bridge' tab group |
+| `tab_new(url?, active?)` | `tab:new [url]` | background by default; returns the new id; the tab joins the 'browser-bridge' tab group |
 | `tab_close` / `tab_switch` | `tab:close <id>` / `tab:switch <id>` | |
 
 ### Navigation
@@ -75,7 +75,7 @@ Every tab-scoped tool takes `tab_id: number` (MCP) / `--tab <id>` (CLI), plus an
 | `snapshot(selector?, filter?, max_chars?)` | `snapshot [--selector <sel>] [--filter <interactive\|full>] [--max-chars <n>]` |
 | `get_text(selector)` | `gettext <selector>` |
 | `get_html(selector)` | `gethtml <selector>` |
-| `screenshot(fullPage?)` | `screenshot` |
+| `screenshot` | `screenshot` |
 | `pageinfo` | `pageinfo` |
 
 `@eN` refs from a snapshot work as `selector` in both interfaces.

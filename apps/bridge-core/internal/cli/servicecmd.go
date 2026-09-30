@@ -31,7 +31,8 @@ func newServiceCommand(g *globals) *cobra.Command {
 		Use:   "service",
 		Short: "Manage bridge services (up, down, status, enable, ...)",
 		// Runnable with arbitrary args so an unknown subcommand reaches RunE
-		// and produces the bash BB-E306 instead of cobra's suggestion text.
+		// and produces BB-E306, the code the bash router used to emit, instead
+		// of cobra's suggestion text.
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
@@ -212,7 +213,7 @@ func newAutostartCommand(g *globals) *cobra.Command {
 }
 
 // movedVerbs are the pre-service-namespace top-level lifecycle commands.
-// The bash router rejected them with BB-E305; the Go CLI does the same.
+// The bash router rejected them with BB-E305; so does the Go CLI.
 var movedVerbs = []string{"up", "down", "restart", "status", "logs", "update", "doctor", "uninstall", "version"}
 
 // registerMovedVerbs adds the BB-E305 stubs for top-level lifecycle verbs.

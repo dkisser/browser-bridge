@@ -169,8 +169,9 @@ func intParam(name string) func(_ *globals, args []string) (map[string]any, erro
 // selectorHint is the shared selector guidance from the TS CLI.
 const selectorHint = "The selector must exist on the page — run snapshot first if unsure."
 
-// browserCommands mirrors the straightforward command registrations in
-// apps/cli/src/index.ts; snapshot and the wait:* pair take extra flags and
+// browserCommands mirrors the straightforward command registrations that
+// were in apps/cli/src/index.ts (deleted with the TS CLI); snapshot and the
+// wait:* pair take extra flags and
 // are built separately. goBack/goForward keep their camelCase wire names,
 // with kebab-case as the CLI name and the TS name as an alias.
 var browserCommands = []browserCommand{

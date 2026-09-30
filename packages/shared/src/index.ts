@@ -5,6 +5,7 @@ export {
   blocklistHit,
 } from './blocklist';
 export {
+  LOCAL_HOST,
   LOCAL_WS_PORT,
   MAX_READ_RESULT_CHARS,
   SENSITIVE_FIELD_RECHECK_ERROR,
@@ -29,6 +30,7 @@ export {
   humanDenialMessage,
   isReadOnlyCommand,
   originOf,
+  takeoverDenied,
 } from './policy';
 export type {
   SnapshotFilter,

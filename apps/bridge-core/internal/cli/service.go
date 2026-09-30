@@ -206,7 +206,9 @@ func (e *Env) spawnCore() (*spawnedCore, error) {
 }
 
 // errChildExitedBeforeBind marks the waitForBind outcome "the child died
-// before binding" so the supervisor can pick the bash BB-E011 wording.
+// before binding" so the supervisor can pick the BB-E011 wording. The
+// wording is the one the bash router used before it was deleted; the Go
+// binary emits it now.
 var errChildExitedBeforeBind = errors.New("child exited before binding")
 
 // waitForBind polls the control-plane port until the daemon has bound it

@@ -14,6 +14,7 @@ import {
   originOf,
   type PolicyContext,
   SENSITIVE_FIELD_RECHECK_ERROR,
+  takeoverDenied,
 } from '@browser-bridge/shared';
 import { addTabToAgentGroup, queryAgentGroupIds } from './agent-group';
 import {
@@ -37,11 +38,13 @@ import {
 const dispatchToContentScript = (
   tabId: number,
   message: Record<string, unknown>,
+  beforeSend?: () => void | Promise<void>,
 ): Promise<unknown> =>
   dispatchToContentScriptRaw(
     globalThis.chrome as unknown as ChromeLike,
     tabId,
     message,
+    beforeSend,
   );
 
 const OFFSCREEN_DOCUMENT_URL = 'offscreen.html';
@@ -228,6 +231,42 @@ function waitForTabComplete(
         // Tab lookup failed; rely on the event listener and timeout.
       });
   });
+}
+
+// assertTakeoverUnchanged re-reads policy state and refuses to proceed if
+// Takeover was engaged after applyPolicyGate allowed the command.
+//
+// The verdict comes from the shared policy core's takeoverDenied rather than
+// from reading `state.takeover` here, so this cannot drift from the rule the
+// gate applied. See the call site for why only the DOM commands need it.
+//
+// Exported for its own test. Nothing observable happens between the gate's
+// decision and the read below — no event, no await — so a test cannot drive
+// this function through handleCommand and then prove *this* was the denial
+// rather than the gate's, which throws the same error with the same reason.
+// Testing it directly is the only way to pin what it does, and leaving the
+// integration test to imply otherwise is how it came to be over-claimed.
+export async function assertTakeoverUnchanged(
+  command: CommandType,
+  origin: string | null,
+): Promise<void> {
+  const { decision } = await decideWithState(
+    (fresh) =>
+      takeoverDenied(command, fresh.takeover, { origin }) ?? { allow: true },
+  );
+  if (decision.allow || !decision.denial) return;
+
+  // Withdrawn silently, and that is deliberate rather than an oversight.
+  // takeoverDenied only ever produces human_assist_active, and recordDenial
+  // drops exactly that reason — so recording it here would be a call that
+  // cannot write anything, and refreshing the badge after it would recompute
+  // a count that did not move. This comment previously claimed the user would
+  // see the denial in the badge and the Approvals panel, which the very rule
+  // that makes the re-check possible makes false: a takeover refusal is the
+  // user's own kill switch firing, not a request for a decision. What they do
+  // get is the standing Takeover indicator in the side panel, and the agent
+  // still gets the full denial text.
+  throw new PolicyDeniedError(decision.denial);
 }
 
 // Policy enforcement point (ADR-0006..0009): every command is evaluated
@@ -500,6 +539,62 @@ export async function handleCommand(
     case 'gethtml':
     case 'snapshot':
     case 'wait:element': {
+      // Takeover re-check at the execution point.
+      //
+      // The gate above read `takeover` inside the write queue, and a
+      // takeover flip is applied in that same queue, so a command that was
+      // still queued when the user hit the switch does see it. What the
+      // gate cannot cover is the stretch between its decision and the DOM
+      // actually changing — and that stretch is not short. Before the
+      // message goes out, sendToContentScript calls ensureContentScript,
+      // which on a cold tab does a tabs.get, a ping, an executeScript, and
+      // a listener wait of up to two seconds. A user reaching for the kill
+      // switch during that is looking at a page that clicks itself
+      // afterwards.
+      //
+      // So the check is passed down as `beforeSend` and runs *inside*
+      // dispatchToContentScript, between ensureContentScript and
+      // tabs.sendMessage. It used to run here, before that whole block —
+      // which meant it covered a window that had already closed by the time
+      // the command was delivered. The comment above used to claim
+      // otherwise; the test that now keys on the injection boundary is what
+      // makes the difference observable.
+      //
+      // This is the only command group that needs it, and saying so
+      // matters more than the check itself. Every other branch's remaining
+      // window is far narrower than this one: `screenshot` does await
+      // `chrome.tabs.get` before capturing, and that is an IPC round trip to
+      // the browser process which a busy or wedged browser can delay
+      // arbitrarily — it is not the non-blocking read an earlier version of
+      // this comment called it. What keeps it out of scope is that the window
+      // is short and its payoff is bounded: `captureVisibleTab` only ever
+      // photographs the window's currently active tab, so the worst case is a
+      // screenshot of a different tab than the one that was approved, not a
+      // mutation the user did not authorize. That is a narrower exposure than
+      // an agent clicking a page they just took back, and paying for it with
+      // a second queue round trip on every screenshot is the worse trade. The
+      // commands that genuinely do wait for a long time, navigate and
+      // wait:navigation, spend it *after* their effect has already happened,
+      // where no re-check could undo anything. wait:element rides along only
+      // because it shares this dispatch path; its own wait happens in the
+      // page, after this check has already run.
+      //
+      // What this cannot do: recall a mutation that already reached the
+      // page. It closes the window, it does not make the control absolute.
+      //
+      // And a command withdrawn here has still spent its grant. The gate
+      // consumed and persisted any single-use capability inside the write
+      // queue, before this point, so a `type` that the re-check then refuses
+      // burns a one-shot sensitive-field approval without ever reaching the
+      // page. Refunding it is not available: the consumption is what makes it
+      // un-double-spendable, and putting the grant back after an await would
+      // resurrect one a concurrent command is entitled to believe is gone.
+      // Spending early fails closed — the user re-approves, nothing the
+      // agent did not authorize ever happened — which is the right direction
+      // for a control whose job is to be inconvenient under pressure. The
+      // cost is that "one-shot" means one *attempt*, not one execution, and
+      // the test below pins that so it stays a decision.
+      //
       // A sensitive-field grant consumed at the gate authorizes this one type
       // command; the content script re-verifies the field at execution time.
       const forwarded =
@@ -510,9 +605,8 @@ export async function handleCommand(
             }
           : payload;
       try {
-        return (await sendToContentScript(
-          tabId,
-          forwarded,
+        return (await sendToContentScript(tabId, forwarded, () =>
+          assertTakeoverUnchanged(command, origin),
         )) as CommandResultMap[typeof command];
       } catch (err) {
         // Execution-point recheck: the field became sensitive between the
@@ -546,11 +640,16 @@ export async function handleCommand(
 async function sendToContentScript(
   tabId: number | undefined,
   payload: Record<string, unknown>,
+  beforeSend?: () => void | Promise<void>,
 ): Promise<unknown> {
   if (typeof tabId !== 'number') {
     throw new Error('Missing required tabId');
   }
-  return await dispatchToContentScript(tabId, { type: 'command', payload });
+  return await dispatchToContentScript(
+    tabId,
+    { type: 'command', payload },
+    beforeSend,
+  );
 }
 
 // Policy preflight for `type`: asks the content script to classify the
@@ -570,7 +669,47 @@ async function preflightSelector(
 }
 
 // Message handler: receives commands from offscreen doc, side panel, and content scripts
-chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
+// isOwnExtensionContext reports whether a message came from one of this
+// extension's own pages rather than from a content script or another
+// extension.
+//
+// The check exists for the two messages below, which are the most privileged
+// things this service worker accepts: `policy_op` can switch Takeover off and
+// mint a `sensitive-field` or `submit` grant, and `ws_command` reaches
+// handleCommand. Neither is reachable by a web page today — the manifest
+// declares no `externally_connectable` and there is no onMessageExternal and
+// no window.postMessage bridge — so this is defence in depth rather than a
+// fix for a live hole. That is the point: the day any of those three is added
+// for an unrelated reason, "a page can release the user's kill switch and
+// grant itself a password-field capability" should already be closed.
+//
+// `sender.id` alone is not enough. A content script's sender carries this
+// extension's own id, so it passes that test; what separates a content script
+// from a panel is `sender.url`, which for a content script is the page's URL
+// rather than a chrome-extension:// one.
+function isOwnExtensionContext(sender: chrome.runtime.MessageSender): boolean {
+  if (sender.id !== chrome.runtime.id) return false;
+  const url = sender.url;
+  if (typeof url !== 'string') return false;
+  return url.startsWith(`chrome-extension://${chrome.runtime.id}/`);
+}
+
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (
+    (request.type === 'policy_op' || request.type === 'ws_command') &&
+    !isOwnExtensionContext(sender)
+  ) {
+    // No detail in the reply: a page that can send this can read the reply,
+    // and telling it which check failed is a free oracle. The user is not
+    // the audience for a spoofed sender.
+    sendResponse({
+      status: 'error',
+      error: 'forbidden_sender',
+      message: 'Message rejected: not an extension context.',
+    });
+    return false;
+  }
+
   // Command from offscreen document (originating from Local Proxy)
   if (request.type === 'ws_command') {
     const envelope = request.envelope as CommandMessage;
@@ -588,7 +727,7 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
         }
         // ContentScriptUnavailableError carries a structured reason so MCP
         // tools can attach a recovery hint (see withRecoveryHint in the
-        // websocket command-client). Surface it alongside the message.
+        // control plane, internal/http). Surface it alongside the message.
         if (err instanceof ContentScriptUnavailableError) {
           sendResponse({
             status: 'error',
@@ -621,13 +760,15 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
       .then((state) => {
         // The badge is cosmetic and must never be able to fail the
         // operation's acknowledgement. updateBadge awaits a storage read and
-        // three chrome.action calls, all of which can reject — and the panel
-        // reverts its optimistic UI on an error response. If a badge failure
-        // could reach the caller that way, toggling Takeover off would leave
-        // the switch reading "human assist active" while storage said the
-        // agent had the browser: a fail-open on the one control that
-        // overrides all others. Refresh it, but never let it answer for the
-        // write.
+        // three chrome.action calls, all of which can reject. If a badge
+        // failure could reach the caller, an operation whose write had
+        // already landed would be reported as failed — and the panel does
+        // not render ahead of the write, so its switch would still be
+        // showing the old value while the engine enforced the new one. For
+        // Takeover that is "your kill switch did not move, try again" about a
+        // change that did take effect, which is the one way this control can
+        // make things worse than showing nothing at all. Refresh the badge,
+        // but never let it answer for the write.
         void updateBadge().catch((err: unknown) => {
           console.error(
             'browser-bridge: badge refresh failed after policy op',

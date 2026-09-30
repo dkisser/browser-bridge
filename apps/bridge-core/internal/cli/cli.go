@@ -18,13 +18,29 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
+
+	"browser-bridge/internal/app"
 )
 
 // Default flag values: the ports come from packages/shared/src/constants.ts
 // (WEBSOCKET_PORT / LOCAL_WS_PORT), the 10s timeout from the TS CLI.
+// defaultLocal targets the address the proxy actually binds, not the name
+// "localhost". Those differ: `localhost` can resolve to ::1 first on a
+// machine whose hosts file lists it there, and the proxy listens on IPv4
+// 127.0.0.1 exactly, so `bridge pair` would report the proxy unreachable and
+// print the very address the user just retried by hand. The extension's
+// three call sites were fixed for this and made it the shared
+// LOCAL_HOST constant; this is the CLI's copy of the same reasoning.
+//
+// defaultServer keeps `localhost` deliberately and is not part of that: it is
+// the WebSocket the CLI opens, and the loopback name is what the docs,
+// ADR-0011 and both READMEs tell users to type. It resolves through
+// net.Dial, which tries every candidate address rather than committing to the
+// first, so the ::1 case does not bite here the way it does for a
+// single-address HTTP POST.
 const (
 	defaultServer  = "ws://localhost:3001"
-	defaultLocal   = "http://localhost:3002"
+	defaultLocal   = "http://" + app.DefaultBrowserHost + ":3002"
 	defaultTimeout = 10000
 )
 

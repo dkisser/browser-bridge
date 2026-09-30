@@ -194,9 +194,8 @@ func (s *MCPServer) executeSnapshot(ctx context.Context, req *mcp.CallToolReques
 }
 
 type screenshotArgs struct {
-	FullPage  *bool `json:"fullPage,omitempty"`
-	TabID     int   `json:"tab_id"`
-	TimeoutMS *int  `json:"timeout_ms,omitempty"`
+	TabID     int  `json:"tab_id"`
+	TimeoutMS *int `json:"timeout_ms,omitempty"`
 }
 
 // dataURLPrefix captures the MIME subtype from the data URL head in
@@ -222,7 +221,7 @@ func (s *MCPServer) executeScreenshot(ctx context.Context, req *mcp.CallToolRequ
 	result, fail := s.dispatch(ctx, req, "screenshot", commandSpec{
 		name:   "screenshot",
 		tabID:  args.TabID,
-		params: screenshotParams{FullPage: args.FullPage, TabID: args.TabID},
+		params: screenshotParams{TabID: args.TabID},
 	}, args.TimeoutMS, "Screenshot failed")
 	if fail != nil {
 		return fail, nil, nil

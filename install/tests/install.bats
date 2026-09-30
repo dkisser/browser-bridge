@@ -550,6 +550,20 @@ SCRIPT
   [[ "$(cat "$BB_TEST_TMP/bb-home/version")" == "v9.9.10" ]]
   [[ "$(cat "$BB_TEST_TMP/bb-home/data/config.json")" == '{"browserId":"b-keepme99"}' ]]
   [[ "$(cat "$BB_TEST_TMP/bb-home/data/audit/sentinel.jsonl")" == '{"op":"navigate"}' ]]
+
+  # The exact contents, not just the survival of the two planted files. Every
+  # previous assertion here passed with an installer that wrote a third file
+  # into data/ alongside them — and "the installer never writes inside data/"
+  # is the half of ADR-0017's preservation contract that is easy to break
+  # silently, because a new marker file changes nothing a user would notice
+  # until the day it shadows a real data file. Verified: with
+  # `printf '{}' > "$BB_HOME/data/install-marker.json"` added to
+  # write_artifacts, every assertion above still passed and this one fails.
+  # `ls -A` is sorted, so the expectation is order-independent.
+  run bash -c "ls -A '$BB_TEST_TMP/bb-home/data'"
+  [ "$status" -eq 0 ]
+  [ "$output" = "audit
+config.json" ]
 }
 
 @test "install.sh enables auto-start by default on macOS" {
@@ -1564,3 +1578,111 @@ SCRIPT
   [[ -f "$BB_TEST_TMP/bb-home/version" ]]
 }
 
+
+# install/README.md's error-code table is the only lookup a user has for a code
+# they just received, and it is maintained by hand. It drifted: at the last
+# audit twelve codes the installer and binary could print had no row at all, so
+# a user hitting BB-E211 — a failure this very suite asserts — found nothing.
+# The reverse direction was already clean: no row described a code nothing
+# printed.
+#
+# This runs no code. It reads the sources for every BB-Exxx and compares that
+# set with the table, so a new code without a row fails the suite at the point
+# the row would have been forgotten, and a row nothing prints fails it too. A
+# doc-parsing test that runs the error paths would be a much worse thing to
+# maintain for the same guarantee.
+#
+# The stale direction is enforced on purpose, and it is why a code retired in
+# this release has to lose its row rather than keep it for users who read an
+# older README: this file documents what the installer you just ran can print.
+# A retired code belongs in the CHANGELOG, where "we stopped printing this" is
+# the useful fact, not in the lookup table, where it reads as "if you see this,
+# here is what to do".
+@test "the error-code table and the code emitters agree in both directions" {
+  # Resolve from the repo root explicitly and refuse to run if it is wrong.
+  # pathlib.rglob over a missing directory yields nothing and no error, so a
+  # bad root made the first run of this test report that *no* code is
+  # printed — a loud failure, but one that reads like the opposite problem.
+  run python3 - "$BATS_TEST_DIRNAME/../README.md" "$BATS_TEST_DIRNAME/../.." <<'PY'
+import re, pathlib, sys
+
+readme = pathlib.Path(sys.argv[1])
+root = pathlib.Path(sys.argv[2]).resolve()
+
+if not readme.is_file():
+    sys.exit('cannot read the table at ' + str(readme))
+
+# A code, and only a code. The trailing boundary is what stops `BB-E2110` from
+# being read as the documented `BB-E211` — without it a typo'd four-digit code
+# passes this suite while the table has no row for it.
+CODE = r'(?<![0-9A-Za-z-])BB-E\d{3}(?![0-9])'
+
+# The table rows, not the whole file and not even the whole section. Scoping
+# to the section was not enough: prose *inside* it still counted, so deleting
+# a row and replacing it with a sentence reading "also see BB-E211" passed.
+# A markdown table row is the only thing that documents a code, so a line that
+# does not start with `|` cannot vouch for one.
+text = readme.read_text()
+head = text.find('## Error Codes')
+if head == -1:
+    sys.exit('no "## Error Codes" section — the table this test reads is gone')
+end = text.find('\n## ', head + 1)
+section = text[head:] if end == -1 else text[head:end]
+rows = '\n'.join(
+    line for line in section.split('\n') if line.lstrip().startswith('|')
+)
+if not rows:
+    sys.exit('the Error Codes section has no table rows left to read')
+
+# Every tree a BB-Exxx can be printed from. apps/bridge-core/cmd and
+# .github/scripts were missing while the table claimed to cover the `bridge`
+# binary, so a code added to cmd/bridge/main.go passed this suite silently.
+ROOTS = (
+    'apps/bridge-core/cmd',
+    'apps/bridge-core/internal',
+    'install/install.sh',
+    '.github/scripts',
+    '.github/workflows',
+)
+for base in ROOTS:
+    if not (root / base).exists():
+        # This is a diagnostic, not a verdict: with the check gone, a wrong
+        # root also fails the suite, because `stale` then holds every
+        # documented code. What it buys is a failure that names the real
+        # cause. Without it the message is "the table lists 34 codes nothing
+        # prints", which points at the table — the one file that is fine.
+        sys.exit('scan root does not exist: ' + base)
+
+documented = set(re.findall(CODE, rows))
+emitted = set()
+for base in ROOTS:
+    path = root / base
+    files = path.rglob('*') if path.is_dir() else [path]
+    for f in files:
+        if not f.is_file():
+            continue
+        if f.suffix not in ('.go', '.sh', '.yml', '.yaml'):
+            continue
+        # Go's build system guarantees a _test.go file is test-only, so this
+        # is the boundary the compiler already draws and there is no build tag
+        # to consult. Test files assert codes; they do not print them. This
+        # suite's own install.bats needs no exclusion: it is .bats rather than
+        # one of the four suffixes, and it sits outside every root above.
+        if f.name.endswith('_test.go'):
+            continue
+        emitted |= set(re.findall(CODE, f.read_text(errors='ignore')))
+
+missing = sorted(emitted - documented)
+stale = sorted(documented - emitted)
+if missing:
+    print('codes the sources print but the table omits: ' + ' '.join(missing))
+if stale:
+    print('codes the table lists but nothing prints: ' + ' '.join(stale))
+sys.exit(1 if (missing or stale) else 0)
+PY
+
+  [ "$status" -eq 0 ] || {
+    echo "$output"
+    false
+  }
+}
