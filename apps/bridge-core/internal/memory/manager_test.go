@@ -26,7 +26,7 @@ func seedCard(t *testing.T, m *Manager, host string) *SiteCard { //nolint:unpara
 		Host:     host,
 		Revision: 1,
 		Map: []MapEntry{
-			{Purpose: "text container", Pred: Predicate{Role: "link", Name: "World"}, Ref: "e1", Browser: m.browserID},
+			{Purpose: "text container", Pred: Predicate{Role: "link", Name: "World"}, Browser: m.browserID},
 		},
 		Failures: []FailureEntry{
 			{Signature: "selector_not_found", Command: "gettext", Sel: ".entry-content", Count: 3},

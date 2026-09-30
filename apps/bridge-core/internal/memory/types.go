@@ -127,10 +127,18 @@ type LearnRun struct {
 // MapEntry is one row of the site map: "the thing that does X is this control".
 // Purpose is derived from what the agent actually did with it, never from what
 // the control appears to be — an entry exists because a call succeeded on it.
+// MapEntry is one line of a site map: a predicate, what the agent did with it,
+// and how well it has held up. There is deliberately no ref.
+//
+// ADR-0018 keeps a ref in the *trace*, where it is intrinsic — the digest is a
+// ref-keyed structure and resolving a predicate hands one back. A card is not a
+// trace: it is a long-lived claim about a site that is re-resolved against
+// whatever page the agent is looking at now, and a stored ref is the one value
+// in the file that cannot be. It used to be written "as evidence" and was read
+// by nothing, which is the worst of both — see ADR-0023.
 type MapEntry struct {
 	Purpose      string    `json:"purpose"`
 	Pred         Predicate `json:"pred"`
-	Ref          string    `json:"ref,omitempty"` // evidence: the ref it was observed at
 	Browser      string    `json:"browser,omitempty"`
 	ObservedAtMs int64     `json:"at"`
 	Uses         int       `json:"uses,omitempty"`

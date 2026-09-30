@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -160,8 +161,15 @@ func TestLearnerBuildsMapFromConfirmedCallsOnly(t *testing.T) {
 	if e.Purpose != "text container" || e.Pred.Role != "link" || e.Pred.Name != "World" {
 		t.Errorf("entry = %+v, want the link called World used as a text container", e)
 	}
-	if e.Ref != "e1" {
-		t.Errorf("entry ref = %q, want e1 (kept as evidence, not as a handle)", e.Ref)
+	// A card carries no handle (ADR-0023). The ref this entry was observed at
+	// lives in the trace, where it is intrinsic; copying it here made the one
+	// value in the file that could not be re-resolved, and it was read by
+	// nothing. Asserted on the serialised form as well as the struct, because a
+	// handle could come back through a custom marshaller just as easily.
+	if blob, err := json.Marshal(e); err != nil {
+		t.Fatal(err)
+	} else if bytes.Contains(blob, []byte(`"ref"`)) || bytes.Contains(blob, []byte("e1")) {
+		t.Errorf("a site-map entry carries a handle: %s", blob)
 	}
 }
 
@@ -446,7 +454,7 @@ func TestRenderCardTrimsProceduresFirst(t *testing.T) {
 
 func TestRenderCardUsesFreshRefs(t *testing.T) {
 	card := &SiteCard{Host: "example.com", Map: []MapEntry{
-		{Purpose: "text container", Pred: Predicate{Role: "link", Name: "World"}, Ref: "e1"},
+		{Purpose: "text container", Pred: Predicate{Role: "link", Name: "World"}},
 	}}
 	digest := digestOfText(t, testSnapshot)
 	out := RenderCard(card, RenderOptions{

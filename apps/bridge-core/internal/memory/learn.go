@@ -684,7 +684,6 @@ func mergeMap(card *SiteCard, seg *segment) bool {
 			card.Map = append(card.Map, MapEntry{
 				Purpose:      purposeOf(call.command),
 				Pred:         pred,
-				Ref:          call.ref,
 				Browser:      seg.browser,
 				ObservedAtMs: call.atMs,
 				Uses:         1,
