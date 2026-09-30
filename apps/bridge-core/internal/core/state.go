@@ -188,6 +188,14 @@ func (m *StateManager) BrowserID() string {
 	return m.config.BrowserID
 }
 
+// DataDir is the resolved $BB_HOME/data directory. Exported so the memory
+// store writes beside the config it extends instead of resolving $BB_HOME a
+// second time — two resolvers would eventually disagree, and this one owns the
+// legacy migration (ADR-0017).
+func (m *StateManager) DataDir() string {
+	return m.dir
+}
+
 func (m *StateManager) ExtensionTokenHash() string {
 	m.mu.Lock()
 	defer m.mu.Unlock()

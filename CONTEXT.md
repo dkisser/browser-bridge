@@ -79,7 +79,7 @@ _Avoid_: audit log, activity log
 ### Learned knowledge
 
 **Trace**:
-The append-only record of what the agent actually did in the browser, captured at the Control plane and reduced to structure: the commands issued, their outcome, and a structural digest of the page — never page text, never what the user typed. The raw material a Memory is derived from, and preserved after derivation. An Operational log answers "why is it misbehaving"; a Trace answers "what did the agent do, and did it work".
+The append-only record of what the agent actually did in the browser, captured at the Control plane and reduced to structure: the commands issued, their outcome, and a structural digest of the page — never page text, never what the user typed. The raw material a Memory is derived from, and preserved after derivation. An Operational log answers "why is it misbehaving"; a Trace answers "what did the agent do, and did it work". The Audit trail is a view over a Trace, not a separate record.
 _Avoid_: log, event log, session log, history
 
 **Memory**:

@@ -48,6 +48,11 @@ type MCPOptions struct {
 	DefaultTimeout time.Duration
 	Version        string
 	Logger         *log.Logger
+	// Memory is the optional self-learning collaborator (ADRs 0018-0019). The
+	// MCP server does not record anything itself — the router does that, so
+	// CLI traffic is covered too — but it is the adapter that renders the text
+	// an agent reads, so it is the adapter that appends the card.
+	Memory core.MemoryHook
 }
 
 // MCPServer is the Go port of src/mcp/server.ts. Where the TS server dials
@@ -63,6 +68,7 @@ type MCPServer struct {
 	defaultTimeout time.Duration
 	version        string
 	logger         *log.Logger
+	memory         core.MemoryHook
 
 	httpServer *nethttp.Server
 	tracker    *Tracker
@@ -86,6 +92,7 @@ func NewMCP(opts MCPOptions) *MCPServer {
 		defaultTimeout: opts.DefaultTimeout,
 		version:        semverVersion(opts.Version),
 		logger:         opts.Logger,
+		memory:         opts.Memory,
 	}
 }
 

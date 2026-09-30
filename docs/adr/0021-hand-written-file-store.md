@@ -12,10 +12,24 @@ the module, not an accident.
 
 **Decision:** no database, no embedded store, no third-party component. The
 store is a hand-written append-only stream plus one JSON file per host, read
-and written with `encoding/json` and `os`. The whole thing is roughly 200
-lines: an `O_APPEND` typed-write, a cursor-to-EOF read that skips a torn tail
-line, per-card read/merge/atomic-write, and a cursor file. Card writes reuse the
-atomic write-and-rename pattern already in `internal/core/state.go:165-183`.
+and written with `encoding/json` and `os`: an `O_APPEND` typed-write that closes
+off a torn line before adding to it, a cursor-to-EOF read that distinguishes a
+torn tail from a corrupt line, per-card read/merge/atomic-write, and a cursor
+file. Card writes reuse the atomic write-and-rename pattern already in
+`internal/core/state.go`.
+
+The "roughly 200 lines" this decision originally carried was an estimate made
+before writing it, and it was wrong by an order of magnitude: the package came
+out at ~2,800 lines excluding tests. What the estimate got right is the shape of
+the argument. Nothing here needs a query engine, and a hand-written store has no
+query engine to misuse later. What the estimate missed is that durability edges
+are where the lines go — torn-line recovery, cursor ordering, file permissions,
+the torn-tail-versus-corrupt-line distinction — and each of those is a few lines
+of code and a paragraph of comment explaining why it cannot be simplified.
+
+The cost that mattered did not show up in lines. The binary grows by ~245KB
+(17,749,778 → 17,994,546 bytes) and `go.mod` is unchanged, which is the number
+this decision was actually about.
 
 This amends ADR-0017's parenthetical; the rest of ADR-0017 — that persistent
 data lives under `$BB_HOME/data/` at mode 0700 and that upgrades and

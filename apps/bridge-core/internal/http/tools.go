@@ -71,9 +71,31 @@ func (s *MCPServer) dispatch(ctx context.Context, req *mcp.CallToolRequest, tool
 	}
 	result = withRecoveryHint(result)
 	if result.Status != "ok" {
+		// A failed call still got recorded by the router; there is no card to
+		// add to an error, and ADR-0003's recovery text already says what to do.
 		return core.ResponsePayload{}, toolError(toolName, commandErrorMessage(result, errFallback))
 	}
+	// Ask for the card *after* the call succeeded, so the hook's view of where
+	// the tab is (recorded on the result) is already up to date. The note rides
+	// on the payload in-process; the executors below decide whether to render it.
+	if s.memory != nil {
+		result.SiteNote = s.memory.TakeSiteNote(spec.name, spec.tabID)
+	}
 	return result, nil
+}
+
+// appendSiteNote puts the learned site card after a tool's own output. The card
+// is separated by a blank line and carries its own label so the agent can tell
+// "what this site looked like last time" from "what this call just said" — the
+// first may be out of date, the second cannot be.
+func appendSiteNote(text string, result core.ResponsePayload) string {
+	if result.SiteNote == "" {
+		return text
+	}
+	if text == "" {
+		return result.SiteNote
+	}
+	return text + "\n\n" + result.SiteNote
 }
 
 // runMessageTool is the shared shape of tools whose success output is
@@ -84,9 +106,9 @@ func (s *MCPServer) runMessageTool(ctx context.Context, req *mcp.CallToolRequest
 		return fail, nil, nil
 	}
 	if result.Message != "" {
-		return toolText(result.Message), nil, nil
+		return toolText(appendSiteNote(result.Message, result)), nil, nil
 	}
-	return toolText(okFallback), nil, nil
+	return toolText(appendSiteNote(okFallback, result)), nil, nil
 }
 
 // channelSender is the core.TextSender half of the in-process

@@ -534,11 +534,16 @@ SCRIPT
   [ "$status" -eq 0 ]
   [[ -d "$BB_TEST_TMP/bb-home/data" ]]
 
-  # Plant persistent data: the pairing config and a stand-in for a future
-  # audit-trail file.
-  mkdir -p "$BB_TEST_TMP/bb-home/data/audit"
+  # Plant persistent data: the pairing config, a stand-in for an audit-trail
+  # file, and the self-learning store's own files (ADR-0018-0021). The learned
+  # cards are the one thing here that cannot be reconstructed by a human, so
+  # losing them to an upgrade is a data-loss bug, not an inconvenience.
+  mkdir -p "$BB_TEST_TMP/bb-home/data/audit" "$BB_TEST_TMP/bb-home/data/cards"
   echo '{"browserId":"b-keepme99"}' > "$BB_TEST_TMP/bb-home/data/config.json"
   echo '{"op":"navigate"}' > "$BB_TEST_TMP/bb-home/data/audit/sentinel.jsonl"
+  echo '{"kind":"command","env":"n1","cmd":"navigate"}' > "$BB_TEST_TMP/bb-home/data/stream.jsonl"
+  echo '{"line":1}' > "$BB_TEST_TMP/bb-home/data/learner.cursor"
+  echo '{"host":"news.example.com","rev":3}' > "$BB_TEST_TMP/bb-home/data/cards/news.example.com.json"
 
   # Upgrade to v9.9.10.
   BB_HOME="$BB_TEST_TMP/bb-home" \
@@ -550,6 +555,9 @@ SCRIPT
   [[ "$(cat "$BB_TEST_TMP/bb-home/version")" == "v9.9.10" ]]
   [[ "$(cat "$BB_TEST_TMP/bb-home/data/config.json")" == '{"browserId":"b-keepme99"}' ]]
   [[ "$(cat "$BB_TEST_TMP/bb-home/data/audit/sentinel.jsonl")" == '{"op":"navigate"}' ]]
+  [[ "$(cat "$BB_TEST_TMP/bb-home/data/stream.jsonl")" == '{"kind":"command","env":"n1","cmd":"navigate"}' ]]
+  [[ "$(cat "$BB_TEST_TMP/bb-home/data/learner.cursor")" == '{"line":1}' ]]
+  [[ "$(cat "$BB_TEST_TMP/bb-home/data/cards/news.example.com.json")" == '{"host":"news.example.com","rev":3}' ]]
 }
 
 @test "install.sh enables auto-start by default on macOS" {

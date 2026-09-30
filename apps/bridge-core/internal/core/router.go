@@ -56,9 +56,27 @@ type Router struct {
 	// extension cannot pin a sender forever. HandleBrowserResponse stops
 	// the timer when the response lands.
 	inboundTimers map[string]*time.Timer
+	// pending mirrors inboundByID again, and holds what the *response* path
+	// needs to know about the command: which command it was and which tab it
+	// was aimed at. A response envelope carries the originating envelope's id
+	// and nothing else, so without this the only way to know whether a
+	// response was a snapshot or a get_text is to have kept the command
+	// somewhere — and the response path is where the Memory hook is told
+	// (ADR-0018 captures at the router, the one choke both Inbound adapters
+	// pass through).
+	pending map[string]pendingCall
+	// mem is the optional self-learning collaborator. Nil disables every
+	// memory feature; nothing below may assume it is set.
+	mem MemoryHook
 
 	// routeTTL is exposed for tests; production uses defaultRouteTTL.
 	routeTTL time.Duration
+}
+
+// pendingCall is the part of a command a response needs to be understood.
+type pendingCall struct {
+	command string
+	tabID   int
 }
 
 type RouterOption func(*Router)
@@ -66,6 +84,13 @@ type RouterOption func(*Router)
 // WithRouteTTL overrides defaultRouteTTL (tests).
 func WithRouteTTL(d time.Duration) RouterOption {
 	return func(r *Router) { r.routeTTL = d }
+}
+
+// WithMemoryHook attaches the self-learning store (ADRs 0018-0020). Without it
+// the router behaves exactly as it did before: memory is an opt-in capability
+// of a control plane that must keep working when nothing is learned.
+func WithMemoryHook(h MemoryHook) RouterOption {
+	return func(r *Router) { r.mem = h }
 }
 
 func NewRouter(st *StateManager, browser Browser, reg StatusRegistry, logger *log.Logger, opts ...RouterOption) *Router {
@@ -76,6 +101,7 @@ func NewRouter(st *StateManager, browser Browser, reg StatusRegistry, logger *lo
 		logger:        logger,
 		inboundByID:   make(map[string]TextSender),
 		inboundTimers: make(map[string]*time.Timer),
+		pending:       make(map[string]pendingCall),
 		routeTTL:      defaultRouteTTL,
 	}
 	for _, opt := range opts {
@@ -134,12 +160,21 @@ func (r *Router) HandleInboundCommand(envelope Envelope, sender TextSender, opts
 		opt(&o)
 	}
 
+	call := pendingCallFrom(envelope)
 	r.mu.Lock()
 	r.inboundByID[envelope.ID] = sender
+	r.pending[envelope.ID] = call
 	r.mu.Unlock()
 
+	// Recorded before any dispatch decision, so a command rejected by the
+	// router is still on the record: "the agent asked a browser that was
+	// offline" is a fact worth having (ADR-0018).
+	if r.mem != nil {
+		r.mem.RecordCommand(envelope.ID, call.command, call.tabID, commandParams(envelope))
+	}
+
 	if !r.state.CanAcceptCommand() {
-		r.sendError(sender, "browser_offline", "Browser is offline", envelope.ID, envelope.BrowserID)
+		r.sendError(sender, "browser_offline", "Browser is offline", envelope.ID, envelope.BrowserID, call)
 		r.removeInbound(envelope.ID)
 		return
 	}
@@ -182,11 +217,11 @@ func (r *Router) HandleInboundCommand(envelope Envelope, sender TextSender, opts
 		if target == nil {
 			return
 		}
-		r.sendError(target, "sw_timeout", "Service worker did not wake up", envelope.ID, envelope.BrowserID)
+		r.sendError(target, "sw_timeout", "Service worker did not wake up", envelope.ID, envelope.BrowserID, call)
 		r.removeInbound(envelope.ID)
 	})
 	if !buffered {
-		r.sendError(sender, "cannot_buffer", "Cannot buffer command", envelope.ID, envelope.BrowserID)
+		r.sendError(sender, "cannot_buffer", "Cannot buffer command", envelope.ID, envelope.BrowserID, call)
 		r.removeInbound(envelope.ID)
 	}
 }
@@ -195,9 +230,12 @@ func (r *Router) HandleInboundCommand(envelope Envelope, sender TextSender, opts
 // a response envelope; route it back to the originating inbound connection
 // by envelope id.
 func (r *Router) HandleBrowserResponse(envelope Envelope) {
-	target, ok := r.takeInbound(envelope.ID)
+	target, call, ok := r.takeInbound(envelope.ID)
 	if !ok {
 		return
+	}
+	if r.mem != nil {
+		r.recordResult(envelope, call)
 	}
 	text, err := Encode(envelope.Type, envelope.Payload, envelope.ID, envelope.BrowserID)
 	if err != nil {
@@ -205,6 +243,46 @@ func (r *Router) HandleBrowserResponse(envelope Envelope) {
 		return
 	}
 	target.Send(text)
+}
+
+// recordResult hands the memory hook the response payload. A payload that does
+// not parse is skipped rather than dropped: the hook must never be the reason a
+// response is not delivered.
+func (r *Router) recordResult(envelope Envelope, call pendingCall) {
+	var payload ResponsePayload
+	if len(envelope.Payload) > 0 {
+		if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+			r.logger.Printf("memory: decode response payload: %v", err)
+			return
+		}
+	}
+	r.mem.RecordResult(envelope.ID, call.command, call.tabID, payload)
+}
+
+// pendingCallFrom reads the command name and target tab out of a command
+// envelope's payload. The payload is `{command, tabId, params}` — the same
+// shape on both adapters (internal/http/command.go builds it, and the inbound
+// WebSocket relays what the CLI sent) — so one decoder serves both.
+func pendingCallFrom(envelope Envelope) pendingCall {
+	if len(envelope.Payload) == 0 {
+		return pendingCall{}
+	}
+	var payload CommandPayload
+	if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+		return pendingCall{}
+	}
+	return pendingCall{command: payload.Command, tabID: payload.TabID}
+}
+
+func commandParams(envelope Envelope) map[string]any {
+	if len(envelope.Payload) == 0 {
+		return nil
+	}
+	var payload CommandPayload
+	if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+		return nil
+	}
+	return payload.Params
 }
 
 // RemoveClient is the inbound-side disconnect hook: every route pointing at
@@ -218,6 +296,7 @@ func (r *Router) RemoveClient(sender TextSender) {
 	for id, s := range r.inboundByID {
 		if s == sender {
 			delete(r.inboundByID, id)
+			delete(r.pending, id)
 			if t, ok := r.inboundTimers[id]; ok {
 				t.Stop()
 				delete(r.inboundTimers, id)
@@ -294,27 +373,31 @@ func (r *Router) lookupInbound(id string) TextSender {
 }
 
 // takeInbound atomically reads + removes a route and cancels its TTL timer.
-// Returns the sender and ok=true on hit; ok=false when the id is unknown
-// (already cleaned up by the timer or by RemoveRoute).
-func (r *Router) takeInbound(id string) (TextSender, bool) {
+// Returns the sender, the command the route was created for, and ok=true on
+// hit; ok=false when the id is unknown (already cleaned up by the timer or by
+// RemoveRoute).
+func (r *Router) takeInbound(id string) (TextSender, pendingCall, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	s, ok := r.inboundByID[id]
 	if !ok {
-		return nil, false
+		return nil, pendingCall{}, false
 	}
+	call := r.pending[id]
 	delete(r.inboundByID, id)
+	delete(r.pending, id)
 	if t, timerOK := r.inboundTimers[id]; timerOK {
 		t.Stop()
 		delete(r.inboundTimers, id)
 	}
-	return s, true
+	return s, call, true
 }
 
 func (r *Router) removeInbound(id string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.inboundByID, id)
+	delete(r.pending, id)
 	if t, ok := r.inboundTimers[id]; ok {
 		t.Stop()
 		delete(r.inboundTimers, id)
@@ -365,7 +448,9 @@ func (r *Router) armRouteTimer(id string, sender TextSender, browserID string, r
 func (r *Router) fireRouteTimeout(id string, sender TextSender, browserID string) {
 	r.mu.Lock()
 	_, stillTracked := r.inboundByID[id]
+	call := r.pending[id]
 	delete(r.inboundByID, id)
+	delete(r.pending, id)
 	delete(r.inboundTimers, id)
 	r.mu.Unlock()
 	if !stillTracked {
@@ -373,23 +458,32 @@ func (r *Router) fireRouteTimeout(id string, sender TextSender, browserID string
 		// already cleaned this up.
 		return
 	}
-	r.sendError(sender, "sw_timeout", "Service worker did not respond in time", id, browserID)
+	r.sendError(sender, "sw_timeout", "Service worker did not respond in time", id, browserID, call)
 }
 
 // sendError renders and sends the TS encode('response', {status, error,
 // message}, {id, browserId}) shape. Field order (status, error, message)
 // matches the TS object literals.
-func (r *Router) sendError(sender TextSender, errCode, message, id, browserID string) {
-	payload, err := json.Marshal(ResponsePayload{
+//
+// A router-generated error is recorded like any other failure. The three codes
+// it produces — browser_offline, cannot_buffer, sw_timeout — are exactly the
+// cases where the agent asked for something the browser could not do, which is
+// the pattern a Site card exists to prevent (ADR-0018).
+func (r *Router) sendError(sender TextSender, errCode, message, id, browserID string, call pendingCall) {
+	payload := ResponsePayload{
 		Status:  "error",
 		Error:   errCode,
 		Message: message,
-	})
+	}
+	if r.mem != nil {
+		r.mem.RecordResult(id, call.command, call.tabID, payload)
+	}
+	raw, err := json.Marshal(payload)
 	if err != nil {
 		r.logger.Printf("encode error payload: %v", err)
 		return
 	}
-	text, err := Encode(TypeResponse, payload, id, browserID)
+	text, err := Encode(TypeResponse, raw, id, browserID)
 	if err != nil {
 		r.logger.Printf("encode error envelope: %v", err)
 		return
