@@ -73,8 +73,22 @@ Diagnostic output written by the control plane and its supervisors under `$BB_HO
 _Avoid_: log, debug log, diagnostics
 
 **Audit trail**:
-The durable record of what the agent did in the browser and when — the accountability counterpart to Approval and Takeover (planned, not yet implemented). Data, not an Operational log: preserved across upgrades, never rotated away, and read by the user rather than by developers.
+The durable record of what the agent did in the browser and when — the accountability counterpart to Approval and Takeover (planned, not yet implemented; the Trace is its raw material). Data, not an Operational log: preserved across upgrades, never rotated away, and read by the user rather than by developers.
 _Avoid_: audit log, activity log
+
+### Learned knowledge
+
+**Trace**:
+The append-only record of what the agent actually did in the browser, captured at the Control plane and reduced to structure: the commands issued, their outcome, and a structural digest of the page — never page text, never what the user typed. The raw material a Memory is derived from, and preserved after derivation. An Operational log answers "why is it misbehaving"; a Trace answers "what did the agent do, and did it work".
+_Avoid_: log, event log, session log, history
+
+**Memory**:
+Durable, derived knowledge the control plane carries between sessions about how to drive a given site, produced from what the agent actually did. Lives under `$BB_HOME/data/` on the same preservation contract as the Audit trail, and is a different kind of thing from it: the Audit trail records *what happened*, a Memory records *what the control plane now believes because of it*. Owned by Browser Bridge — the agent's own runtime memory store is a separate system and is not read.
+_Avoid_: self-learning, self-evolution, experience base, training data
+
+**Site card**:
+The Memory for one host: what its pages are laid out like, which calls work there, and which ones have been observed to fail. Injected back to the agent as a labelled reference when it lands on a host it has a card for, and rewritten when the host stops matching.
+_Avoid_: site profile, site model, recipe file, playbook
 
 ### Human surface
 
