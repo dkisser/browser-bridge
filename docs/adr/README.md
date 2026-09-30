@@ -12,7 +12,7 @@ point forward, so "this one has been amended" has nowhere to live inside the old
 file. This table is that place. `CONTEXT.md` is the other: it is mutable, and it
 records what is true *now*.
 
-## The self-learning run (0017–0025)
+## The self-learning run (0017–0026)
 
 The most recent decision chain, and the one with amendments. An ADR listed in the
 **Amends** column is not wrong — it was right about what it decided, and a later
@@ -29,6 +29,7 @@ ADR records what changed since. Read the chain, not just the newest file.
 | [0023](./0023-a-card-carries-no-handles.md) | A card carries predicates, never handles | 0018's ref-as-evidence, in the card's case; 0019 |
 | [0024](./0024-site-card-as-implemented.md) | The site card as built: two halves, in-process, MCP-only | 0019 |
 | [0025](./0025-what-the-baseline-taught.md) | What the baseline tightened: the record's boundary, and what a card is for | 0018, 0019 |
+| [0026](./0026-show-a-cards-refs-offline.md) | A card's refs may be shown offline, but only labelled as offline | 0024 |
 
 ## The rest
 

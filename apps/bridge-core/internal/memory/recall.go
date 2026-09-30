@@ -41,6 +41,16 @@ type RenderOptions struct {
 	// the same task, so repeating it on the snapshot is tokens spent saying the
 	// same thing twice.
 	OnlyMap bool
+	// PageNote names the page a Resolver resolved against. Empty means "the page
+	// in hand", which is true of every injection: the resolver is a digest the
+	// control plane just fetched, so the default header can claim it.
+	//
+	// The offline diagnostic passes the provenance of the snapshot it read out of
+	// the trace instead, and it has to. "Checked against this page" is a claim
+	// about the browser's state right now; a rendering produced from a file
+	// cannot make that claim, and the one reader who needs to be able to tell
+	// the two apart is a human deciding whether to trust the card (ADR-0026).
+	PageNote string
 }
 
 func defaultRenderOptions() RenderOptions {
@@ -113,7 +123,7 @@ func RenderCard(card *SiteCard, opts RenderOptions) string {
 			mapLines = append(mapLines, fmt.Sprintf("  - %s · %s → %s%s", e.Purpose, label, p.ref, seenNote(e)))
 		}
 		if len(mapLines) > 0 {
-			lines = append(lines, "Site map (checked against this page):")
+			lines = append(lines, "Site map ("+mapNote(opts)+"):")
 			lines = append(lines, mapLines...)
 		}
 	}
@@ -188,7 +198,15 @@ func finish(opts RenderOptions, host, body string, stale bool) string {
 	fmt.Fprintf(&b, "[%s] %s\n", InjectionLabel, host)
 	b.WriteString(body)
 	if stale {
-		fmt.Fprintf(&b, "\n  (some notes above no longer match this page — re-check with a snapshot)")
+		// The tense matters for the same reason the map header's does: a card
+		// rendered offline is reporting that its entries did not match *that*
+		// page, not that they stopped matching *this* one. The advice is the
+		// same either way, so only the claim needs rewording.
+		if opts.PageNote != "" {
+			fmt.Fprintf(&b, "\n  (some notes above did not match that page — take a fresh snapshot to re-check)")
+		} else {
+			fmt.Fprintf(&b, "\n  (some notes above no longer match this page — re-check with a snapshot)")
+		}
 	}
 	out := b.String()
 	if estimateTokens(out) > opts.MaxTokens+16 {
@@ -197,6 +215,16 @@ func finish(opts RenderOptions, host, body string, stale bool) string {
 		out = truncateLines(out, opts.MaxTokens+16)
 	}
 	return out
+}
+
+// mapNote is what the site map section claims it was checked against. It is the
+// one line in a card that makes a claim about the world outside the card, so it
+// is the one line that has to name its evidence rather than assume it.
+func mapNote(opts RenderOptions) string {
+	if opts.PageNote == "" {
+		return "checked against this page"
+	}
+	return "resolved against " + opts.PageNote
 }
 
 func joinLines(lines []string) string {

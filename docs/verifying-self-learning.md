@@ -33,16 +33,19 @@ surfaces below.
 
 | Surface | Proves | Does *not* prove |
 |---|---|---|
+| `memory show <host> --resolve` | which containers resolve, and to which refs, on the last page seen | that a card was handed over |
 | `memory show <host> --raw` | which containers were learned, ranked, and how often | that a card was handed over |
 | `memory show <host>` | the wording an agent is given | the site map (see below) |
 | `card_shown` records in the trace | that a card reached an agent | that the agent used it |
 | the tool result inside your MCP client | that it is in the model's context | — |
 
-`memory show` deliberately does **not** print the site map without a live page. A
+`memory show` without `--resolve` deliberately does **not** print the site map. A
 map whose refs were resolved against a page that is no longer there is a list of
-handles that address nothing, which is worse than no map. So from a terminal you
-can see *what was learned*, and only an MCP client can show you *what was handed
-over*.
+handles that addresses nothing, and the command has no page to resolve against.
+`--resolve` is the way to see it anyway: it reads the last page digest out of
+the trace, resolves against that, and says so in its header *and* in the map's
+own section title (ADR-0026). The refs it prints are real, and they are not valid
+for whatever is in your browser now.
 
 ## 1. Does it learn from a real page? (terminal only, ~5 minutes)
 
@@ -54,13 +57,15 @@ bridge --browser <id> --tab <tab> snapshot
 bridge --browser <id> --tab <tab> gettext "@e<some container>"
 
 bridge memory learn        # run the learner now instead of waiting for idle
-bridge memory show <host> --raw
+bridge memory show <host> --resolve
 ```
 
 **Pass:** the `map` holds several entries and they are ordered by `value`
 descending. The largest `value` is the container on that page most worth reading.
 The page has no notion of this — a folder sidebar, a toolbar and the main list
 all accept a read successfully, and only the content-bearing one is worth much.
+`--resolve` adds the refs those predicates land on, and the header names the page
+it resolved against.
 
 **Fail, and what it means:**
 
@@ -118,7 +123,19 @@ json.dump(c, open(p, "w"), indent=2)
 EOF
 ```
 
-Visit the site again from your MCP client and watch what the agent is given.
+Check the cheap half first, with no browser involved:
+
+```bash
+bridge memory show <host> --resolve
+```
+
+**Pass:** the count in the header drops by one, and the entry you broke is gone
+from the map rather than rendered with a ref. This is the same resolution the
+injection does, against the same stored digest — only the caller differs, which
+is why the diagnostic is trustworthy enough to lean on here.
+
+Then the half that needs a real agent. Visit the site again from your MCP client
+and watch what the agent is given.
 
 **Pass:** the broken entry *disappears* — its predicate no longer resolves — and
 if most of the card is gone the agent is told the notes no longer match, rather

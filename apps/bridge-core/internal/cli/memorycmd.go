@@ -112,16 +112,24 @@ func newMemoryListCommand(g *globals) *cobra.Command {
 }
 
 func newMemoryShowCommand() *cobra.Command {
-	var raw bool
+	var raw, resolve bool
 	cmd := &cobra.Command{
 		Use:   "show <host>",
 		Short: "Print a card, rendered exactly as an agent would receive it",
 		Long: "Print a card the way the control plane injects it — the same 400-token\n" +
 			"rendering, so what you read here is what the agent was told.\n\n" +
 			"With --raw, prints the stored JSON instead: useful when you intend to edit\n" +
-			"or delete entries, since the file is plain and diffable.",
+			"or delete entries, since the file is plain and diffable.\n\n" +
+			"With --resolve, additionally prints the site map with refs resolved against\n" +
+			"the last page the control plane recorded for this host, read out of the\n" +
+			"trace. That is a page from the past, not the one in your browser, and the\n" +
+			"output says so — it is how you see what the map resolves to without a live\n" +
+			"snapshot to check it against (ADR-0026).",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if raw && resolve {
+				return fmt.Errorf("--raw prints the stored card and --resolve adds a rendering of it; pick one")
+			}
 			store, err := openStore()
 			if err != nil {
 				return err
@@ -142,6 +150,9 @@ func newMemoryShowCommand() *cobra.Command {
 				fmt.Fprintln(cmd.OutOrStdout(), string(data))
 				return nil
 			}
+			if resolve {
+				return showResolved(cmd, host, card)
+			}
 			rendered := memory.RenderCard(card, memory.RenderOptions{MaxTokens: memory.DefaultInjectTokens})
 			if rendered == "" {
 				fmt.Fprintf(cmd.ErrOrStderr(), "card for %s is empty\n", host)
@@ -152,7 +163,99 @@ func newMemoryShowCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&raw, "raw", false, "Print the stored card JSON instead of the rendered view")
+	cmd.Flags().BoolVar(&resolve, "resolve", false, "Also resolve the site map against the last recorded page for this host")
 	return cmd
+}
+
+// showResolved renders a card with its site map resolved, and says where the
+// page came from.
+//
+// The honesty here is the whole point. The map's refs are only meaningful
+// against the page they were resolved from, and the page in the user's browser
+// is not that page (ADR-0024). A renderer that quietly printed them would look
+// exactly like the live injection and be wrong in the one case where a wrong ref
+// costs something. So the provenance is stated twice — in the header, and in
+// the map section's own title, which is why RenderOptions carries a PageNote
+// instead of this fixing up the string afterwards.
+func showResolved(cmd *cobra.Command, host string, card *memory.SiteCard) error {
+	out := cmd.OutOrStdout()
+
+	env, err := EnvFromOSEnv()
+	if err != nil {
+		return err
+	}
+	digest, atMs, err := lastPageFor(env.DataDir(), host)
+	if err != nil {
+		return err
+	}
+	if digest == nil {
+		// Not a failure of the store: there is a card, it just has nothing to
+		// resolve against. The readable halves still print, so this is a warning
+		// rather than an error — but it is ErrReported, because a script that
+		// asked to resolve and got an unresolved map has not been answered.
+		fmt.Fprintln(out, memory.RenderCard(card, memory.RenderOptions{MaxTokens: memory.DefaultInjectTokens}))
+		fmt.Fprintf(cmd.ErrOrStderr(),
+			"No page recorded for %s yet, so the site map cannot be resolved. Visit the site and run a\nsnapshot, then try again — the digest is kept in the trace, so nothing else is needed.\n", host)
+		return ErrReported
+	}
+
+	_, missing := memory.VerifyCard(card, digest, "")
+	note := "the page seen " + formatMs(atMs)
+	fmt.Fprintf(out, "Resolved offline against the last page the control plane recorded for %s.\n", host)
+	fmt.Fprintf(out, "  seen %s", formatMs(atMs))
+	if digest.URL != "" {
+		fmt.Fprintf(out, "  %s", digest.URL)
+	}
+	if len(card.Map) > 0 {
+		fmt.Fprintf(out, "\n  %d of %d map entries matched it; %d did not.\n", len(card.Map)-missing, len(card.Map), missing)
+	}
+	fmt.Fprintf(out, "  These refs are not valid for whatever is in your browser now.\n\n")
+
+	// Both halves, because that is what an agent receives across a landing and
+	// the snapshot after it — reassembled here from a stored digest instead of a
+	// live one. Same options the injection uses, plus the provenance note.
+	fmt.Fprintln(out, memory.RenderCard(card, memory.RenderOptions{
+		MaxTokens: memory.DefaultInjectTokens,
+		Resolver:  func(p memory.Predicate) (string, bool) { return digest.Resolve(p) },
+		PageNote:  note,
+	}))
+	return nil
+}
+
+// lastPageFor returns the most recent page digest recorded for a host, and when
+// it was seen. The digest rides on the trace record, so this works with the
+// service stopped — which is the property the whole memory command group is
+// built around.
+//
+// One read of the whole stream, not a scan back from the end: the file is
+// append-only and never rotated, so there is no tail to seek to, and a
+// diagnostic that only runs when a person is looking at a card does not need a
+// reader that streams.
+func lastPageFor(dir string, host string) (*memory.PageDigest, int64, error) {
+	stream, err := memory.OpenStream(dir)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer func() { _ = stream.Close() }()
+	recs, _, _, err := stream.ReadFrom(0)
+	if err != nil {
+		return nil, 0, err
+	}
+	var (
+		best  *memory.PageDigest
+		bestA int64
+	)
+	for _, r := range recs {
+		if r.Page == nil || r.Host != host {
+			continue
+		}
+		// >= so a later record wins ties, which is what "most recent" means when
+		// two snapshots land in the same millisecond.
+		if best == nil || r.AtMs >= bestA {
+			best, bestA = r.Page, r.AtMs
+		}
+	}
+	return best, bestA, nil
 }
 
 func newMemoryLearnCommand() *cobra.Command {

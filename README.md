@@ -261,10 +261,17 @@ A few things worth knowing before you rely on it:
 ```bash
 bridge memory list                    # every host with a card
 bridge memory show mail.example.com   # exactly what the agent is told
+bridge memory show mail.example.com --resolve  # ...and the site map, resolved
 bridge memory history mail.example.com # what changed, and why
 bridge memory learn                   # run the learner now instead of waiting for idle
 bridge memory rm mail.example.com     # forget a site
 ```
+
+`--resolve` exists because plain `show` cannot print the site map: the map's refs
+are only meaningful against the page they were resolved from, and a bare `show`
+has no page. `--resolve` reads the last one out of the trace, so it works with
+the service stopped — and it labels what it did. The refs it prints are real, and
+they are **not** valid for whatever is in your browser right now (ADR-0026).
 
 ### Is it actually worth anything?
 
