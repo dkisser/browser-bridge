@@ -122,10 +122,15 @@ const maxDigestNodes = 256
 // ParseSnapshot reduces snapshot text to a PageDigest. url comes from the
 // snapshot's own Page: line, since the extension puts it there rather than in
 // the result object. The title on that line is read and dropped.
+//
+// The URL is reduced to the part that identifies a site, for the same reason
+// redactArgs reduces a command's url argument: a query string is whatever the
+// site puts in one, and this digest is written to a card file that outlives the
+// visit.
 func ParseSnapshot(text string, res snapshotResult, url, _ string) *PageDigest {
 	nodes := parseSnapshotLines(text)
 	d := &PageDigest{
-		URL:       url,
+		URL:       safeURL(url),
 		Tier:      res.Tier,
 		Truncated: res.Truncated,
 		Emitted:   res.NodesEmitted,

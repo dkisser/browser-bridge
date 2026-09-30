@@ -616,3 +616,71 @@ func TestLearnerKeepsTheSelectorOnTheFailure(t *testing.T) {
 		t.Errorf("failures = %+v, want the guessed selector preserved", card.Failures)
 	}
 }
+
+// stepsOf used to zip two lists with different filters — the shape has one
+// entry per response, seg.calls only the successful ref-addressed ones — and
+// pair them by index. Any segment containing a failure diverged, and the result
+// was a card claiming a call that *errored* succeeded on a specific control.
+// This is the tier that is supposed to be the trustworthy one, so a false
+// positive here is worse than having no procedure tier.
+func TestProcedureStepsKeepTheirOwnRef(t *testing.T) {
+	digest := &PageDigest{Nodes: []NodeSig{
+		{Role: "link", Name: "A", Ref: "e1"},
+		{Role: "link", Name: "B", Ref: "e2"},
+		{Role: "link", Name: "C", Ref: "e3"},
+	}}
+	seg := &segment{digest: digest, shape: []shapeStep{
+		{command: "snapshot"},
+		// This one failed. It must contribute a step with no ref and no note.
+		{command: "gettext"},
+		{command: "gettext", ref: "e2", found: true},
+		{command: "gettext", ref: "e3", found: true},
+	}}
+	// A call that was ref-addressed but which this digest does not know: the ref
+	// is kept (it was aimed at something) but nothing claims the page confirmed it.
+	seg.shape = append(seg.shape, shapeStep{command: "click", ref: "e99"})
+
+	steps := stepsOf(seg)
+	want := []Step{
+		{Command: "snapshot"},
+		{Command: "gettext"},
+		{Command: "gettext", On: "@e2", Note: "text container"},
+		{Command: "gettext", On: "@e3", Note: "text container"},
+		{Command: "click", On: "@e99"},
+	}
+	if len(steps) != len(want) {
+		t.Fatalf("got %d steps, want %d: %+v", len(steps), len(want), steps)
+	}
+	for i := range want {
+		if steps[i] != want[i] {
+			t.Errorf("step %d = %+v, want %+v", i, steps[i], want[i])
+		}
+	}
+	// The failure is the load-bearing case: a step with a note means the card is
+	// telling the agent "this worked here", on a call that returned an error.
+	for i, s := range steps {
+		if i == 1 && s.Note != "" {
+			t.Errorf("the failed call was recorded as %q, a successful read", s.Note)
+		}
+	}
+}
+
+func TestProcedureStepsIgnoreParallelCallList(t *testing.T) {
+	// seg.calls is now only used for the site map. Populating it differently
+	// from the shape must not be able to move a ref, because that is precisely
+	// the coupling that produced the mis-attribution.
+	seg := &segment{
+		digest: &PageDigest{Nodes: []NodeSig{{Role: "link", Name: "A", Ref: "e1"}}},
+		shape: []shapeStep{
+			{command: "gettext", ref: "e1", found: true},
+			{command: "click", ref: "e1", found: true},
+		},
+		calls: []observedCall{
+			{command: "gettext", ref: "e7", found: true},
+		},
+	}
+	steps := stepsOf(seg)
+	if steps[0].On != "@e1" || steps[1].On != "@e1" {
+		t.Errorf("steps took their refs from seg.calls: %+v", steps)
+	}
+}

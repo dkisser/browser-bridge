@@ -48,6 +48,7 @@
 - 🔒 **Local session, local control** — reuse your logged-in browser; no cloud browser or cookie sync needed.
 - 🔗 **MCP server** — Streamable HTTP MCP server exposes browser tools to Claude Desktop, Cursor, and other MCP clients.
 - 🎯 **Token-efficient reads** — observe-first snapshots, targeted container reads, and hard output caps keep page noise out of your agent's context window.
+- 🧠 **Learns how each site works** — the control plane keeps a per-host *site card* built from what your agent actually did, and hands it back the next time the agent lands there: which container holds the content, which calls have already failed on that site, and which sequences have worked. No extra tool call, no new tool — it rides along on the result you were going to get anyway. See [Self-learning](#-self-learning).
 
 ---
 
@@ -180,6 +181,10 @@ bridge --browser <browser-id> --tab <tab-id> type "input#search" "browser bridge
 bridge --browser <browser-id> --tab <tab-id> gettext "h1"
 bridge --browser <browser-id> --tab <tab-id> snapshot
 bridge --browser <browser-id> --tab <tab-id> screenshot
+
+# Learned site cards
+bridge memory list
+bridge memory show <host>
 ```
 
 ### Example workflow
@@ -200,6 +205,93 @@ bridge --browser <browser-id> --tab 12345 wait:navigation
 ```
 
 See `bridge --help` for the full command list.
+
+---
+
+## 🧠 Self-learning
+
+Agents rediscover the same site over and over. The motivating failure here was
+real: an agent working Gmail burned dozens of round-trips guessing selectors
+that did not exist, and would have done it again on the next visit. This feature
+makes the second visit cheaper than the first.
+
+Everything happens in the control plane. When the agent lands on a host it has
+seen before, the result of that `navigate` carries a short labelled card:
+
+```
+[可参考的站点访问模式] mail.example.com
+Observed to fail here (do not repeat):
+  - element_not_found on gettext with "[data-message-subject=\"…\"]" (4x)
+```
+
+and the first `snapshot` after it carries the site map — which container on
+*this* page holds the content, with refs resolved against the page in hand:
+
+```
+Site map (checked against this page):
+  - text container · list [Inbox] → @e12 (6x)
+  - text container · toolbar [Mailbox actions] → @e7 (6x)
+```
+
+A few things worth knowing before you rely on it:
+
+- **It is advice, not a command.** A card never replaces the agent's own reading
+  of the page. A site that redesigns itself makes the card go stale, the agent
+  is told so, and it falls back to looking — a stale card costs calls, never
+  correctness.
+- **Nothing about your browsing is written down in the clear.** The record is
+  structural: commands, outcomes, and the page's shape (roles, truncated
+  labels, one attribute and a ref per node). No page text, no page title, no
+  typed input, and not a query string — a URL is kept down to scheme, host and
+  path, and a selector is kept down to its shape, so
+  `[data-message-subject="Standup notes"]` is recorded as
+  `[data-message-subject=…]`. That is a real trade and it is the right way round:
+  "a data-message-subject selector does not resolve here" is the lesson, and it
+  holds for the next message too, where the literal would not. The one number
+  added per read is how many characters came back, which is what lets the card
+  rank containers by whether they are worth reading.
+- **A card is only created from evidence.** A host with no observed failure and
+  no confirmed read gets no card, so wandering through twenty sites leaves
+  twenty no cards.
+- **Cards update themselves, and every revision is kept.** `bridge memory
+  history <host>` shows what changed and what evidence caused it.
+- **Opt out by deleting the card**, or the whole `data/` directory. Nothing is
+  ever uploaded; the store is plain files under `~/.browser-bridge/data/`.
+
+```bash
+bridge memory list                    # every host with a card
+bridge memory show mail.example.com   # exactly what the agent is told
+bridge memory history mail.example.com # what changed, and why
+bridge memory learn                   # run the learner now instead of waiting for idle
+bridge memory rm mail.example.com     # forget a site
+```
+
+### Is it actually worth anything?
+
+`bridge memory bench` measures that, in two halves that answer different
+questions.
+
+```bash
+# Deterministic: a synthetic page with the same difficulty as the real one,
+# driven through the real learner. Same numbers every run.
+bridge memory bench run
+
+# Live: you run a task in your agent, report one line back. Call and failure
+# counts are read out of the trace — not counted by hand.
+bridge memory bench record --host news.google.com \
+  --task "find todays top story" --ok --card used
+bridge memory bench report
+```
+
+The fixture run reports about two calls saved per task on a page with four
+plausible containers, plus one rejected call the failure list prevents. That is
+not a large number, and it is the honest one: the pseudo-tree already tells an
+agent how to find a *named control*, so what a card adds is knowing *which of a
+page's several readable containers is the one worth reading*. The smallest
+saving in the table is the control-finding task, deliberately — it is there to
+keep the claim from growing past what was measured. The decisions and the full
+reasoning are in [ADR-0018](docs/adr/0018-structural-trace.md) through
+[ADR-0022](docs/adr/0022-optional-model-call-for-compression.md).
 
 ---
 

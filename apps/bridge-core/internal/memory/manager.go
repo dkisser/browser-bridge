@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"browser-bridge/internal/core"
 )
@@ -202,12 +204,21 @@ func (m *Manager) RecordResult(envelopeID, command, host string, tabID int, p co
 		return
 	}
 
+	// Payload magnitude on every result, not only the ones past the soft limit:
+	// the threshold is the only consumer that matters, but a size that is
+	// recorded only when it trips a threshold is a size you cannot reason about
+	// after the fact.
+	rec.ResultSz = len(p.Data)
+	// Content size, for the reads whose result *is* content. This is the only
+	// number the site map ranks on, and it is deliberately a different field
+	// from ResultSz rather than a reinterpretation of it — see TraceRecord.
+	rec.ContentSz = contentSize(command, p.Data)
+
 	// Soft failure: a read that "succeeded" by returning most of a page is the
 	// ADR-0003 incident, and no-error-means-success would otherwise record it as
 	// a good procedure.
-	if n := resultSize(p.Data); n > SoftFailureThreshold {
+	if n := rec.ResultSz; n > SoftFailureThreshold {
 		rec.Outcome = OutcomeSoft
-		rec.ResultSz = n
 		rec.ErrCode = "oversized_result"
 		rec.ErrMsg = fmt.Sprintf("read returned %d chars, past the %d soft limit — whole page, not content", n, SoftFailureThreshold)
 	}
@@ -241,6 +252,13 @@ func (m *Manager) RecordResult(envelopeID, command, host string, tabID int, p co
 		m.mu.Lock()
 		ts := m.tabLocked(tab)
 		ts.sawLanding = true
+		// And it invalidates the page we were looking at. Without this, a
+		// cross-site navigation verifies the *new* host's card against the
+		// *previous* host's digest — which resolves nothing, trips the majority
+		// rule, and records a healthy card as stale. The agent is told to
+		// distrust a card that was fine, and a human reading the revision
+		// history sees a redesign that never happened.
+		ts.lastDigest = nil
 		m.armLocked(ts, host)
 		m.mu.Unlock()
 	}
@@ -313,14 +331,21 @@ func (m *Manager) TakeSiteNote(command, host string, tabID int) string {
 		// "missing > 0" would read as "stale" and a healthy one-entry card would
 		// be declared out of date on every visit.
 		if missing > 0 && missing*2 > len(card.Map) {
-			return RenderStaleNotice(host)
+			// Record the staleness *before* returning. This branch is the one
+			// every ordinary navigate → snapshot pair takes, so a card whose
+			// predicates stopped matching was reported to the agent and never
+			// reported to the learner: the agent was told to distrust it, the
+			// card was not marked for rebuilding, and the rebuild only happened
+			// later and by accident, from the traffic the distrust caused.
+			m.noteShown(card, digest, host)
+			return m.recordShown(host, tabID, RenderStaleNotice(host))
 		}
-		return RenderCard(card, RenderOptions{
+		return m.recordShown(host, tabID, RenderCard(card, RenderOptions{
 			MaxTokens: DefaultInjectTokens,
 			BrowserID: m.browserID,
 			OnlyMap:   true,
 			Resolver:  func(p Predicate) (string, bool) { return digest.Resolve(p) },
-		})
+		}))
 	}
 
 	opts := RenderOptions{
@@ -342,7 +367,47 @@ func (m *Manager) TakeSiteNote(command, host string, tabID int) string {
 		return ""
 	}
 	m.noteShown(card, digest, host)
+	return m.recordShown(host, tabID, out)
+}
+
+// recordShown notes that a card actually reached an agent, and returns the text
+// unchanged so the caller can return it directly.
+//
+// The write is best-effort and never blocks the response. This runs on the path
+// that produces the text an agent is waiting for, and the one thing that must
+// not happen is a card costing a command — including a command to learn that
+// recording the card failed.
+func (m *Manager) recordShown(host string, tabID int, out string) string {
+	if out == "" {
+		return out
+	}
+	rec := TraceRecord{
+		Kind:    KindCardShown,
+		AtMs:    nowMs(),
+		Host:    host,
+		TabID:   tabID,
+		Browser: m.browserID,
+		Entries: countCardLines(out),
+	}
+	if err := m.stream.Append(rec); err != nil {
+		m.logf("memory: record card shown %s: %v", host, err)
+	}
 	return out
+}
+
+// countCardLines counts the entries a rendered card carried. It reads the
+// rendered text rather than the card, because what matters is what the agent
+// was actually given: a card whose every entry failed to resolve renders as a
+// stale notice, and that is a card shown with nothing in it — which a
+// measurement must be able to tell apart from a card shown with content.
+func countCardLines(rendered string) int {
+	n := 0
+	for _, line := range strings.Split(rendered, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "- ") {
+			n++
+		}
+	}
+	return n
 }
 
 // noteShown marks the card as used. A card whose entries no longer match the
@@ -426,9 +491,44 @@ func digestOf(data json.RawMessage) *PageDigest {
 	return ParseSnapshot(res.Snapshot, res, url, title)
 }
 
-// resultSize is a cheap UTF-8 length of a JSON payload, used only as a
-// magnitude for the soft-failure threshold.
-func resultSize(data json.RawMessage) int { return len(data) }
+// contentSize measures the characters of content a read returned, and returns 0
+// for anything that is not a content read.
+//
+// Returning 0 rather than a payload length is the whole point. A single
+// magnitude cannot serve both questions the trace needs answered: "did this read
+// return too much to be content" (a payload question — ResultSz answers it) and
+// "is this container on the page worth reading" (a content question). Answering
+// the second with the first is not an approximation, it is a category error —
+// and it is loudest exactly where it hurts, because a screenshot is the one
+// result whose payload is orders of magnitude larger than the text it came from.
+//
+// The command is checked rather than the payload shape, so a future command that
+// returns content under a new key has to be added here deliberately rather than
+// starting to rank by accident.
+func contentSize(command string, data json.RawMessage) int {
+	field := ""
+	switch command {
+	case "gettext":
+		field = "text"
+	case "gethtml":
+		field = "html"
+	default:
+		return 0
+	}
+	var res map[string]json.RawMessage
+	if err := json.Unmarshal(data, &res); err != nil {
+		return 0
+	}
+	raw, ok := res[field]
+	if !ok {
+		return 0
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return 0
+	}
+	return utf8.RuneCountInString(s)
+}
 
 // splitPageLine reads the `Page: <title> | <url>` prefix the snapshot renderer
 // puts on the first line (SnapshotMeta in packages/shared/src/snapshot.ts).

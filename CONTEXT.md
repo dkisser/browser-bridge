@@ -87,8 +87,12 @@ Durable, derived knowledge the control plane carries between sessions about how 
 _Avoid_: self-learning, self-evolution, experience base, training data
 
 **Site card**:
-The Memory for one host: what its pages are laid out like, which calls work there, and which ones have been observed to fail. Injected back to the agent as a labelled reference when it lands on a host it has a card for, and rewritten when the host stops matching.
+The Memory for one host: what its pages are laid out like, which calls work there, and which ones have been observed to fail. Injected back to the agent as a labelled reference when it lands on a host it has a card for, and rewritten when the host stops matching. A card is *advice about where to look first*, never a replacement for looking: the agent keeps its own list of what to try, and the card's shortlist goes in front of it. A card that is stale must cost calls, not correctness.
 _Avoid_: site profile, site model, recipe file, playbook
+
+**Baseline**:
+The measurement of whether a Site card changes what an agent does — a delta between two runs that differ only in whether the card was read, averaged over repetitions so a trend can be read. Distinct from a test: a test asks whether the mechanism still works, a Baseline asks whether it is worth anything, and a mechanism can pass every test and be worth nothing. Two kinds, and the difference is the whole point: a *fixture* baseline drives a synthetic page through the real learner and is deterministic, so it measures the plumbing; a *live* baseline runs real tasks in a real agent, and the only things taken on trust are the ones the trace cannot know — whether the task succeeded, and whether the agent used the card.
+_Avoid_: benchmark, eval, score, metrics
 
 ### Human surface
 

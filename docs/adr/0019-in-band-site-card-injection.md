@@ -95,3 +95,47 @@ and perishable.
 - **A section header is never emitted without entries under it.** A card whose
   map entries all belong to a different browser profile renders nothing, not an
   empty "here is what I know" block that reads as though something was withheld.
+
+## What the baseline says about this
+
+`internal/memory/bench` measures the two injection points against each other on
+a page built to have the shape that made the original incident hard, with a
+scripted agent that follows ADR-0003's protocol and has no site knowledge. The
+two arms differ only in whether they read the note. Reproduce with
+`bridge memory bench run`; the numbers are the same every run.
+
+Two findings changed the design, and one bounded it.
+
+- **A card is advice, not a sandbox.** The first version of the harness let the
+  card *replace* the agent's own list of things to try, and it failed in the
+  one situation this feature exists to survive. The moment a site is redesigned
+  every container the card names stops resolving, the card comes back holding
+  the one entry whose name happened to survive, and an agent that trusted it as
+  the whole list read that entry, found nothing, and gave up — spending fewer
+  calls than before and *failing*, which is strictly worse than no card. The
+  card's shortlist is now prepended to the page's own containers. This is the
+  only reading consistent with the delivery mechanism: a labelled note appended
+  to a result the agent was going to get anyway is a hint, not a sandbox.
+- **"Was a card offered" is recorded, not assumed** (`KindCardShown`). A card
+  can be learned correctly, stored correctly, rendered correctly and still never
+  reach an agent, and a measurement that cannot tell those apart reports "the
+  card did not help" for what is really "the card was never offered". It is also
+  the one number the agent cannot report honestly about itself — an agent that
+  ignored the card will say it was never there — so the live benchmark reads it
+  out of the trace instead of asking.
+- **The site map helps locate content, not controls** (the "find the Snooze
+  control" row, which is in the table on purpose and is expected to show the
+  smallest delta). Finding a named control is something the Pseudo-tree already
+  answers: the toolbar is right there, with a role that says what it is. What
+  the tree cannot answer is *which of a page's several readable containers holds
+  the thing you are looking for*, because a read that succeeds on all of them
+  tells the tree nothing about which one mattered. That is the claim, and the
+  benchmark row for the control task is what keeps it from quietly growing.
+
+The saving is about two calls per task on a page with four plausible
+containers — the difference between reading three containers to find the answer
+and reading one. It is not a large number and should not be quoted as one. What
+the baseline establishes is that the mechanism works end to end, that the
+failure tier removes a specific rejected call an agent would otherwise repeat,
+and that a redesign costs some of the advantage and then gives it back, without
+ever costing correctness.

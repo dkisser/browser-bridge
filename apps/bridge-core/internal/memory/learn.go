@@ -66,8 +66,11 @@ type segment struct {
 	// failures are the failed calls, in order.
 	failures []failedCall
 
-	// shape is the canonical command sequence, used to recognise a repeat.
-	shape []string
+	// shape is the canonical call sequence, used to recognise a repeat. Each
+	// entry carries the ref the call addressed, if any, so a procedure step and
+	// the observation behind it are the same record rather than two lists that
+	// have to be lined up afterwards.
+	shape []shapeStep
 
 	// envelope of the first command, as evidence on a written procedure.
 	firstEnvelope string
@@ -81,14 +84,35 @@ type observedCall struct {
 	ref     string
 	node    NodeSig
 	found   bool
-	atMs    int64
+	// value is how many characters of content came back. It is the site map's
+	// ranking signal and the only one, which is why it is 0 for anything that is
+	// not a content read rather than a payload length (see TraceRecord.ContentSz).
+	value int
+	atMs  int64
+}
+
+// failedCall is one rejected call. It deliberately carries no copy of the
+// browser's error message: that message is where a bare-text selector or an
+// attribute literal comes back verbatim (see safeSelector), nothing rendered it,
+// and a card file outlives the visit. The error *code* is the part that
+// generalises — "no such element" and "not allowed" are lessons, "no element
+// matches \"her lawyer's note\"" is a copy.
+// shapeStep is one call in a segment's shape: what was issued, and — when the
+// call addressed an element the page confirmed — what it addressed and whether
+// the snapshot knew that element. Ref and fact travel together for the same
+// reason a map entry's purpose does: a procedure step is a claim about a
+// specific control, and reconstructing which control afterwards is how the claim
+// ends up attached to the wrong one.
+type shapeStep struct {
+	command string
+	ref     string
+	found   bool
 }
 
 type failedCall struct {
 	command string
 	sig     string
 	sel     string
-	hint    string
 	browser string
 	atMs    int64
 }
@@ -321,7 +345,7 @@ func buildSegments(recs []TraceRecord, from int64) []*segment {
 				out = append(out, cur)
 			}
 			cur.endMs = r.AtMs
-			cur.shape = append(cur.shape, cmd.Command)
+			cur.shape = append(cur.shape, shapeStep{command: cmd.Command})
 			if r.Browser != "" {
 				cur.browser = r.Browser
 			}
@@ -394,7 +418,20 @@ func stringArg(args map[string]any, key string) string {
 // consumeSuccess folds a successful call into the segment: a snapshot replaces
 // the page the segment is reasoning about, an element-addressing call records
 // what it was aimed at.
+// consumeSuccess folds a successful call into the segment: a snapshot replaces
+// the page the segment is reasoning about, an element-addressing call records
+// what it was aimed at — on the shape entry for this very call, so the two can
+// never drift apart.
 func consumeSuccess(seg *segment, r TraceRecord, cmd TraceRecord) {
+	// The shape entry for this response was appended by the caller moments ago.
+	last := len(seg.shape) - 1
+	attachRef := func(ref string, found bool) {
+		if last < 0 {
+			return
+		}
+		seg.shape[last].ref = ref
+		seg.shape[last].found = found
+	}
 	switch cmd.Command {
 	case "snapshot":
 		seg.digest = r.Page
@@ -410,7 +447,7 @@ func consumeSuccess(seg *segment, r TraceRecord, cmd TraceRecord) {
 		return
 	}
 	ref := strings.TrimPrefix(sel, "@")
-	call := observedCall{command: cmd.Command, ref: ref, atMs: r.AtMs}
+	call := observedCall{command: cmd.Command, ref: ref, atMs: r.AtMs, value: r.ContentSz}
 	if seg.digest != nil {
 		for _, n := range seg.digest.Nodes {
 			if n.Ref == ref {
@@ -421,6 +458,7 @@ func consumeSuccess(seg *segment, r TraceRecord, cmd TraceRecord) {
 		}
 	}
 	seg.calls = append(seg.calls, call)
+	attachRef(call.ref, call.found)
 }
 
 func failureOf(r TraceRecord, cmd TraceRecord) failedCall {
@@ -434,8 +472,7 @@ func failureOf(r TraceRecord, cmd TraceRecord) failedCall {
 	return failedCall{
 		command: cmd.Command,
 		sig:     sig,
-		sel:     truncate(selectorOf(cmd.Args), 120),
-		hint:    truncate(r.ErrMsg, 200),
+		sel:     truncate(safeSelector(selectorOf(cmd.Args)), 120),
 		browser: r.Browser,
 		atMs:    r.AtMs,
 	}
@@ -464,10 +501,6 @@ func (l *Learn) applySegment(seg *segment) error {
 	if created {
 		card = &SiteCard{Host: seg.host, CreatedAtMs: nowMs()}
 	}
-	if card.Digest == nil && seg.digest != nil {
-		card.Digest = seg.digest
-	}
-
 	changed := mergeFailures(card, seg.failures)
 	if mergeMap(card, seg) {
 		changed = true
@@ -523,7 +556,13 @@ func reasonFor(created bool, seg *segment) string {
 	case created:
 		return "new"
 	case len(seg.failures) > 0:
-		return "stale"
+		// Not "stale". That word already means the other thing in this stream —
+		// noteShown's "the site map no longer matches the page" — and
+		// `bridge memory history` is the surface a human reads to decide whether
+		// an automatic update was right. One word meaning two things fills that
+		// history with false alarms, which is how a review surface stops being
+		// consulted.
+		return "after_failures"
 	default:
 		return "rebuilt"
 	}
@@ -566,7 +605,6 @@ func mergeFailures(card *SiteCard, failures []failedCall) bool {
 				Signature: f.sig,
 				Command:   f.command,
 				Sel:       f.sel,
-				Hint:      f.hint,
 				Count:     1,
 				Browser:   f.browser,
 				LastAtMs:  f.atMs,
@@ -580,9 +618,6 @@ func mergeFailures(card *SiteCard, failures []failedCall) bool {
 		// the failure tier is for.
 		card.Failures[found].Count++
 		card.Failures[found].LastAtMs = f.atMs
-		if f.hint != "" {
-			card.Failures[found].Hint = f.hint
-		}
 		changed = true
 	}
 	sort.SliceStable(card.Failures, func(i, j int) bool {
@@ -597,6 +632,20 @@ func mergeFailures(card *SiteCard, failures []failedCall) bool {
 // mergeMap folds the ref-addressed calls this segment made into the site map.
 // Only calls a snapshot confirmed become entries, so the map never contains a
 // guess — which is the whole point of the feature.
+//
+// The map is then ranked, and the cap is applied to the ranking rather than to
+// arrival order. Both exist for the same reason. Twenty-four entries in the
+// order they were first seen is a log; the agent reading it learns only that
+// this page has been poked at. Ranked by how much content each element actually
+// returned, it becomes the shortlist an agent wants: on a mail page that is the
+// message list first, and the folder sidebar and the toolbar — which also
+// "succeeded", and which is why a flat list was useless — far below it.
+//
+// The rank is content, then frequency, then recency. Content first because it
+// is the thing that distinguishes a container worth reading from one that merely
+// accepted a call; frequency because a container read on every visit is more
+// likely to be the site's main working surface; recency last because it is the
+// weakest of the three and is only there to break a genuine tie.
 func mergeMap(card *SiteCard, seg *segment) bool {
 	if seg.digest == nil {
 		return false
@@ -607,7 +656,20 @@ func mergeMap(card *SiteCard, seg *segment) bool {
 			continue
 		}
 		pred := PredicateFor(call.node)
-		if pred.Role == "" && pred.Name == "" {
+		// A node with neither a name nor an attribute cannot be pinned down.
+		// Resolve returns the *first* node whose role matches, so after a
+		// redesign a bare `button` predicate would land on whatever button now
+		// comes first, report itself valid, and hand the agent a ref to the
+		// wrong control with the card's own authority behind it. That is worse
+		// than the entry being absent: an absent entry makes the agent look,
+		// and a confidently wrong one makes it not.
+		//
+		// This costs the map every unnamed control, which on a real mail page
+		// is the per-row "mark read" button — the one control the incident was
+		// about. The loss is real and is recorded in ADR-0018's gaps rather
+		// than worked around with an ordinal, which would be a different
+		// fragile thing wearing the same clothes.
+		if pred.Name == "" && pred.AttrKey == "" {
 			continue
 		}
 		key := pred.String()
@@ -626,21 +688,50 @@ func mergeMap(card *SiteCard, seg *segment) bool {
 				Browser:      seg.browser,
 				ObservedAtMs: call.atMs,
 				Uses:         1,
+				Value:        call.value,
 			})
 			changed = true
 			continue
 		}
+		// A repeat still changes the card. Not marking it dirty here loses the
+		// update on any segment that also carried a failure, because
+		// mergeProcedure declines those — the same bug that silently dropped
+		// repeated failure counts, in the tier next door.
 		card.Map[found].Uses++
 		card.Map[found].ObservedAtMs = call.atMs
+		changed = true
+		// Keep the largest reading, not the latest. A container that returned
+		// the whole list once and a title bar the next time is the list, and
+		// taking the last value would rank it as a title bar.
+		if call.value > card.Map[found].Value {
+			card.Map[found].Value = call.value
+		}
 		if card.Map[found].Browser == "" {
 			card.Map[found].Browser = seg.browser
 		}
 	}
+	rankMap(card.Map)
 	if len(card.Map) > maxMapEntries {
 		card.Map = card.Map[:maxMapEntries]
 		changed = true
 	}
 	return changed
+}
+
+// rankMap orders the site map best-first. Stable, so entries of equal rank keep
+// the order they were first seen in and the card does not reshuffle itself
+// between passes.
+func rankMap(entries []MapEntry) {
+	sort.SliceStable(entries, func(i, j int) bool {
+		a, b := entries[i], entries[j]
+		if a.Value != b.Value {
+			return a.Value > b.Value
+		}
+		if a.Uses != b.Uses {
+			return a.Uses > b.Uses
+		}
+		return a.ObservedAtMs > b.ObservedAtMs
+	})
 }
 
 // PredicateFor turns an observed node into the predicate a later snapshot is
@@ -714,17 +805,27 @@ func sameSteps(a, b []Step) bool {
 	return true
 }
 
+// stepsOf renders the segment's shape as procedure steps.
+//
+// It reads the shape and nothing else. An earlier version zipped the shape —
+// one entry per *response* — against `seg.calls`, which holds only the
+// *successful, ref-addressed* ones, pairing them by index. The two lists have
+// different filters, so any segment containing a failure or a snapshot diverged
+// and every ref after the divergence point shifted: a six-call attempt came out
+// with its first ref dropped and its last one lost, and — worse, because this is
+// the tier that claims to be the trustworthy one — the one *failed* call in a
+// segment was recorded as a successful read on a control. A card that says "this
+// worked" about a call that errored is precisely the false positive
+// ProcedureCorroboration exists to hold back, arriving through the side door.
 func stepsOf(seg *segment) []Step {
 	steps := make([]Step, 0, len(seg.shape))
-	for i, cmd := range seg.shape {
-		step := Step{Command: cmd}
-		if i < len(seg.calls) && seg.calls[i].command == cmd {
-			if seg.calls[i].found {
-				step.On = "@" + seg.calls[i].ref
-				step.Note = purposeOf(cmd)
-			} else if seg.calls[i].ref != "" {
-				step.On = "@" + seg.calls[i].ref
-			}
+	for _, sh := range seg.shape {
+		step := Step{Command: sh.command}
+		if sh.ref != "" {
+			step.On = "@" + sh.ref
+		}
+		if sh.found {
+			step.Note = purposeOf(sh.command)
 		}
 		steps = append(steps, step)
 	}
@@ -735,6 +836,9 @@ func stepsOf(seg *segment) []Step {
 // call could phrase this better (ADR-0022), but it must never be the only way to
 // tell one procedure from another, so the name is a function of the shape.
 func goalOf(seg *segment) string {
-	parts := append([]string(nil), seg.shape...)
+	parts := make([]string, 0, len(seg.shape))
+	for _, sh := range seg.shape {
+		parts = append(parts, sh.command)
+	}
 	return "then " + strings.Join(parts, " → ")
 }

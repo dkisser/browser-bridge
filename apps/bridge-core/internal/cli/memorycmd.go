@@ -35,6 +35,7 @@ func newMemoryCommand(g *globals) *cobra.Command {
 		newMemoryLearnCommand(),
 		newMemoryHistoryCommand(),
 		newMemoryRemoveCommand(),
+		newMemoryBenchCommand(),
 	)
 	return cmd
 }
