@@ -49,22 +49,29 @@ type Manager struct {
 }
 
 type inflightCmd struct {
-	host string
 	args map[string]any
 }
 
+// tabState is what the store keeps per tab, and it is deliberately almost
+// nothing. Where the tab *is* belongs to the control plane, which is told and
+// passes the host in; this is only the store's own artifacts — the digest of the
+// last snapshot, and whether it has already handed out a card for the landing
+// that just happened.
 type tabState struct {
-	host string
-	// noteArmed is set when we know which host the tab is on and have a card
-	// for it, and the note has not been handed out yet. TakeSiteNote clears it,
-	// so the card is shown once per landing rather than on every command.
+	// noteArmed is set when a landing landed on a host the caller named, and the
+	// card for it has not been handed out yet. TakeSiteNote clears it, so the
+	// card is shown once per landing rather than on every command.
 	noteArmed bool
-	noteHost  string
 	// verifyOn is the host whose card should be *checked* against the next
 	// snapshot. This is what makes verification free: the snapshot was going to
 	// be fetched anyway.
 	verifyOn   string
 	lastDigest *PageDigest
+	// sawLanding records that a landing command was seen for this tab. A
+	// snapshot arms the card only while that is false: it covers the tab that
+	// was already open when the daemon started, and stops the arming from
+	// repeating on every snapshot for the rest of the session.
+	sawLanding bool
 }
 
 // Options configures a Manager.
@@ -128,26 +135,26 @@ func (m *Manager) Cursor() *Cursor { return m.cursor }
 // RecordCommand records the outbound half of a call. Called by the router for
 // every command from every adapter, so the learner sees CLI traffic as well as
 // MCP traffic.
-func (m *Manager) RecordCommand(envelopeID, command string, tabID int, args map[string]any) {
+func (m *Manager) RecordCommand(envelopeID, command, host string, tabID int, args map[string]any) {
 	if m == nil {
 		return
 	}
 	redacted := redactArgs(command, args)
 	rec := TraceRecord{
 		Kind:     KindCommand,
-		AtMs:     nowMs(),
 		Envelope: envelopeID,
 		Command:  command,
 		TabID:    tabID,
 		Browser:  m.browserID,
-		Host:     HostFromURL(stringArg(redacted, "url")),
+		Host:     host,
 		Args:     redacted,
+		AtMs:     nowMs(),
 	}
 	if err := m.stream.Append(rec); err != nil {
 		m.logf("memory: record command %s: %v", command, err)
 	}
 	m.mu.Lock()
-	m.inflight[envelopeID] = inflightCmd{host: rec.Host, args: redacted}
+	m.inflight[envelopeID] = inflightCmd{args: redacted}
 	m.mu.Unlock()
 	m.wake()
 }
@@ -156,7 +163,7 @@ func (m *Manager) RecordCommand(envelopeID, command string, tabID int, args map[
 // is. p may be an error payload the router synthesised rather than one the
 // extension sent; both are evidence, and a synthesized failure is often the
 // most instructive kind (the agent asked a browser that was not there).
-func (m *Manager) RecordResult(envelopeID, command string, tabID int, p core.ResponsePayload) {
+func (m *Manager) RecordResult(envelopeID, command, host string, tabID int, p core.ResponsePayload) {
 	if m == nil {
 		return
 	}
@@ -167,6 +174,7 @@ func (m *Manager) RecordResult(envelopeID, command string, tabID int, p core.Res
 		Command:  command,
 		TabID:    tabID,
 		Browser:  m.browserID,
+		Host:     host,
 		Outcome:  OutcomeOK,
 	}
 	if p.Error != "" || p.Status == "error" {
@@ -179,9 +187,7 @@ func (m *Manager) RecordResult(envelopeID, command string, tabID int, p core.Res
 	// them only `navigate` can ever teach the learner anything, because a
 	// click or a get_text names no site — so the commonest MCP flow (switch to
 	// an open tab, then work) would produce no card at all.
-	cmdHost, cmdArgs := m.takeInflight(envelopeID)
-	rec.Host = cmdHost
-	rec.Args = cmdArgs
+	rec.Args = m.takeInflight(envelopeID)
 
 	tab := tabKey(tabID)
 
@@ -212,37 +218,31 @@ func (m *Manager) RecordResult(envelopeID, command string, tabID int, p core.Res
 	// itself, not just on a field — and a race here would be a crash in the
 	// control plane, which is the one thing this feature must never be.
 	if command == "snapshot" {
-		digest := digestOf(p.Data)
-		if digest != nil {
+		if digest := digestOf(p.Data); digest != nil {
 			rec.Page = digest
 			m.mu.Lock()
 			ts := m.tabLocked(tab)
 			ts.lastDigest = digest
-			// A snapshot can be the first thing that reveals where a tab is
-			// (a click navigated somewhere, or the tab was already open when
-			// the daemon started). If the host is new, that is a landing.
-			if host := HostFromURL(digest.URL); host != "" && host != ts.host {
-				ts.host = host
+			// A snapshot can be the first thing that reveals where a tab is: the
+			// tab was already open when the daemon started, or a click navigated
+			// without a landing command. Arm for that one case only. Arming on
+			// every snapshot would re-inject the card after every read, because
+			// verification clears verifyOn and there would be nothing left to
+			// compare against.
+			if host != "" && !ts.sawLanding {
 				m.armLocked(ts, host)
 			}
 			m.mu.Unlock()
 		}
-	} else if isLanding(command) {
-		if host := hostOfLanding(p.Data); host != "" {
-			m.mu.Lock()
-			ts := m.tabLocked(tab)
-			ts.host = host
-			// A landing command always re-arms, even for a host already shown
-			// on this tab: a fresh navigation is a fresh opportunity to be told
-			// what we last learned about the place.
-			m.armLocked(ts, host)
-			m.mu.Unlock()
-			// Stamp the resolved host onto the record. A tab:switch names no URL
-			// in its arguments — the url is only in the response body — so
-			// without this the learner has nothing to go on and the commonest
-			// MCP flow (switch to an open tab, then work in it) teaches nothing.
-			rec.Host = host
-		}
+	} else if isLanding(command) && host != "" {
+		// A landing always re-arms, even for a host already shown on this tab:
+		// a fresh navigation is a fresh opportunity to be told what we last
+		// learned about the place.
+		m.mu.Lock()
+		ts := m.tabLocked(tab)
+		ts.sawLanding = true
+		m.armLocked(ts, host)
+		m.mu.Unlock()
 	}
 
 	if err := m.stream.Append(rec); err != nil {
@@ -262,11 +262,14 @@ func (m *Manager) RecordResult(envelopeID, command string, tabID int, p core.Res
 //   - A landing shows the card once, unverified — there is no page yet.
 //   - The next snapshot verifies it, and stays quiet unless the card has gone
 //     stale. That check is free: the snapshot was going to be fetched anyway.
-func (m *Manager) TakeSiteNote(command string, tabID int) string {
+func (m *Manager) TakeSiteNote(command, host string, tabID int) string {
 	if m == nil {
 		return ""
 	}
 	if command != "snapshot" && !isLanding(command) {
+		return ""
+	}
+	if host == "" {
 		return ""
 	}
 	m.mu.Lock()
@@ -275,7 +278,7 @@ func (m *Manager) TakeSiteNote(command string, tabID int) string {
 		m.mu.Unlock()
 		return ""
 	}
-	armed, host, verifyOn, digest := ts.noteArmed, ts.noteHost, ts.verifyOn, ts.lastDigest
+	armed, verifyOn, digest := ts.noteArmed, ts.verifyOn, ts.lastDigest
 	switch {
 	case armed:
 		ts.noteArmed = false
@@ -290,32 +293,48 @@ func (m *Manager) TakeSiteNote(command string, tabID int) string {
 		ts.verifyOn = ""
 	}
 	m.mu.Unlock()
-
-	if host == "" {
-		return ""
-	}
 	card, ok := m.store.Get(host)
 	if !ok {
 		return ""
 	}
 
 	if !armed {
-		// Verification pass. VerifyCard resolved every predicate against the
-		// snapshot in hand, so a card that still matches costs the agent
-		// nothing at all.
+		// The landing already carried the failures and the working sequences.
+		// What it could not carry is a usable handle, because no page had been
+		// read yet. This is the call where one can be produced for free, so the
+		// map is handed back here with refs from the page in hand.
 		_, missing := VerifyCard(card, digest, m.browserID)
-		if digest == nil || missing == 0 || len(card.Map) == 0 || missing < len(card.Map)/2 {
+		if digest == nil || len(card.Map) == 0 {
 			return ""
 		}
-		return RenderStaleNotice(host)
+		// A card is treated as stale when its entries are *mostly* gone. The
+		// comparison is written as missing*2 > len rather than missing > len/2:
+		// with a single entry, integer division makes len/2 zero, so
+		// "missing > 0" would read as "stale" and a healthy one-entry card would
+		// be declared out of date on every visit.
+		if missing > 0 && missing*2 > len(card.Map) {
+			return RenderStaleNotice(host)
+		}
+		return RenderCard(card, RenderOptions{
+			MaxTokens: DefaultInjectTokens,
+			BrowserID: m.browserID,
+			OnlyMap:   true,
+			Resolver:  func(p Predicate) (string, bool) { return digest.Resolve(p) },
+		})
 	}
 
 	opts := RenderOptions{
 		MaxTokens:  DefaultInjectTokens,
 		BrowserID:  m.browserID,
 		Compressed: true,
+		OnlyMap:    command == "snapshot",
 	}
-	if digest != nil {
+	// Resolve only when this call read the page. A landing has nothing behind it,
+	// so its card is the failures and the working sequences; a snapshot is the
+	// one call where a ref from the page in hand is free, and that is when the
+	// map is produced — whether this snapshot armed the card (the tab was
+	// already open at startup) or merely verified it.
+	if digest != nil && command == "snapshot" {
 		opts.Resolver = func(p Predicate) (string, bool) { return digest.Resolve(p) }
 	}
 	out := RenderCard(card, opts)
@@ -338,8 +357,9 @@ func (m *Manager) noteShown(card *SiteCard, digest *PageDigest, verifiedHost str
 	if missing == 0 || len(card.Map) == 0 {
 		return
 	}
-	if missing < len(card.Map)/2 {
-		// Some entries drifted; that is normal churn, not a redesign.
+	// Same majority rule as the injection path, and for the same reason: a
+	// little churn is normal, a redesign is most of the card.
+	if missing*2 <= len(card.Map) {
 		return
 	}
 	rev := CardRevision{
@@ -357,16 +377,16 @@ func (m *Manager) noteShown(card *SiteCard, digest *PageDigest, verifiedHost str
 
 // tabLocked returns the tab's state, creating it on first sight. The caller
 // must hold m.mu — the map is written from every command goroutine.
-// takeInflight returns the host and args recorded for a command, and forgets it.
-func (m *Manager) takeInflight(envelopeID string) (string, map[string]any) {
+// takeInflight returns the args recorded for a command, and forgets them.
+func (m *Manager) takeInflight(envelopeID string) map[string]any {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	in, ok := m.inflight[envelopeID]
 	if !ok {
-		return "", nil
+		return nil
 	}
 	delete(m.inflight, envelopeID)
-	return in.host, in.args
+	return in.args
 }
 
 func (m *Manager) tabLocked(tabID int) *tabState {
@@ -378,18 +398,16 @@ func (m *Manager) tabLocked(tabID int) *tabState {
 	return ts
 }
 
-// armLocked decides whether a host has a card worth showing and schedules the
-// verification for the next snapshot. The caller must hold m.mu.
-// armLocked schedules the card for this host. The caller must hold m.mu.
+// armLocked schedules this tab's card for the named host and asks the next
+// snapshot to verify it. The caller must hold m.mu.
 //
-// The existence check deliberately does NOT consult the store here: that is a
-// file read (and a JSON parse of the card) on every landing, taken while
-// holding the lock that every other command's tab state needs. Arming is
-// unconditional and the real lookup happens in TakeSiteNote, which runs off the
-// lock; a host with no card arms and then yields "".
+// The existence check deliberately does NOT consult the store here: that would
+// be a file read and a JSON parse on every landing, taken while holding the lock
+// that every other command's tab state needs. Arming is unconditional and the
+// real lookup happens in TakeSiteNote, off the lock; a host with no card arms
+// and then yields "".
 func (m *Manager) armLocked(ts *tabState, host string) {
 	ts.noteArmed = true
-	ts.noteHost = host
 	ts.verifyOn = host
 }
 
@@ -406,33 +424,6 @@ func digestOf(data json.RawMessage) *PageDigest {
 	}
 	url, title := splitPageLine(res.Snapshot)
 	return ParseSnapshot(res.Snapshot, res, url, title)
-}
-
-// hostOfLanding pulls the host out of a landing command's result, which is
-// where the extension reports the URL it actually arrived at.
-func hostOfLanding(data json.RawMessage) string {
-	var out struct {
-		URL   string `json:"url"`
-		URLs  []any  `json:"urls"`
-		Items []struct {
-			URL string `json:"url"`
-		} `json:"items"`
-	}
-	if len(data) > 0 {
-		_ = json.Unmarshal(data, &out)
-	}
-	if out.URL != "" {
-		if h := HostFromURL(out.URL); h != "" {
-			return h
-		}
-	}
-	// tab:switch and tab:new answer with the tab they landed on.
-	for _, it := range out.Items {
-		if h := HostFromURL(it.URL); h != "" {
-			return h
-		}
-	}
-	return ""
 }
 
 // resultSize is a cheap UTF-8 length of a JSON payload, used only as a

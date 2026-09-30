@@ -56,6 +56,12 @@ type Router struct {
 	// extension cannot pin a sender forever. HandleBrowserResponse stops
 	// the timer when the response lands.
 	inboundTimers map[string]*time.Timer
+	// tabHost is where the control plane remembers which site each tab is on.
+	// The Router owns it because the Router is the only thing that sees every
+	// call: a landing command's result is the sole place the answer appears. It
+	// is not browser state the extension could be asked instead — the extension
+	// is the thing being driven.
+	tabHost map[int]string
 	// pending mirrors inboundByID again, and holds what the *response* path
 	// needs to know about the command: which command it was and which tab it
 	// was aimed at. A response envelope carries the originating envelope's id
@@ -102,6 +108,7 @@ func NewRouter(st *StateManager, browser Browser, reg StatusRegistry, logger *lo
 		inboundByID:   make(map[string]TextSender),
 		inboundTimers: make(map[string]*time.Timer),
 		pending:       make(map[string]pendingCall),
+		tabHost:       make(map[int]string),
 		routeTTL:      defaultRouteTTL,
 	}
 	for _, opt := range opts {
@@ -170,7 +177,7 @@ func (r *Router) HandleInboundCommand(envelope Envelope, sender TextSender, opts
 	// router is still on the record: "the agent asked a browser that was
 	// offline" is a fact worth having (ADR-0018).
 	if r.mem != nil {
-		r.mem.RecordCommand(envelope.ID, call.command, call.tabID, commandParams(envelope))
+		r.mem.RecordCommand(envelope.ID, call.command, r.HostForTab(call.tabID), call.tabID, commandParams(envelope))
 	}
 
 	if !r.state.CanAcceptCommand() {
@@ -256,7 +263,41 @@ func (r *Router) recordResult(envelope Envelope, call pendingCall) {
 			return
 		}
 	}
-	r.mem.RecordResult(envelope.ID, call.command, call.tabID, payload)
+	// A landing result is where a tab's site becomes known, so it is updated
+	// before the hook is told, and the hook is told the *new* host: an agent
+	// that just navigated is now on that site.
+	host := r.hostAfter(call, payload)
+	r.mem.RecordResult(envelope.ID, call.command, host, call.tabID, payload)
+}
+
+// hostAfter returns the host the given call leaves its tab on, updating the
+// Router's own view when the call was a landing that named a site.
+func (r *Router) hostAfter(call pendingCall, payload ResponsePayload) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	tab := call.tabID
+	if tab < 0 {
+		tab = 0
+	}
+	if IsLandingCommand(call.command) {
+		if h := LandingHost(payload); h != "" {
+			r.tabHost[tab] = h
+		}
+	}
+	return r.tabHost[tab]
+}
+
+// HostForTab reports the site a tab is currently known to be on, or "" if no
+// landing has named one. The MCP adapter asks this when it takes a site's card
+// to hand back, so that "where is this tab" has exactly one answer in the
+// process and it is not the learning store's to reconstruct.
+func (r *Router) HostForTab(tabID int) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if tabID < 0 {
+		tabID = 0
+	}
+	return r.tabHost[tabID]
 }
 
 // pendingCallFrom reads the command name and target tab out of a command
@@ -476,7 +517,17 @@ func (r *Router) sendError(sender TextSender, errCode, message, id, browserID st
 		Message: message,
 	}
 	if r.mem != nil {
-		r.mem.RecordResult(id, call.command, call.tabID, payload)
+		// A rejected call never moved the tab, so the host is the one it was
+		// already on — which is exactly the context worth recording alongside
+		// the failure.
+		r.mu.Lock()
+		tab := call.tabID
+		if tab < 0 {
+			tab = 0
+		}
+		host := r.tabHost[tab]
+		r.mu.Unlock()
+		r.mem.RecordResult(id, call.command, host, call.tabID, payload)
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {

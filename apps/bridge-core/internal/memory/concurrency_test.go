@@ -27,18 +27,18 @@ func TestConcurrentRecordingIsRaceFree(t *testing.T) {
 			host := fmt.Sprintf("host-%d.example.com", tab)
 			for i := 0; i < perTab; i++ {
 				env := fmt.Sprintf("t%d-c%d", tab, i)
-				m.RecordCommand(env, "navigate", tab, map[string]any{"url": "https://" + host + "/"})
-				m.RecordResult(env, "navigate", tab, core.ResponsePayload{
+				m.RecordCommand(env, "navigate", host, tab, map[string]any{"url": "https://" + host + "/"})
+				m.RecordResult(env, "navigate", host, tab, core.ResponsePayload{
 					Status: "ok",
 					Data:   json.RawMessage(`{"url":"https://` + host + `/","title":"T"}`),
 				})
 				sEnv := fmt.Sprintf("t%d-s%d", tab, i)
-				m.RecordCommand(sEnv, "snapshot", tab, nil)
-				m.RecordResult(sEnv, "snapshot", tab, okPayload(snapshotJSON(testSnapshot)))
+				m.RecordCommand(sEnv, "snapshot", host, tab, nil)
+				m.RecordResult(sEnv, "snapshot", host, tab, okPayload(snapshotJSON(testSnapshot)))
 				// Ask for the note on the same tab, concurrently with the
 				// other tabs' notes: this is the read side of the same state.
-				_ = m.TakeSiteNote("navigate", tab)
-				_ = m.TakeSiteNote("snapshot", tab)
+				_ = m.TakeSiteNote("navigate", host, tab)
+				_ = m.TakeSiteNote("snapshot", host, tab)
 			}
 		}(tab)
 	}
@@ -57,15 +57,15 @@ func TestTakeNoteRacesWithLanding(t *testing.T) {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			m.RecordCommand(env, "navigate", 1, map[string]any{"url": "https://news.example.com/"})
-			m.RecordResult(env, "navigate", 1, core.ResponsePayload{
+			m.RecordCommand(env, "navigate", "news.example.com", 1, map[string]any{"url": "https://news.example.com/"})
+			m.RecordResult(env, "navigate", "news.example.com", 1, core.ResponsePayload{
 				Status: "ok",
 				Data:   json.RawMessage(`{"url":"https://news.example.com/"}`),
 			})
 		}()
 		go func() {
 			defer wg.Done()
-			_ = m.TakeSiteNote("navigate", 1)
+			_ = m.TakeSiteNote("navigate", "news.example.com", 1)
 		}()
 	}
 	wg.Wait()
@@ -82,8 +82,8 @@ func TestLearnerRunsWhileRecordingContinues(t *testing.T) {
 		defer close(done)
 		for i := 0; i < 30; i++ {
 			env := fmt.Sprintf("e%d", i)
-			m.RecordCommand(env, "navigate", i%3, map[string]any{"url": "https://news.example.com/"})
-			m.RecordResult(env, "navigate", i%3, core.ResponsePayload{
+			m.RecordCommand(env, "navigate", "news.example.com", i%3, map[string]any{"url": "https://news.example.com/"})
+			m.RecordResult(env, "navigate", "news.example.com", i%3, core.ResponsePayload{
 				Status: "ok", Data: json.RawMessage(`{"url":"https://news.example.com/"}`),
 			})
 		}

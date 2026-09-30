@@ -17,13 +17,13 @@ type recordingHook struct {
 	results  []string
 }
 
-func (h *recordingHook) RecordCommand(envelopeID, command string, tabID int, args map[string]any) {
+func (h *recordingHook) RecordCommand(envelopeID, command, host string, tabID int, args map[string]any) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.commands = append(h.commands, command)
 }
 
-func (h *recordingHook) RecordResult(envelopeID, command string, tabID int, payload ResponsePayload) {
+func (h *recordingHook) RecordResult(envelopeID, command, host string, tabID int, payload ResponsePayload) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	outcome := payload.Status
@@ -33,7 +33,7 @@ func (h *recordingHook) RecordResult(envelopeID, command string, tabID int, payl
 	h.results = append(h.results, command+":"+outcome)
 }
 
-func (h *recordingHook) TakeSiteNote(command string, tabID int) string {
+func (h *recordingHook) TakeSiteNote(command, host string, tabID int) string {
 	return ""
 }
 

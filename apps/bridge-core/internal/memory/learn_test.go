@@ -365,12 +365,20 @@ func TestRenderCardRespectsBrowserScope(t *testing.T) {
 			{Purpose: "text container", Pred: Predicate{Role: "link", Name: "B"}, Browser: "b-2"},
 		},
 	}
-	out := RenderCard(card, RenderOptions{MaxTokens: DefaultInjectTokens, BrowserID: "b-1"})
-	if !strings.Contains(out, "A") {
-		t.Error("entry for the current browser missing")
+	digest := digestOfText(t, `Page: X | https://x.test/
+link [A] @e1
+link [B] @e2
+`)
+	out := RenderCard(card, RenderOptions{
+		MaxTokens: DefaultInjectTokens,
+		BrowserID: "b-1",
+		Resolver:  func(p Predicate) (string, bool) { return digest.Resolve(p) },
+	})
+	if !strings.Contains(out, "[A]") {
+		t.Errorf("entry for the current browser missing:\n%s", out)
 	}
-	if strings.Contains(out, "B") {
-		t.Error("an entry observed under a different browser profile was injected")
+	if strings.Contains(out, "[B]") {
+		t.Errorf("an entry observed under a different browser profile was injected:\n%s", out)
 	}
 }
 
@@ -418,8 +426,12 @@ func TestRenderCardTrimsProceduresFirst(t *testing.T) {
 		}},
 		Procedures: procs,
 	}
+	digest := digestOfText(t, testSnapshot)
 	const budget = 80
-	out := RenderCard(card, RenderOptions{MaxTokens: budget})
+	out := RenderCard(card, RenderOptions{
+		MaxTokens: budget,
+		Resolver:  func(p Predicate) (string, bool) { return digest.Resolve(p) },
+	})
 	if estimateTokens(out) > budget+16 {
 		t.Errorf("render is %d tokens, over the %d budget:\n%s", estimateTokens(out), budget, out)
 	}

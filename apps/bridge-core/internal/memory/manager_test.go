@@ -49,11 +49,15 @@ func okPayload(data string) core.ResponsePayload {
 	return core.ResponsePayload{Status: "ok", Data: json.RawMessage(data)}
 }
 
-// recordNavigate drives the hook exactly as the router does for a landing.
+// recordNavigate drives the hook exactly as the router does for a landing: the
+// router resolves the host from the landing result and tells the store.
 func recordNavigate(t *testing.T, m *Manager, env, url string, tab int) { //nolint:unparam // varied per test as coverage grows
 	t.Helper()
-	m.RecordCommand(env, "navigate", tab, map[string]any{"url": url})
-	m.RecordResult(env, "navigate", tab, okPayload(`{"url":"`+url+`","title":"Example News"}`))
+	host := Host(url)
+	m.RecordCommand(env, "navigate", host, tab, map[string]any{"url": url})
+	m.RecordResult(env, "navigate", host, tab, okPayload(`{"url":"`+url+`","title":"Example News"}`))
+	m.RecordCommand(env, "snapshot", host, tab, nil)
+	m.RecordResult(env, "snapshot", host, tab, okPayload(snapshotJSON(testSnapshot)))
 }
 
 func TestCardIsInjectedOnLanding(t *testing.T) {
@@ -62,7 +66,7 @@ func TestCardIsInjectedOnLanding(t *testing.T) {
 
 	recordNavigate(t, m, "e1", "https://news.example.com/top", 1)
 
-	note := m.TakeSiteNote("navigate", 1)
+	note := m.TakeSiteNote("navigate", "news.example.com", 1)
 	if note == "" {
 		t.Fatal("no card injected on landing for a host that has one")
 	}
@@ -82,12 +86,12 @@ func TestCardIsInjectedOncePerLanding(t *testing.T) {
 	seedCard(t, m, "news.example.com")
 	recordNavigate(t, m, "e1", "https://news.example.com/", 1)
 
-	if m.TakeSiteNote("navigate", 1) == "" {
+	if m.TakeSiteNote("navigate", "news.example.com", 1) == "" {
 		t.Fatal("first take returned nothing")
 	}
 	// A later command on the same landing must not repeat the card: the token
 	// cost is paid every time.
-	if note := m.TakeSiteNote("navigate", 1); note != "" {
+	if note := m.TakeSiteNote("navigate", "news.example.com", 1); note != "" {
 		t.Errorf("the card was injected twice for one landing:\n%s", note)
 	}
 }
@@ -99,25 +103,47 @@ func TestNoteIsNotSwallowedByAnInterveningCall(t *testing.T) {
 
 	// An agent that reaches for get_text without snapshotting first must not
 	// silently eat the card.
-	if note := m.TakeSiteNote("gettext", 1); note != "" {
+	if note := m.TakeSiteNote("gettext", "news.example.com", 1); note != "" {
 		t.Errorf("a non-landing command produced a card:\n%s", note)
 	}
-	if m.TakeSiteNote("navigate", 1) == "" {
+	if m.TakeSiteNote("navigate", "news.example.com", 1) == "" {
 		t.Error("the card was lost because an unrelated call asked first")
 	}
 }
 
-func TestSnapshotVerifiesTheCardAndStaysQuietWhenItStillMatches(t *testing.T) {
+// The two injection points carry different halves. The landing says what is
+// true of the site regardless of the page — the failures and the sequences that
+// worked. The first snapshot says where things are, because that is the one
+// call where a ref from the page in hand costs nothing. Both are small, neither
+// is repeated, and the second visit to an unchanged page says nothing at all.
+func TestLandingCarriesFailuresAndSnapshotCarriesTheMap(t *testing.T) {
 	m := newTestManager(t, "b-1")
 	seedCard(t, m, "news.example.com")
 	recordNavigate(t, m, "e1", "https://news.example.com/", 1)
-	m.TakeSiteNote("navigate", 1)
 
-	m.RecordCommand("e2", "snapshot", 1, nil)
-	m.RecordResult("e2", "snapshot", 1, okPayload(snapshotJSON(testSnapshot)))
+	landing := m.TakeSiteNote("navigate", "news.example.com", 1)
+	if landing == "" {
+		t.Fatal("the landing carried nothing")
+	}
+	if !strings.Contains(landing, "selector_not_found") {
+		t.Errorf("the landing omitted the failures:\n%s", landing)
+	}
+	if strings.Contains(landing, "Site map") || strings.Contains(landing, "@e") {
+		t.Errorf("the landing carried a map or a remembered ref, with no page behind it:\n%s", landing)
+	}
 
-	if note := m.TakeSiteNote("snapshot", 1); note != "" {
-		t.Errorf("a card that still matches produced a note; the check should be silent:\n%s", note)
+	m.RecordCommand("e2", "snapshot", "news.example.com", 1, nil)
+	m.RecordResult("e2", "snapshot", "news.example.com", 1, okPayload(snapshotJSON(testSnapshot)))
+	mapped := m.TakeSiteNote("snapshot", "news.example.com", 1)
+	if !strings.Contains(mapped, "Site map") || !strings.Contains(mapped, "@e1") {
+		t.Errorf("the first snapshot did not carry the map with a live ref:\n%s", mapped)
+	}
+
+	// Nothing changed, so there is nothing to add.
+	m.RecordCommand("e3", "snapshot", "news.example.com", 1, nil)
+	m.RecordResult("e3", "snapshot", "news.example.com", 1, okPayload(snapshotJSON(testSnapshot)))
+	if again := m.TakeSiteNote("snapshot", "news.example.com", 1); again != "" {
+		t.Errorf("an unchanged page was explained twice:\n%s", again)
 	}
 }
 
@@ -125,17 +151,17 @@ func TestSnapshotReportsAStaleCard(t *testing.T) {
 	m := newTestManager(t, "b-1")
 	seedCard(t, m, "news.example.com")
 	recordNavigate(t, m, "e1", "https://news.example.com/", 1)
-	m.TakeSiteNote("navigate", 1)
+	m.TakeSiteNote("navigate", "news.example.com", 1)
 
 	// The site was redesigned: the control the card names is gone.
 	changed := `Page: Example News | https://news.example.com/
 heading(1) [Top stories]
 button [Refresh] @e1
 `
-	m.RecordCommand("e2", "snapshot", 1, nil)
-	m.RecordResult("e2", "snapshot", 1, okPayload(snapshotJSON(changed)))
+	m.RecordCommand("e2", "snapshot", "news.example.com", 1, nil)
+	m.RecordResult("e2", "snapshot", "news.example.com", 1, okPayload(snapshotJSON(changed)))
 
-	note := m.TakeSiteNote("snapshot", 1)
+	note := m.TakeSiteNote("snapshot", "news.example.com", 1)
 	if note == "" {
 		t.Fatal("a card whose every entry stopped matching produced no notice")
 	}
@@ -152,15 +178,15 @@ func TestSnapshotInjectsUnverifiedCardWhenTheAgentSkippedNavigate(t *testing.T) 
 	// The first snapshot is the first thing that reveals the host, and it is
 	// also the one call where the card can be verified — so the card arrives
 	// here with live refs rather than unverified.
-	m.RecordCommand("e1", "snapshot", 1, nil)
-	m.RecordResult("e1", "snapshot", 1, okPayload(snapshotJSON(testSnapshot)))
+	m.RecordCommand("e1", "snapshot", "news.example.com", 1, nil)
+	m.RecordResult("e1", "snapshot", "news.example.com", 1, okPayload(snapshotJSON(testSnapshot)))
 
-	note := m.TakeSiteNote("snapshot", 1)
+	note := m.TakeSiteNote("snapshot", "news.example.com", 1)
 	if note == "" {
 		t.Fatal("no card injected on the snapshot that revealed a known host")
 	}
 	if !strings.Contains(note, "@e1") {
-		t.Errorf("verified card did not hand back a live ref:\n%s", note)
+		t.Errorf("the card did not hand back a live ref from this page:\n%s", note)
 	}
 }
 
@@ -168,7 +194,9 @@ func TestNoCardForAnUnknownHost(t *testing.T) {
 	m := newTestManager(t, "b-1")
 	seedCard(t, m, "news.example.com")
 	recordNavigate(t, m, "e1", "https://other.example.org/", 1)
-	if note := m.TakeSiteNote("navigate", 1); note != "" {
+	// The router reports where the tab actually landed, which is a host with no
+	// card — so the lookup is for other.example.org, not for the seeded one.
+	if note := m.TakeSiteNote("navigate", "other.example.org", 1); note != "" {
 		t.Errorf("a card was injected for a host that has none:\n%s", note)
 	}
 }
@@ -183,7 +211,7 @@ func TestCardIsWithheldFromAnotherBrowserProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 	recordNavigate(t, m, "e1", "https://news.example.com/", 1)
-	note := m.TakeSiteNote("navigate", 1)
+	note := m.TakeSiteNote("navigate", "news.example.com", 1)
 	if note != "" {
 		t.Errorf("a card observed under another profile was injected here:\n%s", note)
 	}
@@ -194,8 +222,8 @@ func TestOversizedResultIsRecordedAsAFailure(t *testing.T) {
 	recordNavigate(t, m, "e1", "https://news.example.com/", 1)
 
 	big := strings.Repeat("x", SoftFailureThreshold+1)
-	m.RecordCommand("e2", "gethtml", 1, map[string]any{"selector": "body"})
-	m.RecordResult("e2", "gethtml", 1, core.ResponsePayload{Status: "ok", Data: json.RawMessage(`{"html":"` + big + `"}`)})
+	m.RecordCommand("e2", "gethtml", "news.example.com", 1, map[string]any{"selector": "body"})
+	m.RecordResult("e2", "gethtml", "news.example.com", 1, core.ResponsePayload{Status: "ok", Data: json.RawMessage(`{"html":"` + big + `"}`)})
 
 	recs, _, _, err := m.Stream().ReadFrom(0)
 	if err != nil {
@@ -218,8 +246,8 @@ func TestOversizedResultIsRecordedAsAFailure(t *testing.T) {
 func TestTypedInputNeverReachesTheStream(t *testing.T) {
 	m := newTestManager(t, "b-1")
 	recordNavigate(t, m, "e1", "https://news.example.com/", 1)
-	m.RecordCommand("e2", "type", 1, map[string]any{"selector": "#q", "text": "hunter2", "submit": true})
-	m.RecordResult("e2", "type", 1, okPayload(`{"typed":"#q"}`))
+	m.RecordCommand("e2", "type", "news.example.com", 1, map[string]any{"selector": "#q", "text": "hunter2", "submit": true})
+	m.RecordResult("e2", "type", "news.example.com", 1, okPayload(`{"typed":"#q"}`))
 
 	recs, _, _, err := m.Stream().ReadFrom(0)
 	if err != nil {
@@ -242,7 +270,7 @@ func TestNonSitePagesAreIgnored(t *testing.T) {
 	m := newTestManager(t, "b-1")
 	seedCard(t, m, "news.example.com")
 	recordNavigate(t, m, "e1", "about:blank", 1)
-	if note := m.TakeSiteNote("navigate", 1); note != "" {
+	if note := m.TakeSiteNote("navigate", "news.example.com", 1); note != "" {
 		t.Errorf("a card was injected on about:blank:\n%s", note)
 	}
 }

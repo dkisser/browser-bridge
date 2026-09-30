@@ -79,7 +79,7 @@ func (s *MCPServer) dispatch(ctx context.Context, req *mcp.CallToolRequest, tool
 	// the tab is (recorded on the result) is already up to date. The note rides
 	// on the payload in-process; the executors below decide whether to render it.
 	if s.memory != nil {
-		result.SiteNote = s.memory.TakeSiteNote(spec.name, spec.tabID)
+		result.SiteNote = s.memory.TakeSiteNote(spec.name, s.router.HostForTab(spec.tabID), spec.tabID)
 	}
 	return result, nil
 }

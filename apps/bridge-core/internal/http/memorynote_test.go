@@ -22,10 +22,10 @@ type stubHook struct {
 	askedFor []string
 }
 
-func (h *stubHook) RecordCommand(string, string, int, map[string]any)      {}
-func (h *stubHook) RecordResult(string, string, int, core.ResponsePayload) {}
+func (h *stubHook) RecordCommand(string, string, string, int, map[string]any)      {}
+func (h *stubHook) RecordResult(string, string, string, int, core.ResponsePayload) {}
 
-func (h *stubHook) TakeSiteNote(command string, _ int) string {
+func (h *stubHook) TakeSiteNote(command, _ string, _ int) string {
 	h.askedFor = append(h.askedFor, command)
 	return h.note
 }

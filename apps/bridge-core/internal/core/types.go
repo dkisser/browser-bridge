@@ -79,19 +79,26 @@ type TextSender interface {
 // which is why no tool is added and the tools/list contract is untouched.
 type MemoryHook interface {
 	// RecordCommand is the outbound half of a call: what was asked, of which
-	// tab, with its arguments already reduced to structural facts.
-	RecordCommand(envelopeID, command string, tabID int, args map[string]any)
+	// tab, on which site, with its arguments already reduced to structural
+	// facts.
+	RecordCommand(envelopeID, command, host string, tabID int, args map[string]any)
 
 	// RecordResult is the inbound half: the outcome, and for a snapshot the
 	// page's structural digest. A payload the router synthesized (browser
 	// offline, cannot_buffer, sw_timeout) is recorded like any other, because
 	// an agent asking a browser that is not there is exactly the kind of thing
 	// a card should remember.
-	RecordResult(envelopeID, command string, tabID int, payload ResponsePayload)
+	RecordResult(envelopeID, command, host string, tabID int, payload ResponsePayload)
 
 	// TakeSiteNote returns the text an adapter should append to the result it
 	// is about to show, or "" for nothing. It yields a card at most once per
 	// landing, so a second call for the same landing returns "" rather than
 	// repeating it.
-	TakeSiteNote(command string, tabID int) string
+	//
+	// host is supplied rather than derived. The control plane owns where a tab
+	// is; the learning store owns what a page looked like. A store that also
+	// tracked tabs would be a second, independently-updated copy of browser
+	// state, and the two would drift the first time a tab was closed, renamed
+	// or grouped (ADR-0014).
+	TakeSiteNote(command, host string, tabID int) string
 }

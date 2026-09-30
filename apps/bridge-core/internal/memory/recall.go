@@ -36,18 +36,21 @@ type RenderOptions struct {
 	Resolver  func(Predicate) (string, bool)
 	// Compressed prefers the ADR-0022 model view when one exists.
 	Compressed bool
+	// OnlyMap renders just the site map, for the second injection point. The
+	// landing already said what failed and what worked, moments earlier and in
+	// the same task, so repeating it on the snapshot is tokens spent saying the
+	// same thing twice.
+	OnlyMap bool
 }
 
 func defaultRenderOptions() RenderOptions {
 	return RenderOptions{MaxTokens: DefaultInjectTokens, Compressed: true}
 }
 
-// resolved is one entry as it will be shown: the fresh ref, or the predicate
-// alone when there is no snapshot to check against.
+// resolved is one entry as it will be shown: the fresh ref from the page in
+// hand, or ok=false when the entry's predicate no longer matches — in which
+// case it is dropped from the injection and counted as staleness instead.
 type resolved struct {
-	text string
-	// ok is false when the entry's predicate no longer matches the page. It is
-	// dropped from the injection and reported as staleness instead.
 	ok  bool
 	ref string
 }
@@ -77,35 +80,50 @@ func RenderCard(card *SiteCard, opts RenderOptions) string {
 	// know" and then lists nothing is worse than saying nothing, because it
 	// reads as though something was withheld.
 	//
-	// The header also only claims verification when a page was actually checked.
-	// `bridge memory show` renders with no page in hand, and telling a reader
-	// those notes were "verified against this page" when no page was involved
-	// is exactly the kind of unearned confidence this feature exists to remove.
-	mapHeader := "Site map:"
+	// The site map is only rendered when there is a live page to resolve it
+	// against. Without one the only thing available to print is the predicate
+	// and, at worse, a ref remembered from some earlier snapshot — and a ref the
+	// agent cannot act on is worse than no ref at all, because it looks
+	// actionable. (An earlier version printed stored refs here; the end-to-end
+	// test caught it resolving a landing against the *previous* visit's digest.)
+	//
+	// So the two injection points carry different halves: the landing carries
+	// what is true regardless of the page — the failures and the working
+	// sequences — and the first snapshot carries the map, because that is the
+	// call where a ref belonging to *this* page can be produced for free.
 	if opts.Resolver != nil {
-		mapHeader = "Site map (checked against this page):"
-	}
-	var mapLines []string
-	for _, e := range card.Map {
-		if opts.BrowserID != "" && e.Browser != "" && e.Browser != opts.BrowserID {
-			continue // observed under a different browser profile (ADR-0019)
+		var mapLines []string
+		for _, e := range card.Map {
+			if opts.BrowserID != "" && e.Browser != "" && e.Browser != opts.BrowserID {
+				continue // observed under a different browser profile (ADR-0019)
+			}
+			p := resolveEntry(e.Pred, opts.Resolver)
+			if !p.ok {
+				stale++
+				continue
+			}
+			// The name comes along because a map with several "text container →
+			// @eN" lines and no labels is a list the agent cannot act on: it does
+			// not know which ref is which. The budget guard below still trims the
+			// whole section if the card is enormous.
+			label := e.Pred.String()
+			if e.Pred.Name == "" {
+				label = e.Pred.Role
+			}
+			mapLines = append(mapLines, fmt.Sprintf("  - %s · %s → %s%s", e.Purpose, label, p.ref, seenNote(e)))
 		}
-		p := resolveEntry(e.Pred, opts.Resolver)
-		if !p.ok {
-			stale++
-			continue
+		if len(mapLines) > 0 {
+			lines = append(lines, "Site map (checked against this page):")
+			lines = append(lines, mapLines...)
 		}
-		mapLines = append(mapLines, fmt.Sprintf("  - %s → %s%s", e.Purpose, p.ref, seenNote(e)))
-	}
-	if len(mapLines) > 0 {
-		lines = append(lines, mapHeader)
-		lines = append(lines, mapLines...)
 	}
 
 	// Tier 2: failures. Cheap, and the most reliable thing on the card.
 	var failLines []string
-	for _, f := range card.Failures {
-		failLines = append(failLines, "  - "+failureLine(f))
+	if !opts.OnlyMap {
+		for _, f := range card.Failures {
+			failLines = append(failLines, "  - "+failureLine(f))
+		}
 	}
 	if len(failLines) > 0 {
 		lines = append(lines, "Observed to fail here (do not repeat):")
@@ -119,9 +137,11 @@ func RenderCard(card *SiteCard, opts RenderOptions) string {
 	// have produced. Trimmed first, so it is built last and dropped first.
 	procIdx := -1
 	var shown []ProcedureEntry
-	for _, p := range card.Procedures {
-		if p.Successes >= ProcedureCorroboration {
-			shown = append(shown, p)
+	if !opts.OnlyMap {
+		for _, p := range card.Procedures {
+			if p.Successes >= ProcedureCorroboration {
+				shown = append(shown, p)
+			}
 		}
 	}
 	if len(shown) > 0 {
@@ -185,9 +205,7 @@ func joinLines(lines []string) string {
 
 func resolveEntry(pred Predicate, resolver func(Predicate) (string, bool)) resolved {
 	if resolver == nil {
-		// No page to check against: show the predicate, not a ref we cannot
-		// vouch for. An unverified ref would be a guess wearing a learned coat.
-		return resolved{text: pred.String(), ok: true, ref: pred.String()}
+		return resolved{ok: false}
 	}
 	ref, ok := resolver(pred)
 	if !ok {

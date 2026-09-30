@@ -1,6 +1,11 @@
 package core
 
-import "time"
+import (
+	"encoding/json"
+	"net/url"
+	"strings"
+	"time"
+)
 
 // The wire contract, restated on the Go side.
 //
@@ -173,4 +178,68 @@ type Denial struct {
 	Origin     string `json:"origin,omitempty"`
 	Capability string `json:"capability,omitempty"`
 	Detail     string `json:"detail,omitempty"`
+}
+
+// IsLandingCommand reports the commands after which the control plane can say
+// which site a tab is on. navigate, goBack, goForward, refresh and tab:new /
+// tab:switch / wait:navigation all answer with the URL that resulted.
+//
+// This lives in core, beside the rest of the wire contract, for the reason the
+// file's own header gives: it is a fact about the protocol, and the consumers
+// that need it are the router (which resolves a tab's host) and the learner
+// (which splits an attempt when the agent declares it is going somewhere new).
+// A consumer that invented its own list would drift the moment a command was
+// added.
+func IsLandingCommand(command string) bool {
+	switch command {
+	case "navigate", "goBack", "goForward", "refresh", "wait:navigation", "tab:new", "tab:switch":
+		return true
+	default:
+		return false
+	}
+}
+
+// LandingHost extracts the site a landing command arrived at, from the url in
+// its result body. It returns "" when the result names no site, which is the
+// normal case for chrome:// and about:blank.
+func LandingHost(payload ResponsePayload) string {
+	if len(payload.Data) == 0 {
+		return ""
+	}
+	var out struct {
+		URL   string `json:"url"`
+		URLs  []any  `json:"urls"`
+		Items []struct {
+			URL string `json:"url"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(payload.Data, &out); err != nil {
+		return ""
+	}
+	if out.URL != "" {
+		if h := hostOf(out.URL); h != "" {
+			return h
+		}
+	}
+	// tab:new and tab:switch answer with the tab they landed on.
+	for _, it := range out.Items {
+		if h := hostOf(it.URL); h != "" {
+			return h
+		}
+	}
+	return ""
+}
+
+// hostOf is the host a URL belongs to, lowercased, or "" for anything that is
+// not a site (a bare scheme, a relative path, an empty string).
+func hostOf(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	h := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	if h == "" || !strings.Contains(h, ".") {
+		return ""
+	}
+	return h
 }

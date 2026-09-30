@@ -21,6 +21,17 @@ lands on a host it has a card for — the `navigate` result, and the first
 (`可参考的站点访问模式`) with a hard cap of 400 tokens, trimming the
 procedure tier first and keeping the site map and failure list.
 
+**The two points carry different halves, and that is not a division of labour
+for its own sake — it is what each call can honestly say.** A `navigate` has no
+page behind it, so it can only state what is true of the site regardless of the
+page: the selectors that failed here, and the sequences that worked. The site
+map needs a *live* ref, and a ref remembered from an earlier snapshot addresses
+nothing; so the map waits for the `snapshot`, which is also the one call where
+producing a live ref costs nothing. An earlier version of this design had both
+injection points carry everything, which meant the landing re-resolved against
+the *previous visit's* digest and handed the agent a ref that did not work — the
+end-to-end test is what caught it.
+
 The timing is not a preference. The control plane cannot know which host the
 agent is heading for until the agent says so, so the injection point is forced
 to be just after that information arrives. It is also the cheapest possible
