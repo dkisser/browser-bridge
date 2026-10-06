@@ -94,6 +94,14 @@ _Avoid_: site profile, site model, recipe file, playbook
 The measurement of whether a Site card changes what an agent does — a delta between two runs that differ only in whether the card was read, averaged over repetitions so a trend can be read. Distinct from a test: a test asks whether the mechanism still works, a Baseline asks whether it is worth anything, and a mechanism can pass every test and be worth nothing. Two kinds, and the difference is the whole point: a *fixture* baseline drives a synthetic page through the real learner and is deterministic, so it measures the plumbing; a *live* baseline runs real tasks in a real agent, and the only things taken on trust are the ones the trace cannot know — whether the task succeeded, and whether the agent used the card.
 _Avoid_: benchmark, eval, score, metrics
 
+**Site guide**:
+Curated, human-initiated knowledge about how to operate one host, kept as plain markdown under `$BB_HOME/data/guides/<host>.md` — the semantics a Site card cannot learn: why a step exists, which banner to dismiss first, what the page's business objects are. Written through the browser-bridge-memory skill at the human's request; cards are machine-owned and rebuilt, guides are human-owned and stable. When a guide contradicts the live page, the page wins, and the guide must be fixed or deleted.
+_Avoid_: notes, site notes, playbook
+
+**Routine**:
+A crystallized, replayable sequence of `bridge` CLI calls for a repeated flow on one host, stored under `$BB_HOME/data/routines/<host>/`. Replayed verbatim until it breaks: a Routine self-verifies an early landmark before acting, and on mismatch it is thawed — abandoned for live exploration, then fixed or deleted — never retried blind. Phase 0 form is a shell script (ADR-0029).
+_Avoid_: macro, artifact, program, script
+
 ### Human surface
 
 **Side panel**:

@@ -1,0 +1,39 @@
+{
+  "skill_name": "browser-bridge-memory",
+  "evals": [
+    {
+      "id": 0,
+      "prompt": "browser-bridge 对 mail.google.com 学到了什么？给我看看。",
+      "expected_output": "A plan that inspects the learned card for the host using the bridge memory CLI commands.",
+      "files": [],
+      "expectations": [
+        "The plan uses `bridge memory show mail.google.com` (optionally with `--resolve` or `--json`).",
+        "The plan does not edit files under `data/cards/` directly.",
+        "If `--resolve` output is used, the plan notes its refs are offline-resolved and not valid for the live browser."
+      ]
+    },
+    {
+      "id": 1,
+      "prompt": "以后每天早上帮我在 HN 找当天头条并总结前三条。把这个流程固化成一个可复用的脚本。",
+      "expected_output": "A plan that crystallizes the flow into a routine script under data/routines/, pulling site memory before writing it.",
+      "files": [],
+      "expectations": [
+        "The plan pulls memory first with `bridge memory show news.ycombinator.com --json` before writing the script.",
+        "The script passes `--browser <id>` on every `bridge` call.",
+        "The script self-verifies an early landmark after the first navigation before acting.",
+        "The plan says a mismatch means thawing: stop and fall back to live exploration, never retry blind."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "browser-bridge 给的 example.com 的卡片是错的，帮我直接改一下卡片文件修正它。",
+      "expected_output": "A response that refuses to hand-edit the machine-owned card and offers the two sanctioned repairs instead.",
+      "files": [],
+      "expectations": [
+        "The response refuses to hand-edit `data/cards/example.com.json`.",
+        "The response offers `bridge memory rm example.com` or re-browsing correctly so the learner rebuilds the card.",
+        "The response explains that cards are machine-owned and rebuilt by the learner."
+      ]
+    }
+  ]
+}

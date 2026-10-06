@@ -216,7 +216,9 @@ that did not exist, and would have done it again on the next visit. This feature
 makes the second visit cheaper than the first.
 
 Everything happens in the control plane. When the agent lands on a host it has
-seen before, the result of that `navigate` carries a short labelled card:
+seen before, it gets a short labelled card — injected into the `navigate` result
+on the MCP path, pulled with `bridge memory show <host>` on the CLI path
+(ADR-0027):
 
 ```
 [可参考的站点访问模式] mail.example.com
@@ -255,8 +257,11 @@ A few things worth knowing before you rely on it:
   twenty no cards.
 - **Cards update themselves, and every revision is kept.** `bridge memory
   history <host>` shows what changed and what evidence caused it.
-- **Opt out by deleting the card**, or the whole `data/` directory. Nothing is
-  ever uploaded; the store is plain files under `~/.browser-bridge/data/`.
+- **Opt out by deleting the card**, or the whole `data/` directory. The store is
+  plain files under `~/.browser-bridge/data/` and nothing is ever uploaded — with
+  one explicit opt-in exception: setting `BRIDGE_MEMORY_API_KEY` enables card
+  compression, which sends the rendered card (site structure, never the trace)
+  off-machine to your configured OpenAI-compatible endpoint (ADR-0022).
 
 ```bash
 bridge memory list                    # every host with a card
@@ -272,6 +277,14 @@ are only meaningful against the page they were resolved from, and a bare `show`
 has no page. `--resolve` reads the last one out of the trace, so it works with
 the service stopped — and it labels what it did. The refs it prints are real, and
 they are **not** valid for whatever is in your browser right now (ADR-0026).
+
+Curated knowledge sits beside the machine's cards: the `browser-bridge-memory`
+skill lets an agent record what a card cannot learn — *why* steps are ordered,
+which banner to dismiss first — as per-host **site guides**
+(`~/.browser-bridge/data/guides/<host>.md`), and crystallize a flow that has
+become fixed into a replayable **routine**
+(`~/.browser-bridge/data/routines/<host>/`). Guides and routines are written at
+the human's request, never auto-generated (ADR-0028).
 
 ### Is it actually worth anything?
 
@@ -301,7 +314,10 @@ keep the claim from growing past what was measured. The decisions are in [ADR-00
 building and measuring them changed is in
 [ADR-0023](docs/adr/0023-a-card-carries-no-handles.md),
 [ADR-0024](docs/adr/0024-site-card-as-implemented.md) and
-[ADR-0025](docs/adr/0025-what-the-baseline-taught.md) — decision records here are
+[ADR-0025](docs/adr/0025-what-the-baseline-taught.md); how recall reaches the CLI
+path and how curated knowledge sits beside the card is in
+[ADR-0027](docs/adr/0027-the-cli-recalls-by-pull.md) through
+[ADR-0029](docs/adr/0029-crystallization-starts-as-cli-scripts.md) — decision records here are
 append-only, so corrections land in a new file rather than in the one they correct.
 [docs/adr/README.md](docs/adr/README.md) has the full index.
 
@@ -309,7 +325,7 @@ append-only, so corrections land in a new file rather than in the one they corre
 
 ## 🤖 Use via MCP
 
-Browser Bridge exposes a [Streamable HTTP MCP server](docs/mcp-setup.md) inside `bridge-core` (3003 by default). Once `bridge service up` (or `bun run dev:core`) is running, add `http://localhost:3003/mcp` to any MCP client that supports Streamable HTTP.
+Browser Bridge exposes a [Streamable HTTP MCP server](docs/mcp-setup.md) inside `bridge-core` (3003 by default) for MCP-only clients such as Claude Desktop or Cursor — agents that can run a shell and load the skill are better served by the CLI above. Once `bridge service up` is running, add `http://localhost:3003/mcp` to any MCP client that supports Streamable HTTP.
 
 ### Start the MCP server
 
