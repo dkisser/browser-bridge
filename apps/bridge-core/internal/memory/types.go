@@ -204,6 +204,13 @@ type SiteCard struct {
 	// reader falls back to rendering the fields above.
 	Compressed     string `json:"compressed,omitempty"`
 	CompressedAtMs int64  `json:"compressedAt,omitempty"`
+	// CompressedRev is the card revision Compressed was built from. The
+	// revision rather than a timestamp, because two revisions can land inside
+	// one millisecond — which a fixture run produces routinely — and a
+	// timestamp comparison would then call a stale view current. A card written
+	// before this field existed has 0, which never equals Revision, so it falls
+	// back to the real render: the safe direction to be wrong in.
+	CompressedRev int `json:"compressedRev,omitempty"`
 }
 
 // Host is the scope key (ADR-0019): one card per host, lowercased, port and
@@ -383,6 +390,41 @@ func safeURL(raw string) string {
 	u.Fragment = ""
 	u.User = nil
 	return u.String()
+}
+
+// maxCommandLen bounds a stored command name. Every name on the wire is well
+// under this; the bound exists so a long one cannot become a card's largest
+// field by being stored instead of refused.
+const maxCommandLen = 24
+
+// safeCommand reduces a command name to the shape one can be in.
+//
+// The name arrives from the client with no validation — core.pendingCallFrom
+// unmarshals it straight off the wire — and it was the one text channel into a
+// card that every other reduction (redactArgs, errCode, safeSelector,
+// attrValue, normalizeSpace) did not cover. It reaches the agent unquoted in
+// failureLine and procedureLine, so a name carrying a newline could forge a
+// section header and a `@eN` handle directly under the injection's trust label.
+// The failure tier needs no corroboration, so one request is enough and it
+// persists on disk.
+//
+// Lower case, digits, underscore and colon is what the wire actually uses —
+// wait:element and wait:navigation carry the colon — and nothing else survives.
+// Anything else becomes "unknown", which is what purposeOf already did with a
+// name it did not recognise, so the loss is a purpose label rather than an
+// entry.
+func safeCommand(cmd string) string {
+	if cmd == "" || len(cmd) > maxCommandLen {
+		return "unknown"
+	}
+	for i := 0; i < len(cmd); i++ {
+		c := cmd[i]
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == ':' || c == '_' {
+			continue
+		}
+		return "unknown"
+	}
+	return cmd
 }
 
 // errCode reduces a wire error to a code.

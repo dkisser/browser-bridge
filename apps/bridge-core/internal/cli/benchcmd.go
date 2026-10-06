@@ -185,8 +185,22 @@ func newBenchRecordCommand() *cobra.Command {
 			if task == "" {
 				return fmt.Errorf("bench: --task is required; the name has to be stable or the trend cannot group it")
 			}
-			if card != "" && card != "used" && card != "ignored" && card != "none" {
+			if card == "" {
+				return fmt.Errorf("bench: --card is required (used, ignored or none); " +
+					"it is the arm a run belongs to, and an omitted flag used to be scored " +
+					"as \"none\" — which files a run under the no-card arm even when the " +
+					"trace shows a card was handed over, and reports crossCheck: true while " +
+					"doing it, because unstated is not the same claim as none")
+			}
+			if card != "used" && card != "ignored" && card != "none" {
 				return fmt.Errorf("bench: --card must be one of used, ignored, none")
+			}
+			if host != "" {
+				h := memory.Host(host)
+				if h == "" {
+					return fmt.Errorf("bench: %q is not a host name (a bare hostname, not a URL)", host)
+				}
+				host = h
 			}
 			if since <= 0 {
 				return fmt.Errorf("bench: --since must be positive (e.g. --since 10m)")
@@ -204,6 +218,16 @@ func newBenchRecordCommand() *cobra.Command {
 			window, err := traceWindow(m, host, since)
 			if err != nil {
 				return err
+			}
+			// A window that caught no calls at all is a mis-timed --since or a
+			// mistyped --host, not a run. Recording it would put a row in
+			// bench.jsonl — the artifact the trend is recomputed from — saying
+			// an agent made zero calls and everything cross-checked.
+			if window.Calls == 0 {
+				fmt.Fprintf(cmd.OutOrStdout(),
+					"No calls in the last %s%s. Nothing recorded — widen --since%s.\n",
+					since, hostSuffix(host), hostHint(host))
+				return nil
 			}
 			outw := cmd.OutOrStdout()
 			fmt.Fprintf(outw, "Trace over the last %s: %d call(s), %d rejected",
@@ -319,6 +343,20 @@ type traceCounts struct {
 // did not notice the card, or that ignored it, will happily say the card was
 // never there — and a baseline built on that says recall is broken when the
 // recall was fine and the agent was not.
+func hostSuffix(host string) string {
+	if host == "" {
+		return " on any host"
+	}
+	return " on " + host
+}
+
+func hostHint(host string) string {
+	if host == "" {
+		return ""
+	}
+	return ", or drop --host"
+}
+
 // liveCost scores a live attempt in the same unit the fixture half writes into
 // the same column: every call, plus the budget on top when it failed.
 //

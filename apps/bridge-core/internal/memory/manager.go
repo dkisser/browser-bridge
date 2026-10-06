@@ -145,12 +145,16 @@ func (m *Manager) RecordCommand(envelopeID, command, host string, tabID int, arg
 	rec := TraceRecord{
 		Kind:     KindCommand,
 		Envelope: envelopeID,
-		Command:  command,
-		TabID:    tabID,
-		Browser:  m.browserID,
-		Host:     host,
-		Args:     redacted,
-		AtMs:     nowMs(),
+		// Reduced at the point it enters the trace, not at each of the three
+		// places a card renders it. The stream is the raw material for the card
+		// and for `memory history`, so a name that never lands here cannot be
+		// quoted in one place and forgotten in another. See safeCommand.
+		Command: safeCommand(command),
+		TabID:   tabID,
+		Browser: m.browserID,
+		Host:    host,
+		Args:    redacted,
+		AtMs:    nowMs(),
 	}
 	if err := m.stream.Append(rec); err != nil {
 		m.logf("memory: record command %s: %v", command, err)
@@ -173,7 +177,7 @@ func (m *Manager) RecordResult(envelopeID, command, host string, tabID int, p co
 		Kind:     KindResponse,
 		AtMs:     nowMs(),
 		Envelope: envelopeID,
-		Command:  command,
+		Command:  safeCommand(command),
 		TabID:    tabID,
 		Browser:  m.browserID,
 		Host:     host,

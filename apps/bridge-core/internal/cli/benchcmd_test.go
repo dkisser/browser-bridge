@@ -495,3 +495,75 @@ func appendLive(t *testing.T, task string, cardUsed bool, calls int) {
 		t.Fatal(err)
 	}
 }
+
+// The arm a run belongs to comes from --card, and the "was a card offered"
+// column comes from the trace. When the flag is optional those two disagree in
+// the worst way: the run lands in the no-card arm while the same row reports a
+// card was handed over, and crossCheck says true.
+func TestBenchRecordRefusesAnUnstatedArm(t *testing.T) {
+	withBenchHome(t)
+	seedTrace(t, 2, 0)
+	seedCardShown(t, 1, 2)
+
+	_, _, err := runCLI(t, "memory", "bench", "record",
+		"--host", "news.example.com", "--task", "find the top story", "--ok")
+	if err == nil {
+		t.Fatal("a run with no --card was accepted and filed under an arm nobody chose")
+	}
+	if !strings.Contains(err.Error(), "--card is required") {
+		t.Errorf("err = %v, want it to say what is missing", err)
+	}
+
+	// Nothing was written.
+	env, err := EnvFromOSEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recs, readErr := readJSONL(filepath.Join(env.DataDir(), benchLogName)); readErr == nil && len(recs) != 0 {
+		t.Errorf("a rejected run still wrote %d record(s)", len(recs))
+	}
+}
+
+// bench.jsonl is documented as the artifact a trend can be recomputed from, so
+// a row describing a window that caught nothing is worse than no row: it says
+// an agent made zero calls and everything cross-checked.
+func TestBenchRecordRefusesAWindowThatCaughtNothing(t *testing.T) {
+	withBenchHome(t)
+	seedTrace(t, 2, 0)
+
+	// A host the trace never mentions.
+	stdout, _, err := runCLI(t, "memory", "bench", "record",
+		"--host", "wrong.example", "--task", "find the top story",
+		"--ok", "--card", "none", "--since", "1h")
+	if err != nil {
+		t.Fatalf("a mistyped host is not a crash: %v", err)
+	}
+	if !strings.Contains(stdout, "No calls in the last") {
+		t.Errorf("the run was recorded instead of refused:\\n%s", stdout)
+	}
+
+	env, err := EnvFromOSEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recs, readErr := readJSONL(filepath.Join(env.DataDir(), benchLogName)); readErr == nil && len(recs) != 0 {
+		t.Errorf("an empty window still wrote %d record(s): %v", len(recs), recs)
+	}
+
+	// A URL is normalised rather than rejected — it names the same host and a
+	// person typing one has answered the question they meant to ask. What has to
+	// be refused is something that names no site at all.
+	stdout, _, err = runCLI(t, "memory", "bench", "record",
+		"--host", "https://news.example.com/", "--task", "find the top story",
+		"--ok", "--card", "none", "--since", "1h")
+	if err != nil {
+		t.Fatalf("a URL host was refused: %v", err)
+	}
+	if !strings.Contains(stdout, "1 call(s)") && !strings.Contains(stdout, "3 call(s)") {
+		t.Errorf("a normalised URL host did not match the trace:\n%s", stdout)
+	}
+	if _, _, err := runCLI(t, "memory", "bench", "record",
+		"--host", "not a host", "--task", "t", "--ok", "--card", "none", "--since", "1h"); err == nil {
+		t.Error("a string naming no site was accepted as a host")
+	}
+}

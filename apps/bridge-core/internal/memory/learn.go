@@ -572,7 +572,13 @@ func reasonFor(created bool, seg *segment) string {
 // refreshCompressed is the optional ADR-0022 step. A failure here is logged and
 // forgotten: the card is already durable, and the compression is a view.
 func (l *Learn) refreshCompressed(card *SiteCard) {
-	rendered := RenderCard(card, defaultRenderOptions())
+	// Compressed: false, deliberately. RenderCard's compressed branch returns
+	// card.Compressed when asked for it, so compressing with the default options
+	// posted the *previous model output* back at the model from the second pass
+	// onward — the card's own fields never reached the endpoint at all, and the
+	// failure tier silently vanished from every later compression. The input
+	// has to be the card itself or the compression is a feedback loop.
+	rendered := RenderCard(card, RenderOptions{MaxTokens: DefaultInjectTokens})
 	out, err := l.compress.Compress(card.Host, rendered)
 	if err != nil || out == "" {
 		l.logf("memory: compress %s: %v", card.Host, err)
@@ -580,6 +586,7 @@ func (l *Learn) refreshCompressed(card *SiteCard) {
 	}
 	card.Compressed = truncate(out, 2000)
 	card.CompressedAtMs = nowMs()
+	card.CompressedRev = card.Revision
 	if err := l.store.Put(card); err != nil {
 		l.logf("memory: store compressed %s: %v", card.Host, err)
 	}

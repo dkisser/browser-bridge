@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -272,8 +273,76 @@ func TestStoreToleratesCorruptCard(t *testing.T) {
 	if _, ok := s.Get("broken.test"); ok {
 		t.Error("Get reported a corrupt card as usable")
 	}
+	// But it must still be *listed*, and Read must say why it is unusable.
+	// Hiding it made `memory list` report a healthy set while the one file a
+	// person most needs to look at sat in the directory with no name attached.
+	hosts := s.Hosts()
+	if len(hosts) != 1 || hosts[0] != "broken.test" {
+		t.Errorf("Hosts = %v, want [broken.test]: a card that cannot be read is still a card", hosts)
+	}
+	card, err := s.Read("broken.test")
+	if err == nil {
+		t.Errorf("Read returned %+v and no error; absent and unparseable must differ", card)
+	} else if card != nil {
+		t.Errorf("Read returned a card alongside the error: %+v", card)
+	}
+	// Absent is still absent, and still not an error.
+	if card, err := s.Read("absent.test"); err != nil || card != nil {
+		t.Errorf("Read(absent) = %+v, %v; want nil, nil", card, err)
+	}
+}
+
+// `bridge memory rm` runs in its own process, so the daemon's cache has to see
+// the deletion. Before this, a deleted card kept being injected at every
+// landing until a restart — which is the situation the command documents itself
+// as being for.
+func TestStoreSeesADeletionMadeByAnotherProcess(t *testing.T) {
+	dir := t.TempDir()
+	s, err := OpenStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := "shop.example"
+	if putErr := s.Put(&SiteCard{Host: host, Revision: 3, Map: []MapEntry{{Purpose: "cart"}}}); putErr != nil {
+		t.Fatal(putErr)
+	}
+	// Warm the cache the way a running daemon does.
+	if _, ok := s.Get(host); !ok {
+		t.Fatal("the card was not readable straight after Put")
+	}
+
+	// Another process deletes it. Nothing tells this one.
+	if rmErr := os.Remove(filepath.Join(s.Dir(), "shop.example.json")); rmErr != nil {
+		t.Fatal(rmErr)
+	}
+	if _, ok := s.Get(host); ok {
+		t.Error("a deleted card was still served from the cache")
+	}
 	if hosts := s.Hosts(); len(hosts) != 0 {
-		t.Errorf("Hosts = %v, want the corrupt file skipped", hosts)
+		t.Errorf("Hosts = %v, want empty after an out-of-process delete", hosts)
+	}
+
+	// And an edit made elsewhere is picked up, not the stale copy.
+	if putErr := s.Put(&SiteCard{Host: host, Revision: 1, Map: []MapEntry{{Purpose: "cart"}}}); putErr != nil {
+		t.Fatal(putErr)
+	}
+	if _, ok := s.Get(host); !ok {
+		t.Fatal("card missing after re-put")
+	}
+	rewritten := &SiteCard{Host: host, Revision: 9, Failures: []FailureEntry{{Signature: "no_element", Count: 4}}}
+	data, err := json.Marshal(rewritten)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(s.Dir(), "shop.example.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := s.Get(host)
+	if !ok {
+		t.Fatal("card vanished")
+	}
+	if got.Revision != 9 || len(got.Failures) != 1 {
+		t.Errorf("served a stale card: rev %d, %d failure(s)", got.Revision, len(got.Failures))
 	}
 }
 

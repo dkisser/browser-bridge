@@ -3,6 +3,8 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"text/tabwriter"
 	"time"
@@ -138,9 +140,9 @@ func newMemoryShowCommand() *cobra.Command {
 			if host == "" {
 				return fmt.Errorf("%q is not a host name", args[0])
 			}
-			card, ok := store.Get(host)
-			if !ok {
-				return fmt.Errorf("no card for %s (cards live in %s)", host, store.Dir())
+			card, err := readCard(store, host)
+			if err != nil {
+				return err
 			}
 			if raw {
 				data, err := json.MarshalIndent(card, "", "  ")
@@ -364,8 +366,14 @@ func newMemoryRemoveCommand() *cobra.Command {
 			if host == "" {
 				return fmt.Errorf("%q is not a host name", args[0])
 			}
-			if _, ok := store.Get(host); !ok {
-				return fmt.Errorf("no card for %s", host)
+			// Deliberately not readCard: a card that will not parse is
+			// precisely the one worth deleting, and asking it to parse first
+			// made the delete unavailable for the files that needed it.
+			if _, err := os.Stat(filepath.Join(store.Dir(), host+".json")); err != nil {
+				if os.IsNotExist(err) {
+					return fmt.Errorf("no card for %s", host)
+				}
+				return err
 			}
 			if err := store.Remove(host); err != nil {
 				return err
@@ -374,6 +382,26 @@ func newMemoryRemoveCommand() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// readCard loads a card and turns "there is nothing here" and "there is
+// something here and it will not parse" into two different answers.
+//
+// The second case used to be indistinguishable from the first, which left a
+// person with a truncated or schema-shifted card file no way to inspect or
+// delete it through the tool that exists for exactly that — while `memory list`
+// reported the directory as healthy.
+func readCard(store *memory.Store, host string) (*memory.SiteCard, error) {
+	card, err := store.Read(host)
+	if err != nil {
+		return nil, fmt.Errorf("the card for %s exists but will not parse (%v)\n  %s\n  "+
+			"Fix it with an editor, or delete it with `bridge memory rm %s`",
+			host, err, filepath.Join(store.Dir(), host+".json"), host)
+	}
+	if card == nil {
+		return nil, fmt.Errorf("no card for %s (cards live in %s)", host, store.Dir())
+	}
+	return card, nil
 }
 
 // printJSONRows follows printData's --json convention: indented JSON on stdout,

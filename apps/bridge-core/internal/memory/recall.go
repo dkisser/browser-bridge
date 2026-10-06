@@ -53,10 +53,6 @@ type RenderOptions struct {
 	PageNote string
 }
 
-func defaultRenderOptions() RenderOptions {
-	return RenderOptions{MaxTokens: DefaultInjectTokens, Compressed: true}
-}
-
 // resolved is one entry as it will be shown: the fresh ref from the page in
 // hand, or ok=false when the entry's predicate no longer matches — in which
 // case it is dropped from the injection and counted as staleness instead.
@@ -75,7 +71,12 @@ func RenderCard(card *SiteCard, opts RenderOptions) string {
 		opts.MaxTokens = DefaultInjectTokens
 	}
 
-	if opts.Compressed && card.Compressed != "" {
+	// The compressed view is a cache of a render, so it is only a substitute for
+	// the card while it still describes the card. A revision written after the
+	// last compression makes it stale, and serving it would hide whatever the
+	// newest evidence said — which is how a newly learned failure can go missing
+	// from every subsequent injection without a single error anywhere.
+	if opts.Compressed && card.Compressed != "" && card.CompressedRev == card.Revision {
 		if out := finish(opts, card.Host, card.Compressed, false); out != "" {
 			return out
 		}

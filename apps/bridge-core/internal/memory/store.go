@@ -24,6 +24,22 @@ type Store struct {
 	mu    sync.RWMutex
 	dir   string
 	cards map[string]*SiteCard
+	// stamps records the file identity each cached card was read from, so a
+	// change made by another process is noticed on the next read.
+	stamps map[string]fileStamp
+}
+
+// fileStamp is what makes the cache honest across processes. The CLI writes
+// these same files — `bridge memory rm` is the documented way to remove a card
+// — and a cache that cannot see that edit makes the delete a no-op for as long
+// as the daemon lives, which is the case it exists for.
+type fileStamp struct {
+	size    int64
+	modNano int64
+}
+
+func stampOf(fi os.FileInfo) fileStamp {
+	return fileStamp{size: fi.Size(), modNano: fi.ModTime().UnixNano()}
 }
 
 const cardsDirName = "cards"
@@ -36,7 +52,7 @@ func OpenStore(dataDir string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("memory: create cards dir: %w", err)
 	}
-	return &Store{dir: dir, cards: make(map[string]*SiteCard)}, nil
+	return &Store{dir: dir, cards: make(map[string]*SiteCard), stamps: make(map[string]fileStamp)}, nil
 }
 
 // Dir is the cards directory, for the CLI to print.
@@ -77,18 +93,68 @@ func safeFileName(host string) string {
 
 // Get returns a copy of the card for host. A missing card is (nil, false), not
 // an error: having no card for a host is the normal state of the world.
+//
+// The cache is revalidated against the file on every call. It has to be: the
+// CLI edits these files from another process, and a cached card that outlives
+// its own deletion is still being injected at every landing — the command whose
+// whole purpose is to stop that would have no effect until a restart.
 func (s *Store) Get(host string) (*SiteCard, bool) {
-	s.mu.RLock()
-	c, ok := s.cards[host]
-	s.mu.RUnlock()
-	if ok {
-		return cloneCard(c), true
-	}
-	c, err := s.load(host)
-	if err != nil {
-		return nil, false
-	}
+	c, _ := s.read(host)
 	return c, c != nil
+}
+
+// Read is Get with the reason. A card that exists but does not parse is not the
+// same as a card that is absent, and the difference decides what a person can
+// do about it: absent means nothing to look at, unparseable means a file to
+// read, correct or delete. Collapsing the two — as Get does, for the injection
+// path, where either way the answer is "no card" — used to leave the CLI no way
+// to reach the cards that most need reaching.
+func (s *Store) Read(host string) (*SiteCard, error) {
+	return s.read(host)
+}
+
+func (s *Store) read(host string) (*SiteCard, error) {
+	file := s.hostFile(host)
+	fi, statErr := os.Stat(file)
+
+	s.mu.RLock()
+	cached, ok := s.cards[host]
+	stamp, stamped := s.stamps[host]
+	s.mu.RUnlock()
+
+	if statErr != nil {
+		// Gone, or unreadable: either way the cached copy is not the truth.
+		s.forget(host)
+		if os.IsNotExist(statErr) {
+			return nil, nil
+		}
+		return nil, statErr
+	}
+	if ok && stamped && stamp == stampOf(fi) {
+		return cloneCard(cached), nil
+	}
+
+	card, err := s.load(host)
+	if err != nil {
+		s.forget(host)
+		return nil, err
+	}
+	if card == nil {
+		s.forget(host)
+		return nil, nil
+	}
+	s.mu.Lock()
+	s.cards[host] = cloneCard(card)
+	s.stamps[host] = stampOf(fi)
+	s.mu.Unlock()
+	return card, nil
+}
+
+func (s *Store) forget(host string) {
+	s.mu.Lock()
+	delete(s.cards, host)
+	delete(s.stamps, host)
+	s.mu.Unlock()
 }
 
 func (s *Store) load(host string) (*SiteCard, error) {
@@ -140,7 +206,15 @@ func (s *Store) Put(card *SiteCard) error {
 	if err := os.Chmod(file, 0o600); err != nil {
 		return fmt.Errorf("memory: tighten card permissions: %w", err)
 	}
-	s.cards[card.Host] = cloneCard(card)
+	// Re-stamp from the file just written, so the next read compares against
+	// what is actually on disk rather than deciding to reload.
+	if fi, err := os.Stat(file); err == nil {
+		s.cards[card.Host] = cloneCard(card)
+		s.stamps[card.Host] = stampOf(fi)
+	} else {
+		delete(s.cards, card.Host)
+		delete(s.stamps, card.Host)
+	}
 	return nil
 }
 
@@ -149,6 +223,7 @@ func (s *Store) Remove(host string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.cards, host)
+	delete(s.stamps, host)
 	if err := os.Remove(s.hostFile(host)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("memory: remove card: %w", err)
 	}
@@ -180,11 +255,20 @@ func (s *Store) Hosts() []string {
 			continue
 		}
 		h := strings.TrimSuffix(name, ".json")
-		if c, err := s.load(h); err == nil && c != nil {
-			if !seen[c.Host] {
-				cached = append(cached, c.Host)
-				seen[c.Host] = true
+		// A card that exists is listed even when it does not parse. Hiding it
+		// would make `memory list` report a healthy set while a file the person
+		// needs to delete sits in the directory unnamed.
+		c, err := s.load(h)
+		if err != nil || c == nil {
+			if !seen[h] {
+				cached = append(cached, h)
+				seen[h] = true
 			}
+			continue
+		}
+		if !seen[c.Host] {
+			cached = append(cached, c.Host)
+			seen[c.Host] = true
 		}
 	}
 	sort.Strings(cached)

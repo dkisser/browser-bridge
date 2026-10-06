@@ -261,7 +261,12 @@ A few things worth knowing before you rely on it:
   plain files under `~/.browser-bridge/data/` and nothing is ever uploaded — with
   one explicit opt-in exception: setting `BRIDGE_MEMORY_API_KEY` enables card
   compression, which sends the rendered card (site structure, never the trace)
-  off-machine to your configured OpenAI-compatible endpoint (ADR-0022).
+  off-machine to your configured OpenAI-compatible endpoint (ADR-0022). The
+  endpoint must be `https://`; a local proxy is the one case that needs
+  `BRIDGE_MEMORY_ALLOW_INSECURE=1` to say so out loud. A reply that tries to
+  hand back a ref, impersonate a card section, or open one of its own is
+  discarded rather than stored — the endpoint is untrusted even when you chose
+  it.
 
 ```bash
 bridge memory list                    # every host with a card

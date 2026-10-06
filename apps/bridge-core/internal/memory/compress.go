@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -31,6 +32,10 @@ const (
 	envAPIKey  = "BRIDGE_MEMORY_API_KEY"
 	envBaseURL = "BRIDGE_MEMORY_BASE_URL"
 	envModel   = "BRIDGE_MEMORY_MODEL"
+	// envAllowInsecure permits a plaintext endpoint, for a local proxy. Off by
+	// default because the alternative is a typo in a URL quietly shipping the
+	// key and a page-derived card over an unencrypted connection.
+	envAllowInsecure = "BRIDGE_MEMORY_ALLOW_INSECURE"
 
 	defaultBaseURL    = "https://api.openai.com/v1"
 	defaultModel      = "gpt-4o-mini"
@@ -58,6 +63,17 @@ func NewCompressorFromEnv() Compressor {
 	base := strings.TrimSpace(os.Getenv(envBaseURL))
 	if base == "" {
 		base = defaultBaseURL
+	}
+	// The key and the card both go out on this connection, and the card is
+	// page-derived, so a plaintext endpoint is a silent downgrade of the one
+	// thing ADR-0018 bounds. A local proxy is the legitimate reason to want
+	// http, so it is an explicit opt-in rather than an inferred permission.
+	if strings.HasPrefix(strings.ToLower(base), "http://") {
+		if os.Getenv(envAllowInsecure) != "1" {
+			log.Printf("memory: %s is http://; refusing to send the API key and card in cleartext. "+
+				"Set %s=1 if this is a local proxy.", envBaseURL, envAllowInsecure)
+			return nil
+		}
 	}
 	model := strings.TrimSpace(os.Getenv(envModel))
 	if model == "" {
@@ -158,5 +174,69 @@ func (c *httpCompressor) Compress(host, rendered string) (string, error) {
 	if text == "" {
 		return "", fmt.Errorf("memory: chat response was empty")
 	}
-	return text, nil
+	safe, err := sanitizeCompressed(text)
+	if err != nil {
+		return "", err
+	}
+	return safe, nil
+}
+
+// cardSectionHeaders are the titles the card renders its tiers under. A reply
+// containing one of these verbatim is trying to be read as the card rather than
+// as a summary of it.
+var cardSectionHeaders = []string{
+	"Site map",
+	"Observed to fail here",
+	"Sequences that worked here",
+	InjectionLabel,
+}
+
+// sanitizeCompressed reduces a model's reply to something that cannot impersonate
+// the card it will replace.
+//
+// ADR-0022 says the model never decides what is in the card, and until this
+// existed nothing enforced it: the reply was stored and rendered verbatim at
+// every landing, so an endpoint answering "ignore all prior instructions" — or
+// one echoing a page's accessible name back as if it were the control plane's
+// own words — was re-shown to every future agent. Three rules, each because a
+// card-render path depends on it:
+//
+//   - no refs. A compression must not hand back a handle. The site map is where
+//     a usable one comes from, resolved against the page in hand (ADR-0023), so
+//     a ref in a reply can only have been invented.
+//   - no headers. Section titles belong to the card.
+//   - one block. Lines are folded together, so a reply cannot open a section of
+//     its own however it is punctuated.
+//
+// It refuses rather than repairs. Compression is optional by design, so
+// dropping a reply costs nothing that matters, and a rewritten reply is one
+// nobody chose.
+func sanitizeCompressed(text string) (string, error) {
+	// @eN, the one handle form the whole feature rests on.
+	if i := strings.Index(text, "@e"); i >= 0 {
+		if j := i + 2; j < len(text) && text[j] >= '0' && text[j] <= '9' {
+			return "", fmt.Errorf("memory: chat response invented a ref (%s)", text[i:min(i+6, len(text))])
+		}
+	}
+	var kept []string
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		// A bullet whose whole content is a card's own section title.
+		bare := strings.TrimLeft(trimmed, "-*• \t")
+		for _, h := range cardSectionHeaders {
+			if strings.EqualFold(bare, h) || strings.HasPrefix(strings.ToLower(bare), strings.ToLower(h)+" (") {
+				return "", fmt.Errorf("memory: chat response impersonated a card section (%q)", bare)
+			}
+		}
+		kept = append(kept, trimmed)
+	}
+	if len(kept) == 0 {
+		return "", fmt.Errorf("memory: chat response had no usable text")
+	}
+	// One block: a line break is the only thing that can open a section, and the
+	// card's own renderer is what decides where those go.
+	return strings.Join(kept, "; "), nil
 }
