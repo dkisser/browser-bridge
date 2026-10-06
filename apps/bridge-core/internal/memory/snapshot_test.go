@@ -68,6 +68,37 @@ func TestParseSnapshotKeepsAddressableStructure(t *testing.T) {
 	}
 }
 
+// A link's href is a URL, and it is the third channel that reaches a card file
+// with a token in it — safeURL already closed the navigate argument and the
+// snapshot URL, and this is the one Predicate.AttrVal carried raw. It mattered
+// twice over: the value is rendered to the agent from the card, and with
+// BRIDGE_MEMORY_API_KEY set compress.go posts the rendered card off-machine.
+func TestParseSnapshotReducesLinkHref(t *testing.T) {
+	const page = `Page: Mail | https://mail.example.com/
+link [Inbox] href="/u/0/?token=SECRET123&q=private+meditation" @e1
+`
+	d := digestOfText(t, page)
+	if d == nil || len(d.Nodes) == 0 {
+		t.Fatalf("no node parsed from %q", page)
+	}
+	var link *NodeSig
+	for i := range d.Nodes {
+		if d.Nodes[i].Role == "link" {
+			link = &d.Nodes[i]
+		}
+	}
+	if link == nil {
+		t.Fatal("no link node parsed")
+	}
+	got := link.Attrs["href"]
+	if strings.Contains(got, "SECRET123") || strings.Contains(got, "meditation") {
+		t.Fatalf("the query string survived into the digest: %q", got)
+	}
+	if got != "/u/0/" {
+		t.Errorf("href = %q, want the query dropped and the path kept", got)
+	}
+}
+
 func TestParseSnapshotDropsProse(t *testing.T) {
 	d := digestOfText(t, testSnapshot)
 	// ADR-0018: a text line is page content, not structure. Nothing derived from

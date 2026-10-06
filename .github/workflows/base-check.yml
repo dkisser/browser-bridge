@@ -4,11 +4,9 @@ on:
   pull_request:
     branches:
       - main
-      - feat/simplify_tool
   push:
     branches:
       - main
-      - feat/simplify_tool
 
 jobs:
   check:

@@ -44,6 +44,17 @@
         "The plan does not try multiple guessed selectors one after another.",
         "The plan does not use get_html on whole-page containers (main, body, #content)."
       ]
+    },
+    {
+      "id": 4,
+      "prompt": "Log into the internal wiki and add a page called \"Q3 planning notes\" under the Team space.",
+      "expected_output": "A plan that pulls the host's learned card before exploring, per the mandated site-memory step (ADR-0027).",
+      "files": [],
+      "expectations": [
+        "The plan runs `bridge memory show <host> --json` for the wiki host right after landing on it, before choosing selectors.",
+        "The plan treats a `no card for <host>` answer as normal and continues without it.",
+        "The plan takes selectors from the card when the card names them, instead of guessing."
+      ]
     }
   ]
 }

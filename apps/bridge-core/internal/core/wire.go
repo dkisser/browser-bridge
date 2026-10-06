@@ -228,6 +228,30 @@ func LandingHost(payload ResponsePayload) string {
 	return ""
 }
 
+// LandedTabID reports which tab a command left the agent on, when that is not
+// the tab the command was addressed to.
+//
+// Only tab:new moves the answer. It is the one command sent without a target
+// tab — it is what opens the next one — and it answers with the tab it created
+// (background.ts returns {id, url}). Keying that result under the addressed tab
+// put a real tab's host under key 0, which nothing ever asks for, and left the
+// tab that actually exists with no host at all. The cost was concrete: the
+// agent's next snapshot on that tab resolved no host, so the ADR-0019 second
+// injection point — the only one that hands back resolved refs — never fired,
+// and the learner attributed the snapshot to no site.
+func LandedTabID(command string, payload ResponsePayload, addressed int) int {
+	if command != "tab:new" || len(payload.Data) == 0 {
+		return addressed
+	}
+	var out struct {
+		ID *int `json:"id"`
+	}
+	if err := json.Unmarshal(payload.Data, &out); err != nil || out.ID == nil || *out.ID < 0 {
+		return addressed
+	}
+	return *out.ID
+}
+
 // hostOf is the host a URL belongs to, lowercased, or "" for anything that is
 // not a site (a bare scheme, a relative path, an empty string).
 func hostOf(raw string) string {

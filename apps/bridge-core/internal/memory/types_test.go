@@ -3,6 +3,7 @@ package memory
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -62,5 +63,100 @@ func TestRedactArgsDropsTypedContentAndQueries(t *testing.T) {
 	}
 	if got := HostFromURL(redactedURL); got != "mail.example.com" {
 		t.Errorf("the host did not survive redaction: got %q from %v", got, redactedURL)
+	}
+}
+
+func TestSafeSelectorReducesBareText(t *testing.T) {
+	// A selector that is really prose must reduce to the fact that it was
+	// text. The sentence is page content the moment querySelectorByText
+	// matches it, and it reaches the card through two paths — the recorded
+	// arg and the failure's Sel — so it cannot survive either.
+	prose := []string{
+		"Standup notes",
+		"her lawyer private note",
+		"some prose",
+		"a sentence, with punctuation",
+	}
+	for _, in := range prose {
+		got := safeSelector(in)
+		if got != "…" {
+			t.Errorf("safeSelector(%q) = %q, want … (the prose was kept)", in, got)
+		}
+		redacted := redactArgs("gettext", map[string]any{"selector": in})
+		if got := redacted["selector"]; got != "…" {
+			t.Errorf("recorded selector for %q = %v, want …", in, got)
+		}
+	}
+}
+
+func TestSafeSelectorKeepsStructure(t *testing.T) {
+	// The other half: a real selector keeps the part that generalises, or the
+	// reduction protects against nothing.
+	cases := []struct{ in, want string }{
+		{`[data-message-subject="Standup notes"]`, `[data-message-subject=…]`},
+		{".entry-content", ".entry-content"},
+		{"#main", "#main"},
+		{"div > p", "div > p"},
+		{"input[name]", "input[name]"},
+		// A ref is the one address form the feature is built on.
+		{"@e14", "@e14"},
+	}
+	for _, c := range cases {
+		if got := safeSelector(c.in); got != c.want {
+			t.Errorf("safeSelector(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestErrCodeNeverStoresTheMessage(t *testing.T) {
+	// Codes the control plane and the extension already mint pass through:
+	// they are the generalising part, and flattening them would throw away the
+	// distinction between "the browser was offline" and "no such element".
+	for _, in := range []string{
+		"selector_not_found",
+		"browser_offline",
+		"cannot_buffer",
+		"sw_timeout",
+		"forbidden_sender",
+		"bb_sensitive_field_at_execution",
+	} {
+		if got := errCode(in); got != in {
+			t.Errorf("errCode(%q) = %q, want the code unchanged", in, got)
+		}
+	}
+
+	// Prose is classified on its fixed head, and the selector the message
+	// quotes back is never part of the result.
+	const sentence = `No element found for "her lawyer private note" — tried it as a CSS selector and as exact visible text.`
+	if got := errCode(sentence); got != "no_element" {
+		t.Errorf("errCode(not-found) = %q, want no_element", got)
+	}
+	if strings.Contains(errCode(sentence), "lawyer") {
+		t.Errorf("the message survived into the code: %q", errCode(sentence))
+	}
+
+	others := map[string]string{
+		`Element with text not found: her lawyer private note`: "no_element",
+		"The element matched by \"...\" has no text content":   "empty_element",
+		"Invalid ref selector: @e (expected @e<N>)":            "bad_ref",
+		"Ref @e14 not found on page. Take a fresh snapshot":    "bad_ref",
+		"Unknown DOM command: frobnicate":                      "unknown_command",
+		"Missing required tabId":                               "missing_tab",
+		"Unable to capture screenshot: tab must be active":     "unknown",
+		"": "",
+	}
+	for in, want := range others {
+		if got := errCode(in); got != want {
+			t.Errorf("errCode(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestErrCodeRefusesASentenceShapedLikeACode(t *testing.T) {
+	// The passthrough is a shape test, so a message with no spaces in it must
+	// still not be trusted. Anything carrying a capital or punctuation is prose
+	// and is classified rather than stored.
+	if got := errCode("Element not found:"); got != "no_element" {
+		t.Errorf("errCode with a capital = %q, want it classified, not stored", got)
 	}
 }

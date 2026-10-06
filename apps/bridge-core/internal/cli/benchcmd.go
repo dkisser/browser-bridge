@@ -206,26 +206,35 @@ func newBenchRecordCommand() *cobra.Command {
 				return err
 			}
 			outw := cmd.OutOrStdout()
-			fmt.Fprintf(outw, "Trace over the last %s: %d call(s), %d rejected.\n",
+			fmt.Fprintf(outw, "Trace over the last %s: %d call(s), %d rejected",
 				since, window.Calls, window.Failures)
+			if window.Soft > 0 {
+				fmt.Fprintf(outw, ", %d oversized read(s)", window.Soft)
+			}
+			fmt.Fprintln(outw, ".")
 			if card != "none" {
 				fmt.Fprintf(outw, "Card was %s; the trace shows it was handed over %d time(s), %d entries in total.\n",
 					card, window.WithCard, window.CardLines)
 			}
 			rec := map[string]any{
-				"at":          time.Now().UnixMilli(),
-				"mode":        "live",
-				"task":        task,
-				"host":        host,
-				"ok":          ok,
-				"memory":      card == "used",
-				"cardSeen":    window.WithCard > 0,
-				"cardsShown":  window.WithCard,
-				"cardLines":   window.CardLines,
-				"cardUsed":    card == "used",
-				"calls":       window.Calls,
-				"failures":    window.Failures,
-				"cost":        window.Calls,
+				"at":         time.Now().UnixMilli(),
+				"mode":       "live",
+				"task":       task,
+				"host":       host,
+				"ok":         ok,
+				"memory":     card == "used",
+				"cardSeen":   window.WithCard > 0,
+				"cardsShown": window.WithCard,
+				"cardLines":  window.CardLines,
+				"cardUsed":   card == "used",
+				"calls":      window.Calls,
+				"failures":   window.Failures,
+				"soft":       window.Soft,
+				// Same unit as the fixture half: every call, and the budget on
+				// top when the attempt failed. A live run whose every call was
+				// rejected used to record cost 0 — the cheapest possible run, and
+				// the one regression this half exists to catch.
+				"cost":        liveCost(window.Calls, ok),
 				"window":      since.String(),
 				"callsReport": calls,
 			}
@@ -281,8 +290,17 @@ func newBenchRecordCommand() *cobra.Command {
 
 // traceCounts is what the recorded trace says happened in a window.
 type traceCounts struct {
-	Calls    int
+	// Calls is every response in the window, not only the ones the browser
+	// accepted. bench.Score() already made this call — "scoring only rejections
+	// made a wasted call free" — and the live half has to agree with it, or the
+	// two write different units into the same column.
+	Calls int
+	// Failures is the subset the browser actually rejected. An oversized read
+	// (OutcomeSoft) is not one: the browser returned it, and an agent spent a
+	// call getting a page of chrome back. It is counted in Calls, which is
+	// where its cost lives.
 	Failures int
+	Soft     int
 	// WithCard is how many times a card was actually handed to an agent, and
 	// CardLines how many entries those cards carried between them.
 	WithCard  int
@@ -301,6 +319,21 @@ type traceCounts struct {
 // did not notice the card, or that ignored it, will happily say the card was
 // never there — and a baseline built on that says recall is broken when the
 // recall was fine and the agent was not.
+// liveCost scores a live attempt in the same unit the fixture half writes into
+// the same column: every call, plus the budget on top when it failed.
+//
+// It exists because an earlier version charged only the calls the browser
+// accepted, so a run where a card was offered and every call was rejected came
+// out at cost 0 — the cheapest possible run, recorded as the best one in the
+// trend, for the exact situation this half exists to detect. bench.Score() had
+// already made this call for the fixture; the live half was the outlier.
+func liveCost(calls int, ok bool) int {
+	if ok {
+		return calls
+	}
+	return calls + bench.Budget
+}
+
 func traceWindow(m *memory.Manager, host string, since time.Duration) (traceCounts, error) {
 	out := traceCounts{ByCommand: map[string]int{}}
 	cutoff := time.Now().Add(-since).UnixMilli()
@@ -323,12 +356,14 @@ func traceWindow(m *memory.Manager, host string, since time.Duration) (traceCoun
 				out.CardLines += r.Entries
 			case memory.KindResponse:
 				out.Commands++
-				if r.Outcome == memory.OutcomeOK {
-					out.Calls++
-					out.ByCommand[r.Command]++
-					continue
+				out.Calls++
+				out.ByCommand[r.Command]++
+				switch r.Outcome {
+				case memory.OutcomeError:
+					out.Failures++
+				case memory.OutcomeSoft:
+					out.Soft++
 				}
-				out.Failures++
 			}
 		}
 		if next <= from || len(recs) == 0 {
@@ -402,13 +437,21 @@ func newBenchReportCommand() *cobra.Command {
 					continue
 				}
 				withCard, _ := r["memory"].(bool)
-				// A live record whose window contained no calls is not a
-				// measurement of anything — the window missed the task, which is
-				// exactly what the cross-check exists to catch. Averaging its
-				// zero in would drag a real mean toward a number no agent ever
-				// spent, so it is counted and left out.
+				// A live record whose window contained no calls at all is not
+				// a measurement of anything — the window missed the task,
+				// which is exactly what the cross-check exists to catch.
+				// Averaging its zero in would drag a real mean toward a number
+				// no agent ever spent, so it is counted and left out.
+				//
+				// The test is deliberately "no calls", not "no successful
+				// calls": an agent offered a card and rejected on every single
+				// call is a data point, and it is the worst one there is. It
+				// used to read as 0 calls here, be skipped as a mis-windowed
+				// run, and cost 0 on the way into the trend.
 				if m == "live" {
-					if n, isNum := r["calls"].(float64); !isNum || n == 0 {
+					n, isNum := r["calls"].(float64)
+					f, isNum2 := r["failures"].(float64)
+					if !isNum || !isNum2 || n+f == 0 {
 						skipped++
 						continue
 					}

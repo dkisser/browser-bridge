@@ -37,6 +37,27 @@ const maxNameLen = 40
 // maxAttrValLen bounds a stored attribute value, for the same reason.
 const maxAttrValLen = 60
 
+// attrValue reduces a digest attribute value to the part that generalises.
+//
+// The extension collects exactly two kinds of attribute (collectAttrs,
+// content.ts): a link's href and a form control's name. href is a URL and gets
+// safeURL — the same channel safeURL already closes for the navigate argument
+// and the snapshot URL. A link's query string is a session token or a document
+// id as readily as it is a search term, and a card file outlives the visit;
+// `Predicate.AttrVal` carried the raw value through to `cards/<host>.json`,
+// where it was rendered to the agent and, with BRIDGE_MEMORY_API_KEY set,
+// posted off-machine by compress.go.
+//
+// name is kept whole. A form field's identifier is exactly the lesson that
+// saves a call next time — "this site calls the box q" — and it is a name the
+// extension chose to read, not prose the page was merely displaying.
+func attrValue(key, val string) string {
+	if key == "href" {
+		return safeURL(val)
+	}
+	return truncate(val, maxAttrValLen)
+}
+
 // NodeSig is one addressable node, reduced to what a predicate can match on.
 // Ref is the ref *at observation time*; it is evidence, not a handle — a card
 // never hands a stored ref back to an agent, because that ref numbered some
@@ -261,7 +282,7 @@ func parseSnapshotLine(line string) (pageNode, bool) {
 		if n.attrs == nil {
 			n.attrs = make(map[string]string, 2)
 		}
-		n.attrs[key] = truncate(val[1:len(val)-1], maxAttrValLen)
+		n.attrs[key] = attrValue(key, val[1:len(val)-1])
 		rest = trimmed[:sp]
 	}
 

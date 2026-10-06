@@ -1,7 +1,10 @@
 package memory
 
 import (
+	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -230,5 +233,86 @@ func TestEveryStreamRecordIsReadableJSON(t *testing.T) {
 	blob, _ := json.Marshal(revs[0])
 	if len(blob) == 0 {
 		t.Error("a revision did not serialize")
+	}
+}
+
+// The leak boundary, driven the way the daemon drives it, and checked against
+// the bytes on disk rather than against a struct: a reduction that a field type
+// forgets is a reduction that did not happen.
+//
+// This is layer 2 of docs/verifying-self-learning.md turned into a test. The
+// manual version is a grep for a verbatim sentence; this is the same grep, run
+// on every build, over the two channels that put page content into a card.
+func TestCardFileNeverCarriesPageProse(t *testing.T) {
+	const (
+		secret = "her lawyer private note"
+		token  = "SECRET123"
+	)
+	m := newTestManager(t, "b-leak")
+	hook := m
+
+	hook.RecordCommand("n1", "navigate", "mail.example.com", 1, map[string]any{"url": "https://mail.example.com/inbox"})
+	hook.RecordResult("n1", "navigate", "mail.example.com", 1,
+		okPayload(`{"url":"https://mail.example.com/inbox","title":"Inbox"}`))
+
+	// A snapshot whose link carries a query string: the third URL channel,
+	// which reached Predicate.AttrVal raw and so into the card.
+	snap := `Page: Inbox | https://mail.example.com/inbox
+link [Private] href="/u/0/?token=` + token + `&q=private+meditation" @e1
+button [Compose] @e2
+`
+	hook.RecordCommand("s1", "snapshot", "mail.example.com", 1, nil)
+	hook.RecordResult("s1", "snapshot", "mail.example.com", 1, okPayload(snapshotJSON(snap)))
+
+	// A get_text that failed by name: the agent asked for the message by its
+	// text, so the selector IS page content, and the extension quotes it back
+	// inside its not-found message.
+	notFound := `No element found for "` + secret + `" — tried it as a CSS selector and as exact visible text.`
+	hook.RecordCommand("g1", "gettext", "mail.example.com", 1, map[string]any{"selector": secret})
+	hook.RecordResult("g1", "gettext", "mail.example.com", 1,
+		core.ResponsePayload{Status: "error", Error: notFound, Message: notFound})
+
+	if err := m.LearnNow(); err != nil {
+		t.Fatalf("LearnNow: %v", err)
+	}
+	card, ok := m.Store().Get("mail.example.com")
+	if !ok {
+		t.Fatal("a host that produced a failure got no card, so nothing was checked")
+	}
+
+	// The bytes on disk, not the struct: a handle could come back through a
+	// custom marshaller, and the file is what outlives the visit.
+	raw, err := os.ReadFile(filepath.Join(m.Store().Dir(), safeFileName("mail.example.com")+".json"))
+	if err != nil {
+		t.Fatalf("read card: %v", err)
+	}
+	for _, leak := range []string{secret, token, "private+meditation"} {
+		if bytes.Contains(raw, []byte(leak)) {
+			t.Errorf("%q reached the card file:\n%s", leak, raw)
+		}
+	}
+	// The same boundary on the stream, which is the card's raw material and
+	// outlives it just as long. It sits beside cards/, not inside it.
+	dataDir := filepath.Dir(m.Store().Dir())
+	stream, err := os.ReadFile(filepath.Join(dataDir, streamFileName))
+	if err != nil {
+		t.Fatalf("read stream: %v", err)
+	}
+	for _, leak := range []string{secret, token, "private+meditation"} {
+		if bytes.Contains(stream, []byte(leak)) {
+			t.Errorf("%q reached the trace stream:\n%s", leak, stream)
+		}
+	}
+
+	// And the reduction must still have left the lesson behind, or it is not a
+	// reduction, it is a deletion: the failure is recorded under a code.
+	if len(card.Failures) != 1 {
+		t.Fatalf("failures = %+v, want the one rejected call", card.Failures)
+	}
+	if got := card.Failures[0].Signature; got != "no_element" {
+		t.Errorf("failure signature = %q, want the code no_element", got)
+	}
+	if got := card.Failures[0].Sel; got != "…" {
+		t.Errorf("failure selector = %q, want the bare-text selector reduced", got)
 	}
 }

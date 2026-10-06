@@ -462,10 +462,11 @@ func consumeSuccess(seg *segment, r TraceRecord, cmd TraceRecord) {
 }
 
 func failureOf(r TraceRecord, cmd TraceRecord) failedCall {
+	// The signature is a code from a closed set, never the message. Nothing is
+	// stored here that could quote the page back — see errCode. "unknown" is a
+	// real answer, not a missing one: an unrecognised failure still happened,
+	// and a failure is the one signal this package trusts most.
 	sig := r.ErrCode
-	if sig == "" {
-		sig = r.ErrMsg
-	}
 	if sig == "" {
 		sig = "unknown"
 	}

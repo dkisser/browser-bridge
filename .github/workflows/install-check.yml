@@ -4,14 +4,12 @@ on:
   pull_request:
     branches:
       - main
-      - feat/simplify_tool
     paths:
       - 'install/**'
       - '.github/workflows/install-check.yml'
   push:
     branches:
       - main
-      - feat/simplify_tool
     paths:
       - 'install/**'
       - '.github/workflows/install-check.yml'

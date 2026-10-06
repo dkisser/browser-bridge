@@ -321,7 +321,18 @@ func safeSelector(sel string) string {
 	}
 	// A bare string is text, by the querySelectorByText path. There is no
 	// structure to keep.
-	if !strings.ContainsAny(sel, ".#[]():>+~*=, ") {
+	//
+	// The space is deliberately *not* in the marker set. It looks like the one
+	// thing that would tell "div span" (a descendant combinator) from "her
+	// lawyer private note" (prose), and it is also the character every sentence
+	// of prose contains — with it here, any multi-word phrase fails this test,
+	// falls through to the structural path below, and is copied byte for byte
+	// into a card file. The two are genuinely indistinguishable, so the
+	// ambiguity has to resolve toward the side that cannot leak: a real
+	// descendant selector loses its shape and reduces to "…", which still
+	// teaches the thing that matters (a bare selector did not resolve here),
+	// where prose would be written down permanently.
+	if !strings.ContainsAny(sel, ".#[]():>+~*=") {
 		return "…"
 	}
 	var b strings.Builder
@@ -372,6 +383,70 @@ func safeURL(raw string) string {
 	u.Fragment = ""
 	u.User = nil
 	return u.String()
+}
+
+// errCode reduces a wire error to a code.
+//
+// Two kinds of value arrive on the `error` field. The control plane's own
+// errors are already codes — browser_offline, cannot_buffer, sw_timeout, plus
+// the ones the extension mints like forbidden_sender and
+// bb_sensitive_field_at_execution — and those pass through untouched. The
+// extension's DOM errors are `err.message`, which is prose: the not-found
+// message quotes the selector back verbatim, and a bare-text selector *is* page
+// text (see safeSelector). Recording that wrote the page's own words into a
+// card file that outlives the visit, through the one channel the argument
+// reduction above does not reach.
+//
+// So: a code is already the generalising part and is kept; prose is classified
+// on the fixed head of the template literal that produced it (content.ts,
+// background.ts, messages.ts), so the argument it embeds is never read, let
+// alone stored. Anything unrecognised becomes "unknown" — an unrecognised
+// failure is still a failure, and the signature only has to say that this call
+// failed this way, not reproduce how it said it.
+func errCode(msg string) string {
+	if msg == "" {
+		return ""
+	}
+	// Already a code: the characters a code is allowed to be made of, and
+	// nothing else. A sentence cannot pass this — it has spaces, capitals or
+	// punctuation in it.
+	if isErrorCode(msg) {
+		return msg
+	}
+	switch {
+	case strings.HasPrefix(msg, "No element found for"),
+		strings.HasPrefix(msg, "Element not found:"),
+		strings.HasPrefix(msg, "Element with text not found:"):
+		return "no_element"
+	case strings.HasPrefix(msg, "The element matched by"):
+		return "empty_element"
+	case strings.HasPrefix(msg, "Invalid ref selector:"),
+		strings.HasPrefix(msg, "Ref @e"):
+		return "bad_ref"
+	case strings.HasPrefix(msg, "Unknown DOM command:"),
+		strings.HasPrefix(msg, "Unknown command:"):
+		return "unknown_command"
+	case msg == "Missing required tabId":
+		return "missing_tab"
+	default:
+		return "unknown"
+	}
+}
+
+// isErrorCode reports whether s is a bare identifier — lower case, digits and
+// underscores — which is the shape every code on the wire already has.
+func isErrorCode(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // selectorOf returns the element address a command was aimed at, preferring a

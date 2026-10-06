@@ -300,20 +300,25 @@ func (r *Router) recordResult(envelope Envelope, call pendingCall) {
 	// A landing result is where a tab's site becomes known, so it is updated
 	// before the hook is told, and the hook is told the *new* host: an agent
 	// that just navigated is now on that site.
-	host := r.hostAfter(call, payload)
-	r.mem.RecordResult(envelope.ID, call.command, host, call.tabID, payload)
+	//
+	// The tab is resolved before the host, because tab:new is the one command
+	// that lands on a tab other than the one it was addressed to — and both
+	// the Router's view and the hook's bookkeeping have to be keyed on the tab
+	// that now exists, not on the 0 it was sent with.
+	tab := LandedTabID(call.command, payload, call.tabID)
+	host := r.hostAfter(tab, call.command, payload)
+	r.mem.RecordResult(envelope.ID, call.command, host, tab, payload)
 }
 
 // hostAfter returns the host the given call leaves its tab on, updating the
 // Router's own view when the call was a landing that named a site.
-func (r *Router) hostAfter(call pendingCall, payload ResponsePayload) string {
+func (r *Router) hostAfter(tab int, command string, payload ResponsePayload) string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	tab := call.tabID
 	if tab < 0 {
 		tab = 0
 	}
-	if IsLandingCommand(call.command) {
+	if IsLandingCommand(command) {
 		if h := LandingHost(payload); h != "" {
 			r.tabHost[tab] = h
 		}

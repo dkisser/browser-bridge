@@ -181,8 +181,12 @@ func (m *Manager) RecordResult(envelopeID, command, host string, tabID int, p co
 	}
 	if p.Error != "" || p.Status == "error" {
 		rec.Outcome = OutcomeError
-		rec.ErrCode = p.Error
-		rec.ErrMsg = p.Message
+		// The code, never the message: `error` on the wire is the extension's
+		// `err.message`, and the not-found one quotes the selector back — which
+		// for the querySelectorByText path is the page's own text. p.Message is
+		// dropped for the same reason and for a second one: it comes from
+		// chrome.runtime.lastError, which can carry the tab's URL. See errCode.
+		rec.ErrCode = errCode(p.Error)
 	}
 
 	// The response record carries the command's host and arguments. Without

@@ -12,7 +12,7 @@ point forward, so "this one has been amended" has nowhere to live inside the old
 file. This table is that place. `CONTEXT.md` is the other: it is mutable, and it
 records what is true *now*.
 
-## The self-learning run (0017–0029)
+## The self-learning run (0017–0030)
 
 The most recent decision chain, and the one with amendments. An ADR listed in the
 **Amends** column is not wrong — it was right about what it decided, and a later
@@ -21,18 +21,19 @@ ADR records what changed since. Read the chain, not just the newest file.
 | # | Decision | Amends |
 |---|----------|--------|
 | [0017](./0017-bb-home-data-directory.md) | `$BB_HOME` gets a `data/` directory for persistent data | superseded in part by [0021](./0021-hand-written-file-store.md) (the `(SQLite)` parenthetical) |
-| [0018](./0018-structural-trace.md) | The Trace is structural: no page text, no typed input | [0023](./0023-a-card-carries-no-handles.md), [0025](./0025-what-the-baseline-taught.md) |
+| [0018](./0018-structural-trace.md) | The Trace is structural: no page text, no typed input | [0023](./0023-a-card-carries-no-handles.md), [0025](./0025-what-the-baseline-taught.md), [0030](./0030-the-boundary-as-implemented.md) |
 | [0019](./0019-in-band-site-card-injection.md) | Site knowledge is injected in-band, on the result path | [0024](./0024-site-card-as-implemented.md), [0025](./0025-what-the-baseline-taught.md), [0027](./0027-the-cli-recalls-by-pull.md) |
 | [0020](./0020-single-typed-stream.md) | One typed append-only stream; cards, diffs and the audit view are projections | |
 | [0021](./0021-hand-written-file-store.md) | Memory is hand-written files, not a database | 0017 |
 | [0022](./0022-optional-model-call-for-compression.md) | The model call is optional, compresses only, and needs no SDK | |
 | [0023](./0023-a-card-carries-no-handles.md) | A card carries predicates, never handles | 0018's ref-as-evidence, in the card's case; 0019 |
 | [0024](./0024-site-card-as-implemented.md) | The site card as built: two halves, in-process, MCP-only | 0019 |
-| [0025](./0025-what-the-baseline-taught.md) | What the baseline tightened: the record's boundary, and what a card is for | 0018, 0019 |
+| [0025](./0025-what-the-baseline-taught.md) | What the baseline tightened: the record's boundary, and what a card is for | 0018, 0019, [0030](./0030-the-boundary-as-implemented.md) |
 | [0026](./0026-show-a-cards-refs-offline.md) | A card's refs may be shown offline, but only labelled as offline | 0024, [0027](./0027-the-cli-recalls-by-pull.md) |
 | [0027](./0027-the-cli-recalls-by-pull.md) | The CLI recalls by pull — a mandated skill step, not a tool | |
 | [0028](./0028-guides-and-routines.md) | Curated guides and routines live beside the card | |
 | [0029](./0029-crystallization-starts-as-cli-scripts.md) | Crystallization starts as CLI scripts; no execution runtime yet | |
+| [0030](./0030-the-boundary-as-implemented.md) | The boundary as implemented: codes pass through, prose is classified, href is reduced | 0018, 0025 |
 
 ## The rest
 

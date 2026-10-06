@@ -36,14 +36,18 @@ type Options struct {
 }
 
 // Phase is one stretch of repetitions against one version of the site.
+//
+// The store is shared by every phase of a run and starts clean: the phases are
+// about what happens to a card as the site changes under it, which is the whole
+// point of the schedule. There is deliberately no per-phase "start fresh" knob
+// — a phase that wiped the store would be measuring nothing, since a card
+// cannot go stale if there is no card. The knob existed once and was never
+// read, which is worse than never having it: it documented a guard that did not
+// guard.
 type Phase struct {
 	Name string
 	// Build returns the site for an attempt in this phase.
 	Build func() *Site
-	// NewStore starts from a clean store. Only the first phase may do that;
-	// a later phase that does is measuring nothing, since a card cannot be
-	// stale if there is no card.
-	NewStore bool
 }
 
 func siteV1() *Site { return NewFixture() }
@@ -66,7 +70,7 @@ func siteV2() *Site {
 func Phases(train, stale, recover int) []Phase {
 	var out []Phase
 	if train > 0 {
-		out = append(out, Phase{Name: "trained on v1", Build: siteV1, NewStore: true})
+		out = append(out, Phase{Name: "trained on v1", Build: siteV1})
 	}
 	if stale > 0 {
 		out = append(out, Phase{Name: "v1 card, site redesigned", Build: siteV2})
@@ -81,7 +85,7 @@ func run(dir string, reps int, build func() *Site) ([]Result, error) {
 	if reps <= 0 {
 		return nil, fmt.Errorf("bench: repetitions must be positive")
 	}
-	return runPhases(dir, reps, []Phase{{Name: "v1", Build: build, NewStore: true}})
+	return runPhases(dir, reps, []Phase{{Name: "v1", Build: build}})
 }
 
 func runPhases(dir string, total int, phases []Phase) ([]Result, error) {

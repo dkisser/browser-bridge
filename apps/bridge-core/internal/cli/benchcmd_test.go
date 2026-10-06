@@ -11,6 +11,7 @@ import (
 
 	"browser-bridge/internal/core"
 	"browser-bridge/internal/memory"
+	"browser-bridge/internal/memory/bench"
 )
 
 // The bench CLI has one job beyond producing numbers: it must not be able to
@@ -129,13 +130,16 @@ func TestBenchRecordDerivesCountsFromTheTrace(t *testing.T) {
 
 	stdout, _, err := runCLI(t, "memory", "bench", "record",
 		"--host", "news.example.com", "--task", "find the top story",
-		"--ok", "--card", "used", "--since", "1h", "--calls", "6", "--failures", "2")
+		"--ok", "--card", "used", "--since", "1h", "--calls", "8", "--failures", "2")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Six, not five: the navigate is a call too, and counting it is the point of
-	// reading the trace instead of counting by hand.
-	if !strings.Contains(stdout, "6 call(s), 2 rejected") {
+	// Eight, not five: the navigate is a call too, and the two the browser
+	// rejected are calls too. The fixture half counts them the same way
+	// (bench.Score) and the two write one column, so counting only what was
+	// accepted here made a wasted call free on one side of the ledger and
+	// expensive on the other.
+	if !strings.Contains(stdout, "8 call(s), 2 rejected") {
 		t.Errorf("the trace counts were not read back:\n%s", stdout)
 	}
 	if strings.Contains(stdout, "!") {
@@ -157,8 +161,8 @@ func TestBenchRecordDerivesCountsFromTheTrace(t *testing.T) {
 	if rec["mode"] != "live" {
 		t.Errorf("mode is %v, want live", rec["mode"])
 	}
-	if got := rec["calls"]; got != float64(6) {
-		t.Errorf("calls is %v, want 6", got)
+	if got := rec["calls"]; got != float64(8) {
+		t.Errorf("calls is %v, want 8", got)
 	}
 	if got := rec["cardsShown"]; got != float64(2) {
 		t.Errorf("cardsShown is %v, want 2; the number of cards offered has to come from the trace, not from the agent", got)
@@ -191,7 +195,7 @@ func TestBenchRecordFlagsADisagreement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stdout, "you reported 9 calls, the trace shows 6") {
+	if !strings.Contains(stdout, "you reported 9 calls, the trace shows 8") {
 		t.Errorf("the disagreement was not reported:\n%s", stdout)
 	}
 
@@ -338,6 +342,73 @@ func seedTrace(t *testing.T, okCalls, errCalls int) {
 		m.RecordCommand(envID, "gettext", host, 1, map[string]any{"selector": "div.nope"})
 		m.RecordResult(envID, "gettext", host, 1, core.ResponsePayload{
 			Status: "error", Error: "element_not_found", Message: "no match"})
+	}
+}
+
+// The regression this test exists for: an agent was offered a card, ignored it,
+// and had every call rejected. That is the worst outcome the live half can
+// record, and it used to record cost 0 — the best possible number — because
+// only accepted calls counted, and then be dropped from the trend entirely as a
+// mis-windowed run. The operator was told to widen --since, which is the wrong
+// remedy for a real regression.
+func TestBenchRecordKeepsTheAllRejectedRun(t *testing.T) {
+	withBenchHome(t)
+	seedTrace(t, 0, 4)
+	seedCardShown(t, 1, 3)
+
+	stdout, _, err := runCLI(t, "memory", "bench", "record",
+		"--host", "news.example.com", "--task", "find the top story",
+		"--ok=false", "--card", "ignored", "--since", "1h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Five, not four: seedTrace always writes a navigate, which was accepted.
+	// The four rejections are on top of it, and they are calls too.
+	if !strings.Contains(stdout, "5 call(s), 4 rejected") {
+		t.Errorf("the rejected calls were not counted as calls:\n%s", stdout)
+	}
+	// No banner: nothing disagreed, the agent simply did badly.
+	if strings.Contains(stdout, "!") {
+		t.Errorf("a self-consistent report was flagged as a disagreement:\n%s", stdout)
+	}
+
+	env, err := EnvFromOSEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	recs, err := readJSONL(filepath.Join(env.DataDir(), benchLogName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("got %d records, want 1", len(recs))
+	}
+	rec := recs[0]
+	if got := rec["calls"]; got != float64(5) {
+		t.Errorf("calls is %v, want 5", got)
+	}
+	if got := rec["failures"]; got != float64(4) {
+		t.Errorf("failures is %v, want 4", got)
+	}
+	// The fixture half charges the budget on top of the calls when the attempt
+	// failed (bench.Score). This one has to charge it too, or the two write
+	// different units into the same averaged column.
+	want := float64(5 + bench.Budget)
+	if got := rec["cost"]; got != want {
+		t.Errorf("cost is %v, want %v", got, want)
+	}
+
+	// And it must survive into the trend rather than being reported as a
+	// mis-windowed run.
+	report, _, err := runCLI(t, "memory", "bench", "report", "--mode", "live")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(report, "runs 1") {
+		t.Errorf("the run was left out of its own trend:\n%s", report)
+	}
+	if strings.Contains(report, "left out") {
+		t.Errorf("the run was skipped as a mis-windowed record:\n%s", report)
 	}
 }
 

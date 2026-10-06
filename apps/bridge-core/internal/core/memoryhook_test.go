@@ -112,6 +112,40 @@ func TestRouterRecordsAFailedExtensionCall(t *testing.T) {
 	}
 }
 
+// tab:new is the one command addressed to no tab that lands on one, and its
+// result carries the tab it created. Keyed on the addressed tab instead, the
+// new tab's host went under key 0 — a key nothing asks for — and the tab that
+// actually existed resolved no host, so its first snapshot was offered no card
+// and the learner had no site to attribute it to.
+func TestTabNewKeysItsHostOnTheTabItCreated(t *testing.T) {
+	h := &recordingHook{}
+	r, st := makeRouterWithHook(t, h)
+	sender := &fakeSender{}
+
+	// The wire command name is tab:new — tab_new is the MCP tool's name, and the
+	// envelope carries the wire one. No tabId either: tab:new is what opens the
+	// next tab, so it cannot name one.
+	r.HandleInboundCommand(Envelope{
+		ID: "t1", Type: TypeCommand, BrowserID: st.BrowserID(),
+		Payload:   json.RawMessage(`{"command":"tab:new","tabId":0,"params":{"url":"https://shop.test/cart"}}`),
+		Timestamp: time.Now().UnixMilli(),
+	}, sender)
+
+	// The extension answers with the tab it created (background.ts).
+	r.HandleBrowserResponse(Envelope{
+		ID: "t1", Type: TypeResponse, BrowserID: st.BrowserID(),
+		Payload:   json.RawMessage(`{"status":"ok","data":{"id":42,"url":"https://shop.test/cart"}}`),
+		Timestamp: time.Now().UnixMilli(),
+	})
+
+	if got := r.HostForTab(42); got != "shop.test" {
+		t.Errorf("HostForTab(42) = %q, want shop.test", got)
+	}
+	if got := r.HostForTab(0); got != "" {
+		t.Errorf("HostForTab(0) = %q, want empty: the addressed tab is not the tab that was opened", got)
+	}
+}
+
 // A router-generated failure is the most instructive kind — the agent asked a
 // browser that was not there — so it has to reach the store like any other.
 func TestRouterRecordsItsOwnSynthesizedErrors(t *testing.T) {
