@@ -416,6 +416,9 @@ func errCode(msg string) string {
 	switch {
 	case strings.HasPrefix(msg, "No element found for"),
 		strings.HasPrefix(msg, "Element not found:"),
+		// wait:element times out with its own wording, and it is the one
+		// not-found the extension produces after waiting rather than at once.
+		strings.HasPrefix(msg, "Element not found within"),
 		strings.HasPrefix(msg, "Element with text not found:"):
 		return "no_element"
 	case strings.HasPrefix(msg, "The element matched by"):

@@ -53,7 +53,12 @@ const maxAttrValLen = 60
 // extension chose to read, not prose the page was merely displaying.
 func attrValue(key, val string) string {
 	if key == "href" {
-		return safeURL(val)
+		// Still bounded after being reduced. safeURL drops the query, not the
+		// path, and a path can be arbitrarily long and can carry an identifier
+		// of its own — a card is read by future agents and, with
+		// BRIDGE_MEMORY_API_KEY set, sent to a model endpoint, so an unbounded
+		// value is a channel whatever it happens to contain today.
+		return truncate(safeURL(val), maxAttrValLen)
 	}
 	return truncate(val, maxAttrValLen)
 }

@@ -140,9 +140,12 @@ func TestErrCodeNeverStoresTheMessage(t *testing.T) {
 		"The element matched by \"...\" has no text content":   "empty_element",
 		"Invalid ref selector: @e (expected @e<N>)":            "bad_ref",
 		"Ref @e14 not found on page. Take a fresh snapshot":    "bad_ref",
-		"Unknown DOM command: frobnicate":                      "unknown_command",
-		"Missing required tabId":                               "missing_tab",
-		"Unable to capture screenshot: tab must be active":     "unknown",
+		// wait:element times out with its own wording, and without this arm a
+		// not-found lands in the same bucket as every unrecognised failure.
+		"Element not found within 5000ms: her lawyer private note": "no_element",
+		"Unknown DOM command: frobnicate":                          "unknown_command",
+		"Missing required tabId":                                   "missing_tab",
+		"Unable to capture screenshot: tab must be active":         "unknown",
 		"": "",
 	}
 	for in, want := range others {

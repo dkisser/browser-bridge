@@ -99,6 +99,29 @@ link [Inbox] href="/u/0/?token=SECRET123&q=private+meditation" @e1
 	}
 }
 
+// The bound has to survive the reduction. safeURL drops the query, not the
+// path, and a card outlives the visit and — with BRIDGE_MEMORY_API_KEY set — is
+// sent to a model endpoint, so an unbounded path is a channel whatever it
+// happens to contain today.
+func TestParseSnapshotBoundsALongHref(t *testing.T) {
+	long := "https://x.test/" + strings.Repeat("segment/", 80) + "end"
+	d := digestOfText(t, `Page: X | https://x.test/
+link [Deep] href="`+long+`" @e1
+`)
+	var link *NodeSig
+	for i := range d.Nodes {
+		if d.Nodes[i].Role == "link" {
+			link = &d.Nodes[i]
+		}
+	}
+	if link == nil {
+		t.Fatal("no link node parsed")
+	}
+	if n := len(link.Attrs["href"]); n > maxAttrValLen {
+		t.Errorf("href is %d chars, want it bounded by %d", n, maxAttrValLen)
+	}
+}
+
 func TestParseSnapshotDropsProse(t *testing.T) {
 	d := digestOfText(t, testSnapshot)
 	// ADR-0018: a text line is page content, not structure. Nothing derived from

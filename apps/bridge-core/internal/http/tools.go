@@ -79,7 +79,13 @@ func (s *MCPServer) dispatch(ctx context.Context, req *mcp.CallToolRequest, tool
 	// the tab is (recorded on the result) is already up to date. The note rides
 	// on the payload in-process; the executors below decide whether to render it.
 	if s.memory != nil {
-		result.SiteNote = s.memory.TakeSiteNote(spec.name, s.router.HostForTab(spec.tabID), spec.tabID)
+		// The same tab the router keyed the result on. tab:new is addressed to
+		// no tab and lands on one, so asking with spec.tabID here would ask
+		// about tab 0 — a key nothing ever holds a host for — and the landing
+		// would silently inject nothing while the tab that was actually opened
+		// waits a snapshot to learn anything.
+		tab := core.LandedTabID(spec.name, result, spec.tabID)
+		result.SiteNote = s.memory.TakeSiteNote(spec.name, s.router.HostForTab(tab), tab)
 	}
 	return result, nil
 }

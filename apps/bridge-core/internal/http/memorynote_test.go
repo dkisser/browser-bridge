@@ -20,14 +20,50 @@ import (
 type stubHook struct {
 	note     string
 	askedFor []string
+	askedTab []int
 }
 
 func (h *stubHook) RecordCommand(string, string, string, int, map[string]any)      {}
 func (h *stubHook) RecordResult(string, string, string, int, core.ResponsePayload) {}
 
-func (h *stubHook) TakeSiteNote(command, _ string, _ int) string {
+func (h *stubHook) TakeSiteNote(command, _ string, tabID int) string {
 	h.askedFor = append(h.askedFor, command)
+	h.askedTab = append(h.askedTab, tabID)
 	return h.note
+}
+
+// tab:new is addressed to no tab and lands on one, so the adapter has to ask
+// about the tab the extension reports rather than the one it sent. Asking about
+// the addressed tab — 0 — finds no host, and the landing silently injects
+// nothing: the agent opens a known site with tab_new and is told nothing at all,
+// then gets only the site map (OnlyMap) on the next snapshot, never the
+// failure and procedure tiers ADR-0019 puts at the landing.
+func TestTabNewAsksAboutTheTabItLandedOn(t *testing.T) {
+	router := &fakeRouter{
+		host: "shop.test",
+		script: func(c capturedCommand) (core.ResponsePayload, bool) {
+			return core.ResponsePayload{
+				Status: "ok",
+				Data:   json.RawMessage(`{"id":42,"url":"https://shop.test/cart"}`),
+			}, true
+		},
+	}
+	h := &stubHook{note: "a card"}
+	session := newServerWithHook(t, h, router)
+
+	callTool(t, session, "tab_new", map[string]any{"url": "https://shop.test/cart"})
+
+	if len(h.askedTab) != 1 {
+		t.Fatalf("the card was asked for %d time(s), want once", len(h.askedTab))
+	}
+	if h.askedTab[0] != 42 {
+		t.Errorf("asked about tab %d, want 42 — the tab the extension reported", h.askedTab[0])
+	}
+	for _, tab := range router.askedAbout() {
+		if tab == 0 {
+			t.Error("the adapter resolved the host against tab 0, which tab:new was addressed to and never lands on")
+		}
+	}
 }
 
 func newServerWithHook(t *testing.T, h core.MemoryHook, router *fakeRouter) *mcp.ClientSession {
