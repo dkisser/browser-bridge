@@ -20,6 +20,7 @@ import (
 
 	"browser-bridge/internal/core"
 	"browser-bridge/internal/http"
+	"browser-bridge/internal/memory"
 	"browser-bridge/internal/ws"
 )
 
@@ -109,7 +110,26 @@ func Run(ctx context.Context, cfg Config) error {
 		Logger:    logger,
 	})
 
-	rt = core.NewRouter(st, browser, reg, logger)
+	// The self-learning store (ADRs 0018-0022). It lives beside the pairing
+	// config under $BB_HOME/data and is given the router, not the adapters, so
+	// a Trace covers CLI traffic as well as MCP traffic. A failure here is
+	// logged and the control plane comes up without it: a learning system that
+	// can stop the browser from being driven is worse than no learning.
+	mem, memErr := memory.New(memory.Options{
+		DataDir:    st.DataDir(),
+		BrowserID:  st.BrowserID(),
+		Compressor: memory.NewCompressorFromEnv(),
+		Logf:       logger.Printf,
+	})
+	if memErr != nil {
+		logger.Printf("self-learning disabled: %v", memErr)
+	}
+
+	routerOpts := []core.RouterOption{}
+	if mem != nil {
+		routerOpts = append(routerOpts, core.WithMemoryHook(mem))
+	}
+	rt = core.NewRouter(st, browser, reg, logger, routerOpts...)
 
 	in := ws.NewInbound(ws.InboundOptions{
 		Port:     cfg.InboundPort,
@@ -128,6 +148,7 @@ func Run(ctx context.Context, cfg Config) error {
 		DefaultTimeout: cfg.MCPTimeout,
 		Version:        cfg.Version,
 		Logger:         logger,
+		Memory:         memoryHook(mem),
 	})
 
 	// Start order matches index.ts: browser, inbound, MCP.
@@ -160,6 +181,18 @@ func Run(ctx context.Context, cfg Config) error {
 
 	logger.Printf("bridge-core ready: inbound=%d, browser=%d, mcp=%d", cfg.InboundPort, cfg.BrowserPort, cfg.MCPPort)
 
+	// The background learner. Started last so it never competes with the
+	// three servers coming up, and stopped by the same ctx that shuts them
+	// down (ADR-0020).
+	if mem != nil {
+		mem.Start(ctx)
+		defer func() {
+			if err := mem.Close(); err != nil {
+				logger.Printf("memory close: %v", err)
+			}
+		}()
+	}
+
 	<-ctx.Done()
 
 	// Each server gets its own 5s budget. A single shared context gets
@@ -176,6 +209,16 @@ func Run(ctx context.Context, cfg Config) error {
 	// and tracked connections to the process exit.
 	shutdownOne("mcp", mcpSrv.Shutdown)
 	return nil
+}
+
+// memoryHook adapts the concrete store to the interface the router and the MCP
+// server hold. A nil *memory.Manager becomes a nil interface here on purpose —
+// a typed nil in an interface would pass the != nil checks and panic on use.
+func memoryHook(m *memory.Manager) core.MemoryHook {
+	if m == nil {
+		return nil
+	}
+	return m
 }
 
 // authorizer picks the auth provider the way index.ts does: no BRIDGE_API_KEYS

@@ -86,6 +86,7 @@ func New(version string) *cobra.Command {
 	root.AddCommand(newWaitNavigationCommand(g))
 	root.AddCommand(newBrowserListCommand(g))
 	root.AddCommand(newPairCommand())
+	root.AddCommand(newMemoryCommand(g))
 	root.AddCommand(newServiceCommand(g))
 	root.AddCommand(newAutostartCommand(g))
 	root.AddCommand(newServeCommand(version))

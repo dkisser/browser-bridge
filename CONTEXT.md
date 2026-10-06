@@ -73,8 +73,26 @@ Diagnostic output written by the control plane and its supervisors under `$BB_HO
 _Avoid_: log, debug log, diagnostics
 
 **Audit trail**:
-The durable record of what the agent did in the browser and when — the accountability counterpart to Approval and Takeover (planned, not yet implemented). Data, not an Operational log: preserved across upgrades, never rotated away, and read by the user rather than by developers.
+The durable record of what the agent did in the browser and when — the accountability counterpart to Approval and Takeover (planned, not yet implemented; the Trace is its raw material). Data, not an Operational log: preserved across upgrades, never rotated away, and read by the user rather than by developers.
 _Avoid_: audit log, activity log
+
+### Learned knowledge
+
+**Trace**:
+The append-only record of what the agent actually did in the browser, captured at the Control plane and reduced to structure: the commands issued, their outcome, and a structural digest of the page — never page text, never what the user typed. The raw material a Memory is derived from, and preserved after derivation. An Operational log answers "why is it misbehaving"; a Trace answers "what did the agent do, and did it work". The Audit trail is a view over a Trace, not a separate record.
+_Avoid_: log, event log, session log, history
+
+**Memory**:
+Durable, derived knowledge the control plane carries between sessions about how to drive a given site, produced from what the agent actually did. Lives under `$BB_HOME/data/` on the same preservation contract as the Audit trail, and is a different kind of thing from it: the Audit trail records *what happened*, a Memory records *what the control plane now believes because of it*. Owned by Browser Bridge — the agent's own runtime memory store is a separate system and is not read.
+_Avoid_: self-learning, self-evolution, experience base, training data
+
+**Site card**:
+The Memory for one host: what its pages are laid out like, which calls work there, and which ones have been observed to fail. Injected back to the agent as a labelled reference when it lands on a host it has a card for, and rewritten when the host stops matching. A card is *advice about where to look first*, never a replacement for looking: the agent keeps its own list of what to try, and the card's shortlist goes in front of it. A card that is stale must cost calls, not correctness.
+_Avoid_: site profile, site model, recipe file, playbook
+
+**Baseline**:
+The measurement of whether a Site card changes what an agent does — a delta between two runs that differ only in whether the card was read, averaged over repetitions so a trend can be read. Distinct from a test: a test asks whether the mechanism still works, a Baseline asks whether it is worth anything, and a mechanism can pass every test and be worth nothing. Two kinds, and the difference is the whole point: a *fixture* baseline drives a synthetic page through the real learner and is deterministic, so it measures the plumbing; a *live* baseline runs real tasks in a real agent, and the only things taken on trust are the ones the trace cannot know — whether the task succeeded, and whether the agent used the card.
+_Avoid_: benchmark, eval, score, metrics
 
 ### Human surface
 
