@@ -1,13 +1,14 @@
 package cli
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -559,6 +560,11 @@ func newBenchReportCommand() *cobra.Command {
 
 // --- jsonl helpers -------------------------------------------------------------
 
+// maxBenchLineBytes bounds one record's scanner buffer. A bench row is a task
+// name, a host and a few numbers; anything larger is a corrupt line, and the
+// scanner refusing to allocate for it is a better outcome than the OOM.
+const maxBenchLineBytes = 1 << 20
+
 func appendJSONL(path string, rec map[string]any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
@@ -587,17 +593,34 @@ func readJSONL(path string) ([]map[string]any, error) {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
+	// Line by line, skipping what will not parse, and saying how much was
+	// skipped. The stream's own reader already made this choice (ADR-0020's
+	// reader counts an unparseable line and moves on), and bench.jsonl is
+	// machine-written by a human-invoked command — so a SIGKILL mid-append is a
+	// torn tail, and a hand-edit is a bad line. Either way a whole report was
+	// the wrong answer: there was nothing to repair it with, and the records
+	// either side of the bad line were fine.
 	var out []map[string]any
-	dec := json.NewDecoder(f)
-	for {
+	skipped := 0
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), maxBenchLineBytes)
+	for sc.Scan() {
+		line := bytes.TrimSpace(sc.Bytes())
+		if len(line) == 0 {
+			continue
+		}
 		var rec map[string]any
-		err := dec.Decode(&rec)
-		if err != nil {
-			if strings.Contains(err.Error(), "EOF") {
-				return out, nil
-			}
-			return nil, err
+		if err := json.Unmarshal(line, &rec); err != nil {
+			skipped++
+			continue
 		}
 		out = append(out, rec)
 	}
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	if skipped > 0 {
+		fmt.Fprintf(os.Stderr, "warning: %d unreadable line(s) in %s were skipped\n", skipped, path)
+	}
+	return out, nil
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"browser-bridge/internal/core"
@@ -157,6 +158,10 @@ func RunPhases(dir string, opts Options) ([]Result, error) {
 // A trace the benchmark produces has to look like a session someone could have
 // had, because "it runs the real learner over the real records" is the entire
 // claim. Colliding identifiers are a trace no session could produce.
+// recordSeq keeps envelope ids unique across a whole run, including across
+// arms and attempts that share a prefix.
+var recordSeq atomic.Int64
+
 func attempt(m *memory.Manager, site *Site, task Task, on bool, phase, rep int) Result {
 	env := fmt.Sprintf("p%d-r%d-a%d-%s", phase, rep, boolToArm(on), task.Name)
 	tabID := phase*1_000_000 + rep*1_000 + boolToArm(on)*100
@@ -263,7 +268,15 @@ func recordSnapshot(m *memory.Manager, prefix string, tabID int, host, snap stri
 // target", the card never matched anything the agent looked for, and both arms
 // scored identically at zero.
 func recordCall(m *memory.Manager, prefix string, tabID int, host, command, target string, ok bool, text string) {
-	env := fmt.Sprintf("%s-%s", prefix, command)
+	// One id per call, never per command name. prefix-command collides the
+	// moment a task issues the same command twice, and the harness's own
+	// invariant is that a trace must look like a session someone could have
+	// had: colliding identifiers are a trace no session could produce. It cost
+	// nothing in the numbers (the args ride on the response record, and the
+	// learner reads commands before the clobbering one is written) but
+	// CardRevision.Evidence cites envelope ids, so an id stopped identifying
+	// one call.
+	env := fmt.Sprintf("%s-%s-%d", prefix, command, recordSeq.Add(1))
 	params := map[string]any{}
 	if target != "" {
 		params["selector"] = target

@@ -229,13 +229,18 @@ func (l *Learn) Run() error {
 		// recomputed, which is the same bounded over-count a crash between the
 		// card write and the cursor write produces.
 		deferredFrom := segments[maxSegmentsPerPass-1].startLine
+		// Counted before the truncation. After it, len(segments) *is* the cap,
+		// so the audit line used to read "capped at 64 of 64 segments; the rest
+		// are deferred" — the one number in it that could not be trusted was the
+		// one telling you how much had been thrown away.
+		deferred := len(segments) - maxSegmentsPerPass
 		segments = segments[:maxSegmentsPerPass]
 		if deferredFrom < from {
 			deferredFrom = from
 		}
 		cursorTo = deferredFrom
-		run.Error = fmt.Sprintf("pass capped at %d of %d segments; the rest are deferred to the next pass",
-			maxSegmentsPerPass, len(segments))
+		run.Error = fmt.Sprintf("pass capped at %d of %d segments; %d deferred to the next pass",
+			maxSegmentsPerPass, maxSegmentsPerPass+deferred, deferred)
 	}
 
 	hosts := make(map[string]bool)
@@ -257,7 +262,7 @@ func (l *Learn) Run() error {
 		if err := l.cursor.Set(cursorTo); err != nil {
 			return fmt.Errorf("memory: advance cursor: %w", err)
 		}
-		run.Written = int(cursorTo - from)
+		run.Consumed = int(cursorTo - from)
 	}
 	return nil
 }

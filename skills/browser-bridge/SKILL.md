@@ -79,7 +79,9 @@ Every browser command exists in both interfaces; examples in this skill use the 
 
 ## Working with tabs
 
-Create a fresh tab per workflow with `tab_new` (CLI: `tab:new`) and pass its `tab_id` to every page-level call; close it with `tab_close` when done. This keeps the user's active tab untouched and lets you run several tab workflows in parallel. It is also the cheapest way into the Working scope: commands on a tab you opened run silently, while acting on a tab you did not open may pause for human approval. That is why `tab_new` — not any page command — is the real start of every workflow.
+Create a fresh tab per workflow with `tab_new` (CLI: `tab:new`) and pass its `tab_id` to every page-level call; close it with `tab_close` when done. This keeps the user's active tab untouched and lets you run several tab workflows in parallel.
+
+Opening your own tab does **not** buy you a quieter run. Approval is keyed on the **origin**, not on tab ownership: page commands need the origin approved or a one-shot origin grant, and an agent tab changes nothing there. Only two commands are tab-scoped — `tab_close` on a tab you did not open, and `screenshot` on a tab that is not the visible one in its window — and both pause the same way. So open a tab for the reasons above (parallelism, not disturbing the user), not expecting it to be the thing that stops the prompts.
 
 Tabs opened via `tab_new` are automatically grouped per window into the 'browser-bridge' tab group (orange) — purely visual organization, no action or judgment needed from you, and the user's own tabs are never grouped or moved. `tab_list` reports `inAgentGroup: true` for each tab in that group.
 

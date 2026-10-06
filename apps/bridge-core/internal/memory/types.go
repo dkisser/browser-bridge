@@ -10,6 +10,7 @@
 package memory
 
 import (
+	"net"
 	"net/url"
 	"strings"
 	"time"
@@ -114,12 +115,18 @@ type CardRevision struct {
 
 // LearnRun is one pass of the background learner.
 type LearnRun struct {
-	From     int64  `json:"from"` // stream offset (line index) the pass started at
-	To       int64  `json:"to"`
-	Read     int    `json:"read"`
-	Skipped  int    `json:"skipped"`
-	Hosts    int    `json:"hosts"`
-	Written  int    `json:"written"`
+	From    int64 `json:"from"` // stream offset (line index) the pass started at
+	To      int64 `json:"to"`
+	Read    int   `json:"read"`
+	Skipped int   `json:"skipped"`
+	Hosts   int   `json:"hosts"`
+	// Consumed is lines of trace, not cards written. It used to be called
+	// `written` and carried the line count, which is the same one-name-two-units
+	// trap ResultSz and OutcomeSoft both were: a reader reasonably counts
+	// card_revision records against it and gets a different number. The cards
+	// this pass wrote are the revision records in the stream, where they can be
+	// counted exactly.
+	Consumed int    `json:"consumed"`
 	Duration int64  `json:"ms"`
 	Error    string `json:"error,omitempty"`
 }
@@ -238,10 +245,25 @@ func Host(raw string) string {
 	if h == "" {
 		return ""
 	}
-	if !strings.Contains(h, ".") {
-		return "" // a scheme like "about:" or a stray token is not a site
+	if strings.Contains(h, ".") {
+		return h
 	}
-	return h
+	// No dot left. A registrable domain always has one, so what is here is
+	// either a loopback name, an IP literal, or a token that is not a site at
+	// all — and the feature was silently inert on the first two: a card cannot
+	// exist for localhost, which is where a locally developed site lives, or for
+	// ::1, and nothing said so.
+	//
+	// A dotless name is still not accepted in general. "about" and a stray
+	// token reach here too, and every rule in this package keys off the host,
+	// so admitting them would mint a card per piece of junk.
+	if h == "localhost" || strings.HasSuffix(h, ".localhost") {
+		return h
+	}
+	if ip := net.ParseIP(h); ip != nil {
+		return h
+	}
+	return ""
 }
 
 // HostFromURL is Host with the parse failure folded in, for call sites that

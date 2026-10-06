@@ -41,9 +41,18 @@ type Manager struct {
 	mu   sync.Mutex
 	tabs map[int]*tabState
 	// inflight carries a command's host and arguments from RecordCommand to
-	// RecordResult. Bounded by the router's own in-flight set, and cleared as
-	// each result lands.
+	// RecordResult, and is cleared as each result lands.
+	//
+	// "Cleared as each result lands" was the whole of the bound, and it is not
+	// one: three router paths drop a command without ever producing a result —
+	// send-to-extension fails, the MCP sendCommand timeout calls RemoveRoute, and
+	// the client disconnects. Every one of those strands an entry for as long as
+	// the daemon lives, and the timeout path makes it routine rather than
+	// exotic. So the map is capped and evicts the oldest, which loses a record
+	// nobody is going to read rather than growing without bound.
 	inflight map[string]inflightCmd
+	// inflightOrder is the insertion order, for that eviction.
+	inflightOrder []string
 	// browserID is the profile cards are attributed to (ADR-0019's
 	// per-browser annotation). A card entry remembers the browser it was
 	// observed under and is withheld from the others.
@@ -53,6 +62,12 @@ type Manager struct {
 type inflightCmd struct {
 	args map[string]any
 }
+
+// maxInflight caps the stranded-command map. A browser session issues commands
+// in the hundreds, not the tens of thousands, so this is generous enough that a
+// live command is never the thing evicted, and small enough that a leak is
+// bounded rather than merely slow.
+const maxInflight = 4096
 
 // tabState is what the store keeps per tab, and it is deliberately almost
 // nothing. Where the tab *is* belongs to the control plane, which is told and
@@ -106,6 +121,18 @@ func New(opts Options) (*Manager, error) {
 		return nil, err
 	}
 	cursor := LoadCursor(opts.DataDir)
+	// Roll the stream over if it has outgrown its ceiling *and* the learner has
+	// consumed all of it. See Stream.Rotate for why the second half is the
+	// condition that makes it safe. Restarting the cursor is the whole cost, and
+	// it costs one idempotent re-read of the retained generation.
+	if rotated, err := stream.Rotate(cursor.Get()); err != nil {
+		logf("memory: rotate stream: %v", err)
+	} else if rotated {
+		if err := cursor.Set(0); err != nil {
+			logf("memory: reset cursor after rotation: %v", err)
+		}
+		logf("memory: rotated the trace stream")
+	}
 	learn := NewLearn(stream, store, cursor, opts.Compressor, logf)
 	idle := opts.IdleAfter
 	if idle <= 0 {
@@ -161,6 +188,12 @@ func (m *Manager) RecordCommand(envelopeID, command, host string, tabID int, arg
 	}
 	m.mu.Lock()
 	m.inflight[envelopeID] = inflightCmd{args: redacted}
+	m.inflightOrder = append(m.inflightOrder, envelopeID)
+	for len(m.inflightOrder) > maxInflight {
+		oldest := m.inflightOrder[0]
+		m.inflightOrder = m.inflightOrder[1:]
+		delete(m.inflight, oldest)
+	}
 	m.mu.Unlock()
 	m.wake()
 }

@@ -3,6 +3,7 @@ package memory
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -97,4 +98,41 @@ func TestLearnerRunsWhileRecordingContinues(t *testing.T) {
 	if err := m.LearnNow(); err != nil {
 		t.Fatalf("LearnNow: %v", err)
 	}
+}
+
+// Three router paths drop a command without ever producing a result: the send
+// to the extension fails, the MCP sendCommand timeout calls RemoveRoute, and
+// the client disconnects. Each one strands an inflight entry for as long as the
+// daemon lives, and the timeout path makes it routine rather than exotic.
+func TestInflightIsBoundedWhenResultsNeverLand(t *testing.T) {
+	m := newTestManager(t, "b-leak")
+	for i := 0; i < maxInflight*2; i++ {
+		m.RecordCommand(envID(i), "gettext", "news.example.com", 1, map[string]any{"selector": "@e1"})
+	}
+	m.mu.Lock()
+	n := len(m.inflight)
+	m.mu.Unlock()
+	if n > maxInflight {
+		t.Fatalf("inflight grew to %d entries, want at most %d", n, maxInflight)
+	}
+	// And a live command still resolves: the eviction drops the oldest, not the
+	// one that was just recorded.
+	last := envID(maxInflight*2 - 1)
+	m.mu.Lock()
+	_, present := m.inflight[last]
+	m.mu.Unlock()
+	if !present {
+		t.Error("the most recent command was evicted rather than the oldest")
+	}
+	first := envID(0)
+	m.mu.Lock()
+	_, stale := m.inflight[first]
+	m.mu.Unlock()
+	if stale {
+		t.Error("the oldest command was kept; the order is not insertion order")
+	}
+}
+
+func envID(i int) string {
+	return "e" + strconv.Itoa(i)
 }

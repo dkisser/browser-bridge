@@ -340,6 +340,18 @@ func TestHostScope(t *testing.T) {
 		"about:blank":                       "",
 		"":                                  "",
 		"not a url":                         "",
+		// A dotless name is a loopback name or nothing. The feature was
+		// silently inert on the first two — a card cannot exist for localhost,
+		// which is where a locally developed site lives, or for ::1.
+		"http://localhost:3000/admin": "localhost",
+		"localhost":                   "localhost",
+		"http://app.localhost:8080/":  "app.localhost",
+		"http://[::1]:8080/":          "::1",
+		"http://127.0.0.1:3000/":      "127.0.0.1",
+		// Still not a site, dotless or not.
+		"about":             "",
+		"chrome":            "",
+		"some-random-token": "",
 	}
 	for in, want := range cases {
 		if got := Host(in); got != want {

@@ -1,6 +1,6 @@
 # Verifying self-learning by hand
 
-The fixture benchmark (`bridge memory bench run`, ADR-0025) proves the mechanism
+The fixture baseline (`bridge memory bench run`, ADR-0025) proves the mechanism
 works and puts a number on it. It cannot prove three things, because its site is
 synthetic and its agent is a script:
 

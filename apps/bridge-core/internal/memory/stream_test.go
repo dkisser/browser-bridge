@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -354,5 +355,79 @@ func TestSafeFileNameCannotEscape(t *testing.T) {
 	}
 	if got := safeFileName("news.example.com"); got != "news.example.com" {
 		t.Errorf("safeFileName did not pass a normal host through unchanged: %q", got)
+	}
+}
+
+// A stream that only grows is the one artefact in this package with no ceiling:
+// cards are bounded, failure lists are bounded, and the benchmark log is a
+// human's own file — but this one grows with every call forever, and the reader
+// scans it from byte 0 on every pass.
+func TestStreamRotatesWhenItIsConsumedAndOverTheCeiling(t *testing.T) {
+	dir := t.TempDir()
+	s, err := OpenStream(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Fill past the ceiling with one enormous record rather than many, so the
+	// test does not have to write 16MB of lines.
+	big := TraceRecord{
+		Kind: KindCommand, AtMs: 1, Envelope: "e1", Command: "gettext",
+		Args: map[string]any{"selector": strings.Repeat("x", streamRotateBytes)},
+	}
+	if appendErr := s.Append(big); appendErr != nil {
+		t.Fatal(appendErr)
+	}
+
+	// Not rotated while the learner is behind: those records are not learned yet,
+	// and the cursor is a line number, so a rotation now would renumber them.
+	rotated, err := s.Rotate(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rotated {
+		t.Fatal("rotated with unlearned records behind the cursor")
+	}
+
+	// Rotated once the cursor has caught up.
+	if _, next, _, readErr := s.ReadFrom(0); readErr != nil {
+		t.Fatal(readErr)
+	} else if next != 1 {
+		t.Fatalf("next = %d, want 1", next)
+	}
+	rotated, err = s.Rotate(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rotated {
+		t.Fatal("a consumed, oversized stream was not rotated")
+	}
+
+	// The retained generation is still readable, and the new active file is
+	// empty and usable.
+	recs, _, _, err := s.ReadFrom(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 || recs[0].Envelope != "e1" {
+		t.Fatalf("the rotated generation did not survive: %+v", recs)
+	}
+	if appendErr := s.Append(TraceRecord{Kind: KindCommand, AtMs: 2, Envelope: "e2", Command: "click"}); appendErr != nil {
+		t.Fatal(appendErr)
+	}
+	recs, _, _, err = s.ReadFrom(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 2 {
+		t.Fatalf("after rotation the reader saw %d records, want 2", len(recs))
+	}
+	// Line numbers continue across the generations, which is what lets a
+	// restarted cursor re-read the retained one without losing its place.
+	_, next, _, err := s.ReadFrom(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next != 2 {
+		t.Errorf("next = %d, want 2", next)
 	}
 }

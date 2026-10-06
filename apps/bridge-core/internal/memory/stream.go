@@ -28,6 +28,19 @@ import (
 
 const streamFileName = "stream.jsonl"
 
+// rotatedStreamName is the one previous generation. Two would be tidier and
+// cost more than they are worth: the audit surface a human reads is the recent
+// one, and the learner rebuilds any card it needs from the current file alone.
+const rotatedStreamName = "stream.jsonl.1"
+
+// streamRotateBytes is when the active file is rolled over. Without a ceiling
+// the stream is the one artefact in this package that grows forever: cards are
+// bounded, failures are bounded, the benchmark log is a human's own file — but
+// this one grows with every call forever, and ReadFrom scans it from byte 0 on
+// every pass, so both the disk and the idle CPU cost of the control plane are
+// a function of how long it has been running.
+const streamRotateBytes = 16 << 20
+
 // Stream is the append-only log. It is safe for concurrent use: Appends come
 // from the router's command and response paths, and ReadCursor from the
 // background learner.
@@ -35,6 +48,9 @@ type Stream struct {
 	mu   sync.Mutex
 	path string
 	f    *os.File
+	// rotated is the previous generation, kept so `memory history` and
+	// Revisions still see the records the rotation moved out of the way.
+	rotated string
 	// lastByte records whether the previous append ended the file on a newline,
 	// so a torn tail left by a crash is closed off before the next record is
 	// added. Without it, the next append concatenates onto the partial line and
@@ -140,15 +156,46 @@ func (s *Stream) ReadFrom(from int64) (recs []TraceRecord, next int64, skipped i
 	// (we pick it up next pass). The torn-tail check below is what makes a
 	// half-written trailing line safe to read concurrently.
 	s.mu.Lock()
-	path := s.path
+	paths := []string{s.path}
+	if s.rotated != "" {
+		paths = append([]string{s.rotated}, paths...)
+	}
 	s.mu.Unlock()
 
+	var (
+		idx      int64
+		skippedN int
+	)
+	for _, path := range paths {
+		got, upTo, miss, rerr := s.readFile(path, from, idx)
+		if rerr != nil {
+			return nil, from, skipped, rerr
+		}
+		recs = append(recs, got...)
+		skippedN += miss
+		if upTo > idx {
+			idx = upTo
+		}
+	}
+	// An empty stream, or one with nothing at or after `from`, has to hand back
+	// exactly what was asked for: the learner stops on `next <= from`, and a
+	// next below from would look like it had consumed records it never read.
+	next = idx
+	if next < from {
+		next = from
+	}
+	return recs, next, skipped + skippedN, nil
+}
+
+// readFile reads one generation, numbering its lines from base. `idx` is the
+// absolute line number of this file's first line.
+func (s *Stream) readFile(path string, from, base int64) (recs []TraceRecord, next int64, skipped int, err error) {
 	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, from, 0, nil
+			return nil, base, 0, nil
 		}
-		return nil, from, 0, fmt.Errorf("memory: read stream: %w", err)
+		return nil, base, 0, fmt.Errorf("memory: read stream: %w", err)
 	}
 	defer func() { _ = f.Close() }()
 
@@ -166,7 +213,9 @@ func (s *Stream) ReadFrom(from int64) (recs []TraceRecord, next int64, skipped i
 			break
 		}
 		body := bytes.TrimRight(line, "\n")
-		if idx >= from {
+		// Absolute line number, so a caller whose cursor counted through the
+		// previous generation still lands in the right place.
+		if base+idx >= from {
 			var rec TraceRecord
 			if uerr := json.Unmarshal(body, &rec); uerr != nil {
 				skipped++
@@ -175,12 +224,86 @@ func (s *Stream) ReadFrom(from int64) (recs []TraceRecord, next int64, skipped i
 			}
 		}
 		idx++
-		next = idx
+		next = base + idx
 		if rerr != nil {
 			break
 		}
 	}
 	return recs, next, skipped, nil
+}
+
+// Rotate rolls the active file over to the single retained generation and
+// starts a fresh one. It is a no-op unless the stream is over the ceiling AND
+// the learner has consumed everything in it.
+//
+// That second condition is what makes this safe. The cursor is a line number,
+// so a rotation renumbers every line after the cut; rotating with unlearned
+// records behind the cursor would either lose them or need an offset the cursor
+// has nowhere to keep. Waiting for the learner to catch up means the file is
+// fully consumed at the moment it turns over, the cursor restles at 0, and the
+// next pass re-reads the retained generation from the start — which is
+// idempotent, because rebuilding a card from the same records produces the same
+// card.
+func (s *Stream) Rotate(cursorLine int64) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	fi, err := s.f.Stat()
+	if err != nil || fi.Size() < streamRotateBytes {
+		return false, nil
+	}
+	// How many lines the active file holds, to compare against the cursor.
+	// A line can be large — a single command's recorded args, in principle —
+	// so the buffer has to clear the ceiling rather than assume small records.
+	// If the count cannot be established, do not rotate: not knowing is a
+	// reason to leave the file alone, and the next start will try again.
+	lines, ok := s.lineCount()
+	if !ok || cursorLine < lines {
+		return false, nil
+	}
+
+	rotated := filepath.Join(filepath.Dir(s.path), rotatedStreamName)
+	_ = os.Remove(rotated)
+	if cerr := s.f.Close(); cerr != nil {
+		return false, fmt.Errorf("memory: close stream for rotation: %w", cerr)
+	}
+	if rerr := os.Rename(s.path, rotated); rerr != nil {
+		return false, fmt.Errorf("memory: rotate stream: %w", rerr)
+	}
+	f, err := os.OpenFile(s.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return false, fmt.Errorf("memory: reopen stream: %w", err)
+	}
+	s.f = f
+	s.rotated = rotated
+	s.lastByte = '\n'
+	return true, nil
+}
+
+// maxStreamLineBytes bounds one record's scanner buffer during a rotation
+// sweep. It clears the rotation ceiling on purpose: a legitimate record can be
+// large, and a sweep that gave up early would report a line count too low and
+// rotate with records still unlearned.
+const maxStreamLineBytes = 2 * streamRotateBytes
+
+// lineCount counts the lines in the active generation, or reports that it
+// could not.
+func (s *Stream) lineCount() (int64, bool) {
+	f, err := os.Open(s.path)
+	if err != nil {
+		return 0, false
+	}
+	defer func() { _ = f.Close() }()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), maxStreamLineBytes)
+	var lines int64
+	for sc.Scan() {
+		lines++
+	}
+	if sc.Err() != nil {
+		return 0, false
+	}
+	return lines, true
 }
 
 // Close releases the append handle.
