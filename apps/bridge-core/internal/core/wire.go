@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"net"
 	"net/url"
 	"strings"
 	"time"
@@ -215,13 +216,13 @@ func LandingHost(payload ResponsePayload) string {
 		return ""
 	}
 	if out.URL != "" {
-		if h := hostOf(out.URL); h != "" {
+		if h := HostOf(out.URL); h != "" {
 			return h
 		}
 	}
 	// tab:new and tab:switch answer with the tab they landed on.
 	for _, it := range out.Items {
-		if h := hostOf(it.URL); h != "" {
+		if h := HostOf(it.URL); h != "" {
 			return h
 		}
 	}
@@ -263,16 +264,48 @@ func LandedTabID(command string, payload ResponsePayload, addressed int) int {
 	return *out.ID
 }
 
-// hostOf is the host a URL belongs to, lowercased, or "" for anything that is
+// HostOf is the host a URL belongs to, lowercased, or "" for anything that is
 // not a site (a bare scheme, a relative path, an empty string).
-func hostOf(raw string) string {
+//
+// This is the one copy of the rule. It used to be a second one, forked before
+// ADR-0032 and never given the fix: it kept the old `has a dot in it` test
+// while memory.Host learned that localhost, *.localhost and IP literals are
+// sites. The two then disagreed on exactly the hosts ADR-0032 was written
+// about — the learner happily wrote cards/localhost.json through HostFromURL
+// while the router never populated tabHost, so HostForTab returned "" and
+// TakeSiteNote bailed at its own guard. The card existed and was never
+// injected, which is the silence ADR-0032 promised to end.
+//
+// memory imports core, so memory.Host delegates here rather than the other
+// way round: a rule this file's header insists consumers must not each invent
+// has to be the one they all call.
+func HostOf(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return ""
 	}
-	h := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
-	if h == "" || !strings.Contains(h, ".") {
+	return HostName(u.Hostname())
+}
+
+// HostName is HostOf for a host that has already been extracted. It applies
+// the same test, and the same reasoning: a registrable domain always has a
+// dot, so a dotless name is a loopback name, an IP literal, or a token that is
+// not a site at all. A dotless name is still not admitted in general — "about"
+// and stray tokens reach here too, and every rule in the control plane keys
+// off the host, so taking them would mint a card per piece of junk.
+func HostName(h string) string {
+	h = strings.ToLower(strings.TrimSuffix(h, "."))
+	if h == "" {
 		return ""
 	}
-	return h
+	if strings.Contains(h, ".") {
+		return h
+	}
+	if h == "localhost" || strings.HasSuffix(h, ".localhost") {
+		return h
+	}
+	if net.ParseIP(h) != nil {
+		return h
+	}
+	return ""
 }

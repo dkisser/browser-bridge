@@ -10,10 +10,11 @@
 package memory
 
 import (
-	"net"
 	"net/url"
 	"strings"
 	"time"
+
+	"browser-bridge/internal/core"
 )
 
 // Record kinds in the stream (ADR-0020). The set is closed so a reader can
@@ -229,41 +230,35 @@ func Host(raw string) string {
 	if raw == "" {
 		return ""
 	}
-	u, err := url.Parse(raw)
-	if err != nil {
-		return ""
-	}
-	h := u.Hostname()
-	if h == "" {
-		// Not a URL at all (a bare host, or a scheme-less path).
-		h = raw
-		if i := strings.IndexAny(h, "/?#"); i >= 0 {
+	// A parse failure is not a rejection: it is the signal that this is not a
+	// URL. url.Parse rejects a bare "::1" outright — "first path segment in URL
+	// cannot contain colon" — which used to return "" before the fallback
+	// below ever ran, so `bridge memory rm ::1` reported "not a host name" for
+	// a host the store had a card for. The bare-host path is the documented
+	// case; the CLI's hand-typed arguments depend on it.
+	h := raw
+	if u, err := url.Parse(raw); err == nil {
+		if parsed := u.Hostname(); parsed != "" {
+			h = parsed
+		} else if i := strings.IndexAny(h, "/?#"); i >= 0 {
 			h = h[:i]
 		}
+	} else if i := strings.IndexAny(h, "/?#"); i >= 0 {
+		h = h[:i]
 	}
-	h = strings.ToLower(strings.TrimSuffix(h, "."))
-	if h == "" {
-		return ""
-	}
-	if strings.Contains(h, ".") {
-		return h
-	}
-	// No dot left. A registrable domain always has one, so what is here is
-	// either a loopback name, an IP literal, or a token that is not a site at
-	// all — and the feature was silently inert on the first two: a card cannot
-	// exist for localhost, which is where a locally developed site lives, or for
-	// ::1, and nothing said so.
+	// The dot / localhost / IP-literal test is core.HostName's, and it is
+	// core's because core is where the router resolves a tab's host from a
+	// landing result. This function used to carry its own copy of that test,
+	// and the copy had drifted: it was forked before ADR-0032 and never given
+	// the fix, so the learner wrote cards for localhost and ::1 through here
+	// while the router — reading the same URL through core's copy — resolved
+	// no host at all, left tabHost unset, and bailed out of TakeSiteNote. The
+	// card existed and was never injected.
 	//
-	// A dotless name is still not accepted in general. "about" and a stray
-	// token reach here too, and every rule in this package keys off the host,
-	// so admitting them would mint a card per piece of junk.
-	if h == "localhost" || strings.HasSuffix(h, ".localhost") {
-		return h
-	}
-	if ip := net.ParseIP(h); ip != nil {
-		return h
-	}
-	return ""
+	// One rule, one place. What is left here is only the part that is about
+	// *this* package: accepting a bare host that url.Parse did not recognise
+	// as one, which the CLI's hand-typed `bridge memory` arguments rely on.
+	return core.HostName(h)
 }
 
 // HostFromURL is Host with the parse failure folded in, for call sites that

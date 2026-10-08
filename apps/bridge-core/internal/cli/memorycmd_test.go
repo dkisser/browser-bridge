@@ -285,3 +285,64 @@ func TestShowWithoutAGuidePrintsNoGuideSection(t *testing.T) {
 		t.Errorf("a missing guide is the normal state and must print nothing:\n%s", stdout)
 	}
 }
+
+// `bridge memory rm` is the escape hatch ADR-0031 §3 is built around: "a card
+// has to be removable". It checked for the file by re-deriving the store's
+// naming rule as host+".json", while the store escapes any host that needs it
+// — ::1 is %3A%3A1, an underscore hostname is %5F. So the existence check
+// looked for a file that was never written, and the command reported "no card
+// for ::1" with the real card sitting right there.
+//
+// That is exactly the host set ADR-0032 newly admitted, so the two ADRs
+// disagreed in practice: one said a card has to be removable, the other
+// admitted hosts the escape hatch could not reach.
+func TestMemoryRmRemovesACardWhoseHostNeededEscaping(t *testing.T) {
+	home := resolvedHome(t)
+	store, err := memory.OpenStore(home + "/data")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hosts := []string{"::1", "a_b.example.com", "mail.example.com"}
+	for _, host := range hosts {
+		if err = store.Put(&memory.SiteCard{Host: host}); err != nil {
+			t.Fatal(err)
+		}
+		// The card is on disk, at the path the store names for it.
+		if _, statErr := os.Stat(store.Path(host)); statErr != nil {
+			t.Fatalf("seed %q: %v", host, statErr)
+		}
+	}
+
+	for _, host := range hosts {
+		if _, stderr, runErr := runCLI(t, "memory", "rm", host); runErr != nil {
+			t.Errorf("bridge memory rm %s = %v\n%s", host, runErr, stderr)
+		}
+		if _, ok := store.Get(host); ok {
+			t.Errorf("bridge memory rm %s left the card in place", host)
+		}
+	}
+}
+
+// The hint readCard prints has to name a file that exists. It used to be
+// built as filepath.Join(store.Dir(), host+".json"), which is not where the
+// store writes a host that needed escaping — so the advice "fix it with an
+// editor" pointed at nothing.
+func TestUnparseableCardHintNamesTheFileThatExists(t *testing.T) {
+	home := resolvedHome(t)
+	store, err := memory.OpenStore(home + "/data")
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := "a_b.example.com"
+	if err = os.WriteFile(store.Path(host), []byte("{ not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, stderr, runErr := runCLI(t, "memory", "show", host)
+	if runErr == nil {
+		t.Fatal("memory show on an unparseable card succeeded")
+	}
+	if !strings.Contains(stderr, store.Path(host)) {
+		t.Errorf("the parse-failure hint does not name the file that exists:\n%s", stderr)
+	}
+}

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"text/tabwriter"
 	"time"
@@ -404,9 +403,17 @@ func newMemoryRemoveCommand() *cobra.Command {
 			// Deliberately not readCard: a card that will not parse is
 			// precisely the one worth deleting, and asking it to parse first
 			// made the delete unavailable for the files that needed it.
-			if _, err := os.Stat(filepath.Join(store.Dir(), host+".json")); err != nil {
+			//
+			// The existence check asks the store for the path rather than
+			// re-deriving it as host+".json". The store escapes a host that
+			// needs it (::1 is %3A%3A1, an underscore hostname is %5F), so the
+			// concatenation named a file that does not exist for exactly the
+			// hosts ADR-0032 newly admitted — and this is the escape hatch
+			// ADR-0031 §3 is built around, so it was inert for the newest
+			// hosts and worked for the oldest.
+			if _, err := os.Stat(store.Path(host)); err != nil {
 				if os.IsNotExist(err) {
-					return fmt.Errorf("no card for %s", host)
+					return fmt.Errorf("no card for %s (cards live in %s)", host, store.Dir())
 				}
 				return err
 			}
@@ -429,9 +436,12 @@ func newMemoryRemoveCommand() *cobra.Command {
 func readCard(store *memory.Store, host string) (*memory.SiteCard, error) {
 	card, err := store.Read(host)
 	if err != nil {
+		// The path comes from the store: it is the one thing that knows how a
+		// host is spelled on disk, and a hint naming a file that does not
+		// exist is worse than no hint.
 		return nil, fmt.Errorf("the card for %s exists but will not parse (%v)\n  %s\n  "+
 			"Fix it with an editor, or delete it with `bridge memory rm %s`",
-			host, err, filepath.Join(store.Dir(), host+".json"), host)
+			host, err, store.Path(host), host)
 	}
 	if card == nil {
 		return nil, fmt.Errorf("no card for %s (cards live in %s)", host, store.Dir())

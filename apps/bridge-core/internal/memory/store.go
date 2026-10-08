@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -60,6 +61,55 @@ func (s *Store) Dir() string { return s.dir }
 
 func (s *Store) hostFile(host string) string {
 	return filepath.Join(s.dir, safeFileName(host)+".json")
+}
+
+// Path is the file a card for this host lives in, for a human who has to be
+// told where to look. The store owns the naming rule, so anything that prints
+// a filename has to ask here rather than concatenate host+".json" itself —
+// doing that names a file that does not exist for every host the escape
+// touched, which is exactly the set ADR-0032 newly admitted (::1, *.localhost,
+// and any underscore hostname).
+func (s *Store) Path(host string) string {
+	return s.hostFile(host)
+}
+
+// unsafeFileName inverts safeFileName, and lives directly beside it so the two
+// cannot drift apart the way two files in two packages did.
+//
+// The escape is injective by construction: every rune outside the safe set
+// becomes %XX, including the percent sign itself, so %3A is unambiguously a
+// colon and never a literal "%3A" the host happened to contain. The two
+// degenerate returns of safeFileName have no inverse, and are reported as
+// such — a card under a name that is "_" is a card this cannot name, and
+// pretending otherwise is how `memory list` grows a row that cannot be opened
+// or deleted.
+func unsafeFileName(name string) (string, bool) {
+	if name == "" || name == "_" {
+		return "", false
+	}
+	var b strings.Builder
+	for i := 0; i < len(name); i++ {
+		if name[i] != '%' {
+			b.WriteByte(name[i])
+			continue
+		}
+		if i+2 >= len(name) {
+			return "", false
+		}
+		hi, err := strconv.ParseUint(name[i+1:i+3], 16, 8)
+		if err != nil {
+			return "", false
+		}
+		b.WriteRune(rune(hi))
+		i += 2
+	}
+	host := b.String()
+	// Round-trip rather than trust the walk: a name that does not come back
+	// from the forward transform was not produced by it.
+	if safeFileName(host) != name {
+		return "", false
+	}
+	return host, true
 }
 
 // safeFileName maps a host to a single filesystem-safe basename. Hosts come
@@ -254,19 +304,27 @@ func (s *Store) Hosts() []string {
 		if e.IsDir() || !strings.HasSuffix(name, ".json") {
 			continue
 		}
-		h := strings.TrimSuffix(name, ".json")
-		// A card that exists is listed even when it does not parse. Hiding it
-		// would make `memory list` report a healthy set while a file the person
-		// needs to delete sits in the directory unnamed.
-		c, err := s.load(h)
-		if err != nil || c == nil {
-			if !seen[h] {
-				cached = append(cached, h)
-				seen[h] = true
-			}
+		// The basename is the *escaped* host, and the escape is not identity:
+		// ::1 is %3A%3A1, my_site.example.com is my%5Fsite.example.com.
+		// Trimming ".json" off it and calling that a host produced a row that
+		// named no card — Get on it re-escaped the escapes, found nothing, and
+		// the person was shown a card they could neither open nor delete,
+		// sitting next to the real one. Decode the name back to its host.
+		h, ok := unsafeFileName(strings.TrimSuffix(name, ".json"))
+		if !ok {
+			// Not a name this package wrote. Listing it under a name that
+			// cannot be resolved helps nobody; `memory list` reports the
+			// directory listing separately for exactly this case.
 			continue
 		}
-		if !seen[c.Host] {
+		if !seen[h] {
+			cached = append(cached, h)
+			seen[h] = true
+		}
+		// A card that parses may name a different host than its file does —
+		// a hand-edited card, or one written before a naming change. The card
+		// is the truth about which site it is for, so prefer it.
+		if c, err := s.load(h); err == nil && c != nil && c.Host != "" && !seen[c.Host] {
 			cached = append(cached, c.Host)
 			seen[c.Host] = true
 		}

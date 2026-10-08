@@ -758,3 +758,67 @@ func TestCompressRefusesAForgedReply(t *testing.T) {
 		t.Errorf("out = %q", out)
 	}
 }
+
+// A host the escape had to touch must survive the whole round trip: put,
+// list, get, remove. `safeFileName` is lossy-looking — ::1 becomes
+// %3A%3A1, my_site.example.com becomes my%5Fsite.example.com — and nothing in
+// the package inverted it. Hosts() trimmed ".json" off the *escaped* basename
+// and called that a host, then load() escaped it a second time and found
+// nothing, so `memory list` printed a row next to the real one that could not
+// be opened or deleted. That is every IPv6 literal, every underscore hostname
+// and every IDN host: precisely the localhost-dev and international set
+// ADR-0032 went out of its way to admit.
+func TestEscapedHostsRoundTripThroughListGetAndRemove(t *testing.T) {
+	s, err := OpenStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("OpenStore: %v", err)
+	}
+	for _, host := range []string{
+		"a_b.example.com",
+		"::1",
+		"app.localhost",
+		"xn--mnchen-3ya.de",
+		"plain.example.com",
+	} {
+		if err := s.Put(&SiteCard{Host: host}); err != nil {
+			t.Fatalf("Put(%q): %v", host, err)
+		}
+	}
+
+	listed := s.Hosts()
+	for _, host := range []string{
+		"a_b.example.com",
+		"::1",
+		"app.localhost",
+		"xn--mnchen-3ya.de",
+		"plain.example.com",
+	} {
+		found := false
+		for _, h := range listed {
+			// A row that is the escaped basename rather than the host is the
+			// phantom: it cannot be resolved by Get.
+			if h == host {
+				found = true
+			}
+			if _, ok := s.Get(h); !ok {
+				t.Errorf("Hosts() listed %q, but Get on it found no card", h)
+			}
+		}
+		if !found {
+			t.Errorf("Hosts() = %v, missing %q", listed, host)
+		}
+	}
+	if len(listed) != 5 {
+		t.Errorf("Hosts() returned %d rows for 5 cards: %v", len(listed), listed)
+	}
+
+	// And the escape hole is not a listing-only problem: rm has to work too.
+	for _, host := range []string{"a_b.example.com", "::1"} {
+		if err := s.Remove(host); err != nil {
+			t.Errorf("Remove(%q): %v", host, err)
+		}
+		if _, ok := s.Get(host); ok {
+			t.Errorf("Get(%q) still resolves after Remove", host)
+		}
+	}
+}
