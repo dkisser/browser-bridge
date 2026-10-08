@@ -12,7 +12,7 @@ point forward, so "this one has been amended" has nowhere to live inside the old
 file. This table is that place. `CONTEXT.md` is the other: it is mutable, and it
 records what is true *now*.
 
-## The self-learning run (0017–0033)
+## The self-learning run (0017–0034)
 
 The most recent decision chain, and the one with amendments. An ADR listed in the
 **Amends** column is not wrong — it was right about what it decided, and a later
@@ -36,7 +36,8 @@ ADR records what changed since. Read the chain, not just the newest file.
 | [0030](./0030-the-boundary-as-implemented.md) | The boundary as implemented: codes pass through, prose is classified, href is reduced | 0018, 0025 |
 | [0031](./0031-the-endpoint-is-untrusted.md) | The endpoint is untrusted, and a card has to be removable | [0030](./0030-the-boundary-as-implemented.md), 0022, 0019 |
 | [0032](./0032-the-stream-turns-over.md) | The stream turns over, and localhost is a site | 0020, [0019](./0019-in-band-site-card-injection.md), [0025](./0025-what-the-baseline-taught.md) |
-| [0033](./0033-the-guides-read-path-rides-the-cards-pull.md) | The guide's read path rides the card's pull | [0028](./0028-guides-and-routines.md) |
+| [0033](./0033-the-guides-read-path-rides-the-cards-pull.md) | The guide's read path rides the card's pull | [0028](./0028-guides-and-routines.md), [0034](./0034-the-landing-announces-a-guide-with-a-pointer.md) |
+| [0034](./0034-the-landing-announces-a-guide-with-a-pointer.md) | The landing announces a guide with a pointer, never the prose | [0033](./0033-the-guides-read-path-rides-the-cards-pull.md) |
 
 ## The rest
 

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -212,5 +213,28 @@ func TestCLITransportTimeoutNeverTiesTheExtension(t *testing.T) {
 		t.Fatalf("transport deadline %v does not outlast the extension's 30s "+
 			"in-page budget; the CLI would give up first and report a timeout "+
 			"for a control plane that was working", got)
+	}
+}
+
+// The hint's host must come from where the landing actually ended, not from
+// what was typed: navigate follows redirects, and a pointer built from the
+// asked-for URL announces the wrong host's guide.
+func TestGuideHintURLPrefersTheLandedURL(t *testing.T) {
+	params := map[string]any{"url": "https://short.example.com/in"}
+	data := json.RawMessage(`{"url":"https://mail.example.com/u/0/#inbox","title":"Inbox"}`)
+	if got := guideHintURL(params, data); got != "https://mail.example.com/u/0/#inbox" {
+		t.Errorf("the landed URL must win over the asked-for one: %q", got)
+	}
+}
+
+func TestGuideHintURLFallsBackToTheAskedForURL(t *testing.T) {
+	// A plain-string result (no url field) and a tab:new with no url at all
+	// both leave the asked-for URL — or nothing, which HostFromURL folds to "".
+	params := map[string]any{"url": "https://mail.example.com/"}
+	if got := guideHintURL(params, json.RawMessage(`"Navigated"`)); got != "https://mail.example.com/" {
+		t.Errorf("a string result must not displace the asked-for URL: %q", got)
+	}
+	if got := guideHintURL(map[string]any{}, json.RawMessage(`{"id":3502813}`)); got != "" {
+		t.Errorf("tab:new without a url has no landing to point at: %q", got)
 	}
 }

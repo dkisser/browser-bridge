@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"browser-bridge/internal/core"
+	"browser-bridge/internal/memory"
 	"browser-bridge/internal/ws"
 )
 
@@ -133,7 +134,48 @@ func dispatch(cmd *cobra.Command, g *globals, command string, params map[string]
 	if err != nil {
 		return fail(cmd, g, "command_failed", err.Error())
 	}
-	return printData(cmd, g, data)
+	if err := printData(cmd, g, data); err != nil {
+		return err
+	}
+	printGuideHint(cmd, g, command, params, data)
+	return nil
+}
+
+// printGuideHint adds the guide's pointer after a landing command's own
+// output (ADR-0034). The CLI gets no in-band injection — the note is not on
+// the wire — so the landing itself announces the one curated file worth
+// reading, the same pointer the MCP landing carries. Human mode only:
+// --json output is a structured contract and a prose line would break it.
+func printGuideHint(cmd *cobra.Command, g *globals, command string, params map[string]any, data json.RawMessage) {
+	if g.json || (command != "navigate" && command != "tab:new") {
+		return
+	}
+	url := guideHintURL(params, data)
+	host := memory.HostFromURL(url)
+	if host == "" {
+		return
+	}
+	env, err := EnvFromOSEnv()
+	if err != nil {
+		return
+	}
+	if note := memory.GuideNote(env.DataDir(), host); note != "" {
+		fmt.Fprintln(cmd.OutOrStdout(), note)
+	}
+}
+
+// guideHintURL picks the URL a landing ended on: the response's final URL
+// when it carries one (navigate follows redirects), else the URL that was
+// asked for.
+func guideHintURL(params map[string]any, data json.RawMessage) string {
+	url, _ := params["url"].(string)
+	var result struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(data, &result); err == nil && result.URL != "" {
+		url = result.URL
+	}
+	return url
 }
 
 // browserCommand is one table-driven browser subcommand: the cobra surface

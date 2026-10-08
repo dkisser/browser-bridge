@@ -55,7 +55,7 @@ Rules:
 
 - Structural and semantic knowledge only. NEVER store credentials, personal data, message contents, or page text — a guide outlives the session and is read by future agents.
 - Write for a future agent that has never seen the page: name landmarks by durable selector, never by `@eN` ref (refs die with the page).
-- Keep it short — it is read into context on every visit: `bridge memory show <host>` prints it after the card, and past 8 KiB the print is truncated.
+- Keep it short — it is read into context on every visit: `bridge memory show <host>` prints it after the card, and past 8 KiB the print is truncated. Every landing also announces the guide's path as a one-line pointer, so agents learn that it exists without the prose costing the injection budget.
 
 ## Crystallizing a routine
 

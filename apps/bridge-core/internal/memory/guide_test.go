@@ -74,3 +74,98 @@ func TestReadGuideCapsAtALineBoundary(t *testing.T) {
 		t.Errorf("body past the cap: %d bytes", len(body))
 	}
 }
+
+func TestGuideNoteAbsentIsEmpty(t *testing.T) {
+	if note := GuideNote(t.TempDir(), "mail.example.com"); note != "" {
+		t.Errorf("a host without a guide must not be announced: %q", note)
+	}
+}
+
+func TestGuideNotePointsAtTheFileNeverTheProse(t *testing.T) {
+	dir := t.TempDir()
+	writeGuide(t, dir, "mail.example.com", "# the why lives here\n")
+	note := GuideNote(dir, "mail.example.com")
+	for _, want := range []string{"[站点指南]", GuidePath(dir, "mail.example.com")} {
+		if !strings.Contains(note, want) {
+			t.Errorf("the pointer is missing %q: %q", want, note)
+		}
+	}
+	if strings.Contains(note, "the why lives here") {
+		t.Errorf("the pointer must carry the path, never the prose: %q", note)
+	}
+}
+
+func TestGuideNoteEmptyFileIsSilent(t *testing.T) {
+	dir := t.TempDir()
+	writeGuide(t, dir, "mail.example.com", "")
+	if note := GuideNote(dir, "mail.example.com"); note != "" {
+		t.Errorf("an empty guide says nothing, so its pointer must too: %q", note)
+	}
+}
+
+// The pointer rides the announcement injection — the landing, or the snapshot
+// that stood in for one — and only there: the verification render stays the
+// bare map, or the agent hears about the same file on every read.
+
+// newGuideTestManager builds the Manager directly rather than through
+// newTestManager, because these tests must write the guide into the same data
+// directory the manager reads — and Store().Dir() is the cards/ subdirectory,
+// not the data directory.
+func newGuideTestManager(t *testing.T) (*Manager, string) {
+	t.Helper()
+	dir := t.TempDir()
+	m, err := New(Options{DataDir: dir, BrowserID: "test"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = m.Close() })
+	return m, dir
+}
+
+func TestLandingCarriesTheGuidePointer(t *testing.T) {
+	m, dir := newGuideTestManager(t)
+	host := "example.test"
+	seedCard(t, m, host)
+	writeGuide(t, dir, host, "# example.test\n")
+
+	land(t, m, host, "e1")
+	note := m.TakeSiteNote("navigate", host, 1)
+	if !strings.Contains(note, "站点指南") {
+		t.Errorf("the landing did not announce the guide:\n%s", note)
+	}
+	if !strings.Contains(note, "selector_not_found") {
+		t.Errorf("the pointer must ride after the card, not replace it:\n%s", note)
+	}
+
+	snapshot(t, m, host, "e2", "link [World] @e1")
+	verify := m.TakeSiteNote("snapshot", host, 1)
+	if strings.Contains(verify, "站点指南") {
+		t.Errorf("the verification render must stay the bare map:\n%s", verify)
+	}
+}
+
+func TestLandingWithGuideButNoCardStillAnnounces(t *testing.T) {
+	m, dir := newGuideTestManager(t)
+	host := "example.test"
+	writeGuide(t, dir, host, "# example.test\n")
+
+	land(t, m, host, "e1")
+	note := m.TakeSiteNote("navigate", host, 1)
+	if !strings.Contains(note, "站点指南") {
+		t.Fatalf("a guide that arrived before the card is still worth the landing: %q", note)
+	}
+	if n := countKind(t, m, KindCardShown); n != 0 {
+		t.Errorf("%d card_shown records, but no card was shown — the guide is not a card", n)
+	}
+}
+
+func TestLandingWithoutGuideHasNoPointer(t *testing.T) {
+	m, _ := newGuideTestManager(t)
+	host := "example.org"
+	seedCard(t, m, host)
+
+	land(t, m, host, "e1")
+	if note := m.TakeSiteNote("navigate", host, 1); strings.Contains(note, "站点指南") {
+		t.Errorf("a host without a guide must not be announced:\n%s", note)
+	}
+}

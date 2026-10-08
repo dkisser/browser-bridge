@@ -28,6 +28,9 @@ type Manager struct {
 	cursor *Cursor
 	learn  *Learn
 	logf   func(format string, args ...any)
+	// dataDir is Options.DataDir, kept because the store only knows its own
+	// cards/ subdirectory and the guides live beside it (ADR-0034).
+	dataDir string
 
 	// signal is the coalescing wakeup (ADR-0020). Capacity one is the whole
 	// design: the unread suffix of the stream is the record of the work, so
@@ -144,6 +147,7 @@ func New(opts Options) (*Manager, error) {
 		cursor:    cursor,
 		learn:     learn,
 		logf:      logf,
+		dataDir:   opts.DataDir,
 		signal:    make(chan struct{}, 1),
 		idleAfter: idle,
 		tabs:      make(map[int]*tabState),
@@ -354,7 +358,11 @@ func (m *Manager) TakeSiteNote(command, host string, tabID int) string {
 	m.mu.Unlock()
 	card, ok := m.store.Get(host)
 	if !ok {
-		return ""
+		// A host can have a curated guide before it has earned a card — guides
+		// are written at the human's request, cards by traffic (ADR-0034). The
+		// pointer is still worth the landing. Not recorded as a card shown:
+		// no card was.
+		return GuideNote(m.dataDir, host)
 	}
 
 	if !armed {
@@ -405,8 +413,12 @@ func (m *Manager) TakeSiteNote(command, host string, tabID int) string {
 	}
 	out := RenderCard(card, opts)
 	if out == "" {
-		return ""
+		return GuideNote(m.dataDir, host)
 	}
+	// This branch is the announcement — the landing, or the snapshot that
+	// stood in for one — so the guide's pointer rides here and only here; the
+	// verification render above stays the bare map (ADR-0034).
+	out = appendGuideNote(out, m.dataDir, host)
 	m.noteShown(card, digest, host)
 	return m.recordShown(host, tabID, out)
 }

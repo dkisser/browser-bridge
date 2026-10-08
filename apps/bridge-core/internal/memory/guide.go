@@ -21,6 +21,30 @@ func GuidePath(dir, host string) string {
 	return filepath.Join(dir, "guides", safeFileName(host)+".md")
 }
 
+// GuideNote is the one-line pointer the landing paths carry when a host has a
+// curated guide: the path, never the prose (ADR-0034). The prose stays behind
+// the pull (`bridge memory show`) because it is unbounded; a fixed-shape
+// pointer line is not. "" when the host has no guide.
+func GuideNote(dir, host string) string {
+	path := GuidePath(dir, host)
+	fi, err := os.Stat(path)
+	if err != nil || fi.IsDir() || fi.Size() == 0 {
+		return ""
+	}
+	return "[站点指南] this host has a curated guide: " + path +
+		" — read it when you need the why; where it disagrees with the live page, the page wins."
+}
+
+// appendGuideNote adds the pointer to a rendered card, keeping the pointer
+// last: the card is the machine's claim, the guide is commentary on it.
+func appendGuideNote(card, dir, host string) string {
+	note := GuideNote(dir, host)
+	if note == "" {
+		return card
+	}
+	return card + "\n" + note
+}
+
 // ReadGuide returns the curated guide for a host, or "" when none exists — a
 // host without a guide is the normal state of the world, not an error. Content
 // past MaxGuideBytes is cut at a line boundary and marked, so the reader can
