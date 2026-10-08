@@ -1,10 +1,13 @@
 package memory
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"browser-bridge/internal/core"
 )
 
 func writeGuide(t *testing.T, dir, host, content string) {
@@ -167,5 +170,36 @@ func TestLandingWithoutGuideHasNoPointer(t *testing.T) {
 	land(t, m, host, "e1")
 	if note := m.TakeSiteNote("navigate", host, 1); strings.Contains(note, "site guide") {
 		t.Errorf("a host without a guide must not be announced:\n%s", note)
+	}
+}
+
+// The guide's pointer rides the announcement and nothing else.
+//
+// ADR-0034: "The pointer rides the announcement injection only — the landing,
+// or the snapshot that stood in for one. The verification render stays the bare
+// map, or the agent hears about the same file on every read."
+//
+// The no-card branch returned the pointer before the `armed` check that every
+// other branch threads through, so it fired on the verification render as well.
+// A host with a guide but no card has nothing else to say, so the agent heard
+// about the same file on every single read for the life of the session.
+func TestAGuidePointerRidesTheAnnouncementAndNothingElse(t *testing.T) {
+	m := newTestManager(t, "b-1")
+	writeGuide(t, m.dataDir, "shop.example.com", "# shop.example.com\n\nLayout notes.\n")
+
+	// Land on the host. No card exists, so the pointer is the whole note.
+	m.RecordResult("e1", "navigate", "shop.example.com", 3,
+		core.ResponsePayload{Status: "ok", Data: json.RawMessage(`{"url":"https://shop.example.com/"}`)})
+	landing := m.TakeSiteNote("navigate", "shop.example.com", 3)
+	if landing == "" || !strings.Contains(landing, "guide") {
+		t.Fatalf("the landing did not announce the guide: %q", landing)
+	}
+
+	// The verification snapshot that follows is not an announcement.
+	m.RecordCommand("e2", "snapshot", "shop.example.com", 3, nil)
+	m.RecordResult("e2", "snapshot", "shop.example.com", 3,
+		core.ResponsePayload{Status: "ok", Data: json.RawMessage(`{"snapshot":"Page: Shop | https://shop.example.com/\n","nodes_total":0}`)})
+	if again := m.TakeSiteNote("snapshot", "shop.example.com", 3); strings.Contains(again, "guide") {
+		t.Errorf("the verification render announced the guide a second time:\n%s", again)
 	}
 }

@@ -495,8 +495,20 @@ func (m *Manager) TakeSiteNote(command, host string, tabID int) string {
 	if !ok {
 		// A host can have a curated guide before it has earned a card — guides
 		// are written at the human's request, cards by traffic (ADR-0034). The
-		// pointer is still worth the landing. Not recorded as a card shown:
-		// no card was.
+		// pointer is still worth the landing. Not recorded as a card shown: no
+		// card was.
+		//
+		// Announced at the landing and nowhere else, which is the rule every
+		// other branch here already follows. This return sits above the `armed`
+		// check below, so it used to fire on the verification render too — and
+		// a host with a guide but no card has nothing else to say, so the agent
+		// heard about the same file on every single read. ADR-0034: "The
+		// pointer rides the announcement injection only — the landing, or the
+		// snapshot that stood in for one. The verification render stays the
+		// bare map, or the agent hears about the same file on every read."
+		if !armed {
+			return ""
+		}
 		return GuideNote(m.dataDir, host)
 	}
 
