@@ -1396,3 +1396,70 @@ func TestACappedPassDoesNotDropTheEvidenceItDeferred(t *testing.T) {
 		t.Errorf("the deferred failure never reached the card: %+v", card.Failures)
 	}
 }
+
+// A merge must report no change for an entry the cap then discarded — and that
+// is true of an *updated* entry as well as an added one.
+//
+// A Uses bump does not change an entry's rank, so the cap can cut the very
+// entry that was just updated. The first version of the cap fix guarded only
+// the `added` half: `updated || (added && ...)` short-circuits, so a segment
+// whose only contribution was a Uses bump on an entry the ranking then dropped
+// still reported a change, and applySegment wrote a card_revision describing an
+// update that never landed — the same phantom revision this file's whole cap
+// fix exists to prevent.
+func TestAMergeReportsNoChangeForAnUpdatedEntryTheCapCut(t *testing.T) {
+	t.Run("map entry ranked out after a Uses bump", func(t *testing.T) {
+		// 24 entries, all ranking above the one the segment touches — so the
+		// touched entry is the one the cap removes.
+		// One past the cap, so the truncation actually has something to cut, and
+		// the lowest-ranked entry is the one this segment touches.
+		card := &SiteCard{Host: "h"}
+		var lastName string
+		for i := 0; i < maxMapEntries+1; i++ {
+			lastName = "lowest" + strconv.Itoa(i)
+			card.Map = append(card.Map, MapEntry{
+				Purpose: "p", Pred: Predicate{Role: "button", Name: lastName},
+				Value: 1000 - i, Uses: 5, ObservedAtMs: int64(i),
+			})
+		}
+		seg := &segment{
+			host: "h",
+			digest: &PageDigest{
+				URL:   "https://h/",
+				Nodes: []NodeSig{{Role: "button", Name: lastName, Ref: "@e1", Depth: 1}},
+			},
+			calls:   []observedCall{{node: NodeSig{Role: "button", Name: lastName, Ref: "@e1"}, command: "gettext", found: true, value: 1}},
+			browser: "b",
+		}
+		if mergeMap(card, seg) {
+			t.Errorf("mergeMap reported a change for an entry the cap then cut; "+
+				"the segment's only contribution was a Uses bump on %q", lastName)
+		}
+	})
+
+	t.Run("failure whose repeat was cut", func(t *testing.T) {
+		// The sort is by descending Count and a repeat *raises* the count, so a
+		// repeat usually climbs rather than falls. It falls when it is still the
+		// lowest after the bump: one entry sitting at Count 1 while the rest are
+		// at 10 goes to 2, stays last, and the cap takes it.
+		card := &SiteCard{Host: "h"}
+		for i := 0; i < maxFailureEntries; i++ {
+			card.Failures = append(card.Failures, FailureEntry{
+				Signature: "sig", Command: "gettext", Sel: "s" + strconv.Itoa(i), Count: 10,
+			})
+		}
+		// One past the cap, and the one that will still be lowest after the bump.
+		card.Failures = append(card.Failures, FailureEntry{
+			Signature: "sig", Command: "gettext", Sel: "rare", Count: 1,
+		})
+		if mergeFailures(card, []failedCall{{sig: "sig", sel: "rare", command: "gettext", atMs: 99}}) {
+			t.Errorf("mergeFailures reported a change for a repeat the sort-and-cap then cut")
+		}
+		for _, f := range card.Failures {
+			if f.Sel == "rare" {
+				t.Errorf("the repeated entry survived the cap, so the test is not " +
+					"exercising the discard it claims to")
+			}
+		}
+	})
+}

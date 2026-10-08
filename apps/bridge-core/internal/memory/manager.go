@@ -107,11 +107,19 @@ type tabState struct {
 	// be fetched anyway.
 	verifyOn   string
 	lastDigest *PageDigest
-	// sawLanding records that a landing command was seen for this tab. A
-	// snapshot arms the card only while that is false: it covers the tab that
-	// was already open when the daemon started, and stops the arming from
-	// repeating on every snapshot for the rest of the session.
-	sawLanding bool
+	// announcedFor is the host whose card was last handed to an agent on this
+	// tab. A snapshot re-arms only for a host it is not already equal to, which
+	// is what makes the announcement happen once per site rather than once per
+	// read.
+	//
+	// The obvious proxies both fail. `!ts.noteArmed` is true again the moment
+	// TakeSiteNote hands the card out, and `!ts.sawLanding` (which this replaces)
+	// never becomes true for a tab the router learned about from pageinfo or
+	// tab:list — so every snapshot on the most common MCP flow re-armed, adding
+	// ~400 tokens to each read and writing a card_shown record per read. That
+	// went unnoticed because the branch was unreachable until host-reporting
+	// commands gave a tab a host without a landing.
+	announcedFor string
 }
 
 // Options configures a Manager.
@@ -155,9 +163,24 @@ func rotateOwnedStream(stream *Stream, cursor *Cursor, logf func(string, ...any)
 	if !rotated {
 		return
 	}
-	if err := cursor.Set(0); err != nil {
-		logf("memory: reset cursor after rotation: %v", err)
-	}
+	// The cursor is deliberately NOT reset. It does not need to be, and
+	// resetting it was corrupting the audit ledger.
+	//
+	// The rotation condition already requires the learner to have consumed
+	// everything, so the cursor holds the combined line count. After the
+	// rename, the retained generation is the old active file and the new active
+	// file is empty — the same total, numbered the same way. The cursor lands
+	// exactly where it did before, at the first line of the new active file.
+	//
+	// Setting it to 0 re-read the retained generation from the start, and
+	// applySegment *increments* rather than recomputes: Uses++, Count++,
+	// Revision++. So every card picked up a phantom revision and doubled counts
+	// with no traffic at all. The comment on Stream.Rotate claimed that re-read
+	// was "idempotent, because rebuilding a card from the same records produces
+	// the same card" — Learn.Run's own doc says the opposite, more carefully, and
+	// is the one that is right. It only ever passed because the rotation
+	// condition was unreachable; making rotation work is what made the two
+	// claims meet.
 	logf("memory: rotated the trace stream")
 }
 
@@ -196,7 +219,8 @@ func New(opts Options) (*Manager, error) {
 	// Roll the stream over if it has outgrown its ceiling *and* the learner has
 	// consumed all of it. See Stream.Rotate for why the second half is the
 	// condition that makes it safe. Restarting the cursor is the whole cost, and
-	// it costs one idempotent re-read of the retained generation.
+	// it costs nothing at all, because the cursor needs no reset. See
+	// rotateOwnedStream.
 	//
 	// Gated on owning the stream, and repeated after every learn pass — a
 	// check that runs once per process start does not enforce a ceiling on a
@@ -434,11 +458,29 @@ func (m *Manager) RecordResult(envelopeID, command, host string, tabID int, p co
 			ts.lastDigest = digest
 			// A snapshot can be the first thing that reveals where a tab is: the
 			// tab was already open when the daemon started, or a click navigated
-			// without a landing command. Arm for that one case only. Arming on
-			// every snapshot would re-inject the card after every read, because
-			// verification clears verifyOn and there would be nothing left to
-			// compare against.
-			if host != "" && !ts.sawLanding {
+			// without a landing command. Arm for that one case only.
+			//
+			// "Only" is the whole condition, and the test for it is the tab's own
+			// state rather than its history. It used to be `!ts.sawLanding` — has a
+			// landing command been seen for this tab — which is a bad proxy: a tab
+			// the router learned about from pageinfo or tab:list never sees a
+			// landing, so the flag stayed false for the whole session and every
+			// snapshot re-armed. That put ~400 tokens on the most common MCP flow
+			// there is (tab_list, then snapshot, then read) and wrote a card_shown
+			// record per read. And it was never caught, because the branch was
+			// unreachable until host-reporting commands made tabHost non-empty
+			// without a landing.
+			//
+			// What it means is: nothing is pending for this tab. Not armed (a card
+			// is waiting to be handed out) and not verifying (a card is waiting to
+			// be checked against the next snapshot). Both are consumed by
+			// TakeSiteNote, so arming only when both are clear announces once and
+			// then stays quiet until a landing re-arms deliberately.
+			//
+			// Nothing pending for this tab (no card waiting to go out, none
+			// waiting to be verified) and this site's card has not been handed
+			// out on this tab yet.
+			if host != "" && !ts.noteArmed && ts.verifyOn == "" && ts.announcedFor != host {
 				m.armLocked(ts, host)
 			}
 			m.mu.Unlock()
@@ -449,7 +491,6 @@ func (m *Manager) RecordResult(envelopeID, command, host string, tabID int, p co
 		// learned about the place.
 		m.mu.Lock()
 		ts := m.tabLocked(tab)
-		ts.sawLanding = true
 		// And it invalidates the page we were looking at. Without this, a
 		// cross-site navigation verifies the *new* host's card against the
 		// *previous* host's digest — which resolves nothing, trips the majority
@@ -566,7 +607,18 @@ func (m *Manager) TakeSiteNote(command, host string, tabID int) string {
 		MaxTokens:  DefaultInjectTokens,
 		BrowserID:  m.browserID,
 		Compressed: true,
-		OnlyMap:    command == "snapshot",
+		// OnlyMap is right for the *second* injection point, where the landing
+		// already said what failed and what worked moments earlier in the same
+		// task. It is wrong when this snapshot armed the card itself, because then
+		// there is no other injection: a card with counted no_element failures and
+		// corroborated sequences was handed over as a bare map header and one
+		// entry, and the tier the package calls "the one signal that cannot be
+		// misread" never reached the agent at all.
+		//
+		// Before host-reporting commands existed this could not happen — the
+		// arming branch was unreachable — so the same condition was correct by
+		// accident rather than by construction.
+		OnlyMap: command == "snapshot" && !armed,
 	}
 	// Resolve only when this call read the page. A landing has nothing behind it,
 	// so its card is the failures and the working sequences; a snapshot is the
@@ -585,6 +637,14 @@ func (m *Manager) TakeSiteNote(command, host string, tabID int) string {
 	// verification render above stays the bare map (ADR-0034).
 	out = appendGuideNote(out, m.dataDir, host)
 	m.noteShown(card, digest, host)
+	// Mark the tab as having been told about this site, so a later snapshot of
+	// the same page does not hand the same card over again. Keyed by host, so a
+	// tab that moves to a different site arms again on its own.
+	m.mu.Lock()
+	if ts := m.tabs[tabKey(tabID)]; ts != nil {
+		ts.announcedFor = host
+	}
+	m.mu.Unlock()
 	return m.recordShown(host, tabID, out)
 }
 

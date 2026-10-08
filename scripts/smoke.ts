@@ -13,6 +13,8 @@
  */
 import { $ } from 'bun';
 
+import { runningStatusLine } from './service-status';
+
 const HOME_DIR = process.env.HOME ?? '';
 const BB_HOME = process.env.BB_HOME ?? `${HOME_DIR}/.browser-bridge`;
 const BB_EXTENSION_DIR =
@@ -174,10 +176,16 @@ const checks: Check[] = [
 
   await check('bridge service status', async () => {
     const { code, out } = await bridgeRun(['service', 'status']);
-    const running = code === 0 && /running/.test(out);
+    // The same rule local-install.ts uses, for the same reason: `service
+    // status` prints the launchd state on a second line, and the not-loaded
+    // variant reads `auto-start:  enabled (starts at login; not running now)`.
+    // A grep for `running` matches that line, so this check reported a stopped
+    // daemon as healthy — and the smoke test exists to be the thing that says
+    // a broken install looks fine.
+    const line = runningStatusLine(code, out);
     return {
-      verdict: running ? 'pass' : 'fail',
-      detail: running ? out.trim() : `not running:\n${out.trim()}`,
+      verdict: line ? 'pass' : 'fail',
+      detail: line ?? `not running:\n${out.trim()}`,
     };
   }),
 

@@ -264,10 +264,22 @@ func (s *Stream) readFile(path string, from, base int64) (recs []TraceRecord, ne
 // so a rotation renumbers every line after the cut; rotating with unlearned
 // records behind the cursor would either lose them or need an offset the cursor
 // has nowhere to keep. Waiting for the learner to catch up means the file is
-// fully consumed at the moment it turns over, the cursor restles at 0, and the
-// next pass re-reads the retained generation from the start — which is
-// idempotent, because rebuilding a card from the same records produces the same
-// card.
+// fully consumed at the moment it turns over.
+//
+// The cursor is then left exactly where it is, and it needs no adjustment: it
+// holds the combined line count of both generations, and after the rename the
+// retained generation is the old active file while the new active file is
+// empty — the same total, numbered the same way. It lands on the first line of
+// the new active file.
+//
+// This comment used to say the cursor "restles at 0" and that re-reading the
+// retained generation was "idempotent, because rebuilding a card from the same
+// records produces the same card". Both were wrong, and Run's own doc says so at
+// length: applySegment increments Uses, Count and Revision rather than
+// recomputing them, so a re-read double-counts and mints a phantom revision.
+// Nothing caught it because the condition above was unreachable — the cursor is
+// permanently one learn_run record short of the end, so the old `cursorLine <
+// lines` test could never pass and this function had never run.
 func (s *Stream) Rotate(cursorLine int64) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

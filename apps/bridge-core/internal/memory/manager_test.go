@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -617,5 +618,196 @@ func TestASnapshotIsFiledUnderTheSiteItsOwnPageNames(t *testing.T) {
 	}
 	if snap.Host != "news.example.com" {
 		t.Errorf("the snapshot is filed under %q; the news page was merged into the mail card", snap.Host)
+	}
+}
+
+// A card must be handed over once per site, not once per read.
+//
+// The snapshot-arming branch — the one that covers a tab the agent never
+// navigated — was guarded by `!ts.sawLanding`, which asks whether a *landing*
+// was seen on this tab. A tab the router learned about from pageinfo or
+// tab:list never sees one, so the flag stayed false for the whole session and
+// every snapshot re-armed: ~400 tokens appended to each read plus a card_shown
+// record per read, on the most common MCP flow there is.
+//
+// It went unnoticed because the branch was unreachable until host-reporting
+// commands gave a tab a host without a landing — the fix that made the
+// documented flow work is what exposed it.
+func TestACardIsAnnouncedOncePerSiteNotOncePerRead(t *testing.T) {
+	m := newTestManager(t, "b-1")
+	seedCard(t, m, "news.example.com")
+
+	// The documented flow: the router learns the tab from a host report, and
+	// the agent reads the page. No landing ever happens on this tab.
+	m.RecordCommand("e1", "snapshot", "news.example.com", 5, nil)
+	m.RecordResult("e1", "snapshot", "news.example.com", 5, okPayload(snapshotJSON(testSnapshot)))
+
+	injected := 0
+	for i := 0; i < 4; i++ {
+		env := "read-" + strconv.Itoa(i)
+		m.RecordCommand(env, "snapshot", "news.example.com", 5, nil)
+		m.RecordResult(env, "snapshot", "news.example.com", 5, okPayload(snapshotJSON(testSnapshot)))
+		if note := m.TakeSiteNote("snapshot", "news.example.com", 5); note != "" {
+			injected++
+		}
+	}
+	if injected > 1 {
+		t.Errorf("the same card was injected %d times across 4 reads of one page; "+
+			"it must be announced once and then verified silently", injected)
+	}
+	if injected == 0 {
+		t.Error("nothing was ever injected, so the fix went too far the other way")
+	}
+
+	// A tab that moves to a *different* site arms again, which is the other
+	// half of the rule.
+	m.RecordCommand("other", "navigate", "other.example.com", 5, nil)
+	m.RecordResult("other", "navigate", "other.example.com", 5, okPayload(`{"url":"https://other.example.com/"}`))
+	seedCard(t, m, "other.example.com")
+	m.RecordCommand("o1", "snapshot", "other.example.com", 5, nil)
+	m.RecordResult("o1", "snapshot", "other.example.com", 5, okPayload(snapshotJSON(testSnapshot)))
+	if note := m.TakeSiteNote("snapshot", "other.example.com", 5); note == "" {
+		t.Error("moving to a new site did not re-announce, so a tab that navigates " +
+			"without a landing would never learn it has a card")
+	}
+}
+
+// When the snapshot itself is the only injection, it must carry the whole card.
+//
+// OnlyMap exists for the *second* injection point: the landing already said
+// what failed and what worked, moments earlier in the same task, so repeating
+// it on the snapshot is tokens spent twice. But a tab the agent never
+// navigated — discovered by tab:list or pageinfo — has no landing, so the
+// snapshot is the only injection there will ever be. Truncating it to the map
+// handed the agent a bare site-map header while the failure tier, the one
+// signal this package calls unmissable, was dropped on the floor.
+func TestASnapshotThatArmsCarriesTheWholeCard(t *testing.T) {
+	m := newTestManager(t, "b-1")
+	card := seedCard(t, m, "news.example.com")
+	if len(card.Failures) == 0 || len(card.Procedures) == 0 {
+		t.Fatal("the seeded card has no failure or procedure tier to lose")
+	}
+
+	// No landing on this tab: the router learned it from a host report.
+	m.RecordCommand("e1", "snapshot", "news.example.com", 5, nil)
+	m.RecordResult("e1", "snapshot", "news.example.com", 5, okPayload(snapshotJSON(testSnapshot)))
+	note := m.TakeSiteNote("snapshot", "news.example.com", 5)
+	if note == "" {
+		t.Fatal("nothing was injected on the arming snapshot")
+	}
+	if !strings.Contains(note, "selector_not_found") {
+		t.Errorf("the failure tier did not reach the agent on the only injection:\n%s", note)
+	}
+	if !strings.Contains(note, "Sequences that worked here") {
+		t.Errorf("the procedure tier did not reach the agent on the only injection:\n%s", note)
+	}
+	// And the map is still there — this is the whole card, not a different one.
+	if !strings.Contains(note, "Site map") {
+		t.Errorf("the site map is missing:\n%s", note)
+	}
+}
+
+// A rotation must not re-apply what the learner already applied.
+//
+// Rotate's condition requires the learner to have consumed everything, so the
+// cursor holds the combined line count of both generations. After the rename the
+// retained generation is the old active file and the new one is empty — the
+// same total, numbered the same way — so the cursor lands where it always did
+// and needs no reset.
+//
+// It was being reset to 0, which re-read the retained generation from the start.
+// applySegment increments Uses, Count and Revision rather than recomputing them,
+// so a single rotation with no traffic at all took every card to a phantom
+// revision and doubled its counters. Stream.Rotate's comment claimed that re-read
+// was idempotent "because rebuilding a card from the same records produces the
+// same card"; Learn.Run's own doc says the opposite and is right.
+//
+// It went unnoticed because the rotation condition was unreachable, so this had
+// never run.
+func TestARotationDoesNotReapplyWhatWasAlreadyLearned(t *testing.T) {
+	dir := t.TempDir()
+	m, err := New(Options{DataDir: dir, BrowserID: "b", OwnsRotation: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = m.Close() })
+
+	const host = "shop.example.com"
+	nav := "nav-1"
+	if err = m.Stream().Append(TraceRecord{Kind: KindCommand, AtMs: 1, Envelope: nav, Command: "navigate", TabID: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err = m.Stream().Append(TraceRecord{Kind: KindResponse, AtMs: 2, Envelope: nav, Command: "navigate", TabID: 1,
+		Outcome: OutcomeOK, Host: host}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		env := "click-" + strconv.Itoa(i)
+		if err = m.Stream().Append(TraceRecord{Kind: KindCommand, AtMs: int64(10 + i), Envelope: env, Command: "click", TabID: 1,
+			Args: map[string]any{"selector": ".buy"}}); err != nil {
+			t.Fatal(err)
+		}
+		if err = m.Stream().Append(TraceRecord{Kind: KindResponse, AtMs: int64(11 + i), Envelope: env, Command: "click", TabID: 1,
+			Outcome: OutcomeError, ErrCode: "no_element", Host: host}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = m.LearnNow(); err != nil {
+		t.Fatal(err)
+	}
+	before, ok := m.store.Get(host)
+	if !ok {
+		t.Fatal("nothing was learned, so this test cannot see a re-apply")
+	}
+
+	// Outgrow the ceiling, learn it, and rotate. No traffic in between.
+	if err = m.Stream().Append(TraceRecord{
+		Kind: KindCommand, AtMs: 100, Envelope: "big", Command: "gettext",
+		Args: map[string]any{"selector": strings.Repeat("x", streamRotateBytes)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err = m.LearnNow(); err != nil {
+		t.Fatal(err)
+	}
+	beforeRev, beforeUses := before.Revision, 0
+	for _, e := range before.Map {
+		beforeUses += e.Uses
+	}
+	beforeFails := 0
+	for _, f := range before.Failures {
+		beforeFails += f.Count
+	}
+
+	m.rotateIfOwned()
+	if _, statErr := os.Stat(filepath.Join(dir, "stream.jsonl.1")); statErr != nil {
+		t.Fatalf("the stream did not rotate, so the test is not exercising the reset: %v", statErr)
+	}
+
+	// The next pass re-reads nothing, because the cursor still points past the
+	// retained generation.
+	if err = m.LearnNow(); err != nil {
+		t.Fatal(err)
+	}
+	after, ok := m.store.Get(host)
+	if !ok {
+		t.Fatal("the card disappeared")
+	}
+	afterUses, afterFails := 0, 0
+	for _, e := range after.Map {
+		afterUses += e.Uses
+	}
+	for _, f := range after.Failures {
+		afterFails += f.Count
+	}
+	if after.Revision != beforeRev {
+		t.Errorf("revision went %d → %d with no traffic: a rotation re-applied what was already learned",
+			beforeRev, after.Revision)
+	}
+	if afterUses != beforeUses {
+		t.Errorf("map Uses went %d → %d with no traffic", beforeUses, afterUses)
+	}
+	if afterFails != beforeFails {
+		t.Errorf("failure Count went %d → %d with no traffic", beforeFails, afterFails)
 	}
 }

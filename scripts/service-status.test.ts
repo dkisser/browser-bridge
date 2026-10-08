@@ -66,3 +66,35 @@ describe('stoppedStatus', () => {
     expect(stoppedStatus(0, RUNNING)).toBe(false);
   });
 });
+
+// Both callers of `bridge service status` have to ask the same way. The rule
+// lives in service-status.ts precisely because it was once written twice, and
+// the copy in smoke.ts was the one that still matched
+// `auto-start:  enabled (starts at login; not running now)` — so the smoke
+// test, the thing whose job is to say a broken install looks fine, reported a
+// stopped daemon as healthy.
+describe('every caller of service status', () => {
+  it('goes through runningStatusLine, not its own grep', async () => {
+    const sources = await Promise.all(
+      // Resolved against this file's own directory rather than the process
+      // cwd, so the assertion holds wherever the suite is run from.
+      ['./local-install.ts', './smoke.ts'].map((name) =>
+        Bun.file(new URL(name, import.meta.url)).text(),
+      ),
+    );
+    for (const [i, src] of sources.entries()) {
+      const name = ['local-install.ts', 'smoke.ts'][i];
+      if (!src.includes('runningStatusLine')) {
+        throw new Error(
+          `${name} does not use runningStatusLine; the rule has forked again`,
+        );
+      }
+      if (/\/running\/\.test|\.test\(out\)/.test(src)) {
+        throw new Error(
+          `${name} still greps for "running" on the raw output, which ` +
+            `matches the auto-start line's "not running now"`,
+        );
+      }
+    }
+  });
+});

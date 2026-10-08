@@ -709,6 +709,7 @@ func mergeFailures(card *SiteCard, failures []failedCall) bool {
 		return false
 	}
 	before := beforeKeys(card.Failures, failureKey)
+	updateKeys := make(map[string]bool)
 	updated := false
 	added := false
 	for _, f := range failures {
@@ -738,6 +739,7 @@ func mergeFailures(card *SiteCard, failures []failedCall) bool {
 		// the failure tier is for.
 		card.Failures[found].Count++
 		card.Failures[found].LastAtMs = f.atMs
+		updateKeys[failureKey(card.Failures[found])] = true
 		updated = true
 	}
 	sort.SliceStable(card.Failures, func(i, j int) bool {
@@ -750,7 +752,8 @@ func mergeFailures(card *SiteCard, failures []failedCall) bool {
 	// the cap it is the first thing cut. Reporting a change anyway told the
 	// ledger the failure tier had grown when it had not — and the failure tier
 	// is the one signal this package calls unmissable.
-	return updated || (added && additionSurvived(card.Failures, failureKey, before))
+	return updated && entrySurvived(card.Failures, failureKey, updateKeys) ||
+		added && additionSurvived(card.Failures, failureKey, before)
 }
 
 // failureKey is the identity a failure entry is grouped by, and the key
@@ -762,6 +765,27 @@ func failureKey(e FailureEntry) string {
 // beforeKeys snapshots which keys a card already holds, so a merge can tell an
 // entry it added from one it only updated — and, after the cap has run, tell
 // whether the addition survived at all.
+// mapEntryKey is a site-map entry's identity, in one place so the grouping and
+// the survival check cannot be written differently.
+func mapEntryKey(e MapEntry) string { return e.Pred.String() }
+
+// entrySurvived reports whether any key touched by this merge is still on the
+// card after the cap.
+//
+// The complement of additionSurvived: that one asks whether a *new* entry
+// survived, this asks whether an *updated* one did. A Uses bump does not change
+// an entry's rank, so the cap can cut the very entry that was just updated — and
+// reporting a change for it is a card_revision describing an update that never
+// landed.
+func entrySurvived[T any](entries []T, key func(T) string, touched map[string]bool) bool {
+	for _, e := range entries {
+		if touched[key(e)] {
+			return true
+		}
+	}
+	return false
+}
+
 func beforeKeys[T any](entries []T, key func(T) string) map[string]bool {
 	out := make(map[string]bool, len(entries))
 	for _, e := range entries {
@@ -814,7 +838,10 @@ func mergeMap(card *SiteCard, seg *segment) bool {
 	if seg.digest == nil {
 		return false
 	}
-	before := beforeKeys(card.Map, func(e MapEntry) string { return e.Pred.String() })
+	before := beforeKeys(card.Map, mapEntryKey)
+	// The keys this segment actually touched, so a change can be reported only
+	// if one of them is still on the card after the cap.
+	updateKeys := make(map[string]bool)
 	updated := false
 	added := false
 	for _, call := range seg.calls {
@@ -864,6 +891,7 @@ func mergeMap(card *SiteCard, seg *segment) bool {
 		// repeated failure counts, in the tier next door.
 		card.Map[found].Uses++
 		card.Map[found].ObservedAtMs = call.atMs
+		updateKeys[mapEntryKey(card.Map[found])] = true
 		updated = true
 		// Keep the largest reading, not the latest. A container that returned
 		// the whole list once and a title bar the next time is the list, and
@@ -879,10 +907,19 @@ func mergeMap(card *SiteCard, seg *segment) bool {
 	if len(card.Map) > maxMapEntries {
 		card.Map = card.Map[:maxMapEntries]
 	}
-	// The cap is applied to the ranking, so a new entry only falls off when it
-	// ranked below everything already there. That is the system working, not
-	// an update — so it must not be reported as one.
-	return updated || (added && additionSurvived(card.Map, func(e MapEntry) string { return e.Pred.String() }, before))
+	// The cap is applied to the ranking, so an entry can fall off *after* it was
+	// added or after it was merely updated — a Uses bump does not change an
+	// entry's rank, so the updated entry can be the one cut. Both halves of the
+	// question have to be asked, or the ledger claims a change that the cap then
+	// discarded.
+	//
+	// This is the same defect additionSurvived was written for, and the first
+	// version of the fix guarded only the `added` half: `updated ||` short-
+	// circuits, so a segment whose only contribution was a Uses bump on an entry
+	// the ranking then cut still reported a change, and applySegment wrote a
+	// card_revision for an update that did not land.
+	changed := added && additionSurvived(card.Map, mapEntryKey, before)
+	return changed || (updated && entrySurvived(card.Map, mapEntryKey, updateKeys))
 }
 
 // rankMap orders the site map best-first. Stable, so entries of equal rank keep
