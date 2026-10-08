@@ -411,6 +411,24 @@ func (m *Manager) RecordResult(envelopeID, command, host string, tabID int, p co
 	if command == "snapshot" {
 		if digest := digestOf(p.Data); digest != nil {
 			rec.Page = digest
+			// The page is the most direct evidence of where it is, and it is the
+			// only source that cannot be stale.
+			//
+			// The router's host comes from a landing command, and a click is not
+			// one — so a link that navigates leaves tabHost naming the site the
+			// agent just left. Recording the digest under that host then made
+			// TakeSiteNote verify the old site's card against the new page,
+			// noteShown record the healthy card as stale, and the learner merge
+			// the new page's controls into the old site's map.
+			//
+			// The router's view is *not* rewritten here: the control plane owns
+			// where a tab is, and the next landing or host report corrects it.
+			// What the store must not do is file a page under a site it was not
+			// on, and the page's own URL is the better witness.
+			if pageHost := HostFromURL(digest.URL); pageHost != "" {
+				host = pageHost
+				rec.Host = host
+			}
 			m.mu.Lock()
 			ts := m.tabLocked(tab)
 			ts.lastDigest = digest
@@ -831,11 +849,18 @@ func (m *Manager) Start(ctx context.Context) {
 }
 
 func (m *Manager) loop(ctx context.Context) {
+	// Left running. time.NewTimer returns an *armed* timer, and the
+	// `if !timer.Stop() { <-timer.C }` idiom — the standard "hand me a stopped
+	// timer to reuse" dance — is a no-op there, since a fresh timer has not
+	// fired and Stop reports true. It therefore left this timer stopped, and
+	// only the signal branch ever called Reset, so `case <-timer.C` was
+	// unreachable until the first command woke the learner.
+	//
+	// That is exactly the case the timer branch exists for, per the comment on
+	// it: a daemon restarted with unread records and a cursor that never moved
+	// should make progress without needing a new signal. It ran no pass at all.
 	timer := time.NewTimer(m.idleAfter)
 	defer timer.Stop()
-	if !timer.Stop() {
-		<-timer.C
-	}
 	for {
 		select {
 		case <-ctx.Done():

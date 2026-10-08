@@ -1,11 +1,13 @@
 package memory
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"browser-bridge/internal/core"
 )
@@ -271,9 +273,24 @@ func TestTypedInputNeverReachesTheStream(t *testing.T) {
 func TestNonSitePagesAreIgnored(t *testing.T) {
 	m := newTestManager(t, "b-1")
 	seedCard(t, m, "news.example.com")
-	recordNavigate(t, m, "e1", "about:blank", 1)
+
+	// Written out rather than through recordNavigate, because that helper also
+	// snapshots testSnapshot — a news.example.com page. Pairing "navigated to
+	// about:blank" with a news snapshot made this assert the opposite of what
+	// it says, and it passed only because the misattributed snapshot was filed
+	// under an empty host and armed nothing. A snapshot now takes the site from
+	// its own `Page:` line, so the contradiction is no longer papered over.
+	m.RecordCommand("e1", "navigate", "", 1, map[string]any{"url": "about:blank"})
+	m.RecordResult("e1", "navigate", "", 1, okPayload(`{"url":"about:blank","title":"New Tab"}`))
+
 	if note := m.TakeSiteNote("navigate", "news.example.com", 1); note != "" {
 		t.Errorf("a card was injected on about:blank:\n%s", note)
+	}
+	// And a snapshot of a non-site page arms nothing either.
+	m.RecordCommand("e2", "snapshot", "", 1, nil)
+	m.RecordResult("e2", "snapshot", "", 1, okPayload(snapshotJSON("Page: New Tab | about:blank\n")))
+	if note := m.TakeSiteNote("snapshot", "", 1); note != "" {
+		t.Errorf("a card was injected for a snapshot of about:blank:\n%s", note)
 	}
 }
 
@@ -498,5 +515,107 @@ func TestTheStoreForgetsAClosedTabsScratchState(t *testing.T) {
 	m.mu.Unlock()
 	if still {
 		t.Error("the tab's scratch state survived its close")
+	}
+}
+
+// The learner must make progress on its own after a restart, with no traffic.
+//
+// The loop created an armed timer and immediately Stopped it — the standard
+// "hand me a stopped timer" idiom is a no-op on a fresh one, so Stop returned
+// true and nothing was drained. Only the signal branch called Reset, leaving
+// `case <-timer.C` unreachable until the first command arrived. So a daemon
+// started over a backlog of unread records ran no pass at all, which is the
+// one thing the timer branch's own comment says it is there for.
+func TestTheLearnerRunsAPassOnItsOwnAfterARestart(t *testing.T) {
+	dir := t.TempDir()
+	// A backlog written by a previous process, which nobody will signal.
+	prev, err := OpenStream(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const host = "shop.example.com"
+	nav := "nav-1"
+	if err = prev.Append(TraceRecord{Kind: KindCommand, AtMs: 1, Envelope: nav, Command: "navigate", TabID: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err = prev.Append(TraceRecord{Kind: KindResponse, AtMs: 2, Envelope: nav, Command: "navigate", TabID: 1,
+		Outcome: OutcomeOK, Host: host}); err != nil {
+		t.Fatal(err)
+	}
+	const env = "click-1"
+	if err = prev.Append(TraceRecord{Kind: KindCommand, AtMs: 3, Envelope: env, Command: "click", TabID: 1,
+		Args: map[string]any{"selector": ".buy"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err = prev.Append(TraceRecord{Kind: KindResponse, AtMs: 4, Envelope: env, Command: "click", TabID: 1,
+		Outcome: OutcomeError, ErrCode: "no_element", Host: host}); err != nil {
+		t.Fatal(err)
+	}
+	if err = prev.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// A fresh manager over the same data dir, and nothing ever signals it.
+	m, err := New(Options{DataDir: dir, BrowserID: "b", IdleAfter: 50 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = m.Close() })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m.Start(ctx)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, ok := m.store.Get(host); ok {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	_, ok := m.store.Get(host)
+	t.Errorf("no pass ran without a signal, so the backlog stayed unlearned (card present: %v)", ok)
+}
+
+// A snapshot must be filed under the site the page is on, not the one the
+// router last saw.
+//
+// The router's host comes from a landing command, and a click is not one — so a
+// link that navigates leaves it naming the site the agent just left. The
+// snapshot's own `Page:` line names the site it is actually on, and that is the
+// only source that cannot be stale. Recording under the router's host made
+// TakeSiteNote verify the old site's card against the new page, noteShown
+// record the healthy card as stale, and the learner merge the new page's
+// controls into the old site's map.
+func TestASnapshotIsFiledUnderTheSiteItsOwnPageNames(t *testing.T) {
+	m := newTestManager(t, "b-1")
+	// The tab is known to be on the old site — a landing said so.
+	recordNavigate(t, m, "e1", "https://mail.example.com/u/0/", 1)
+
+	// The agent clicks a link and the next snapshot is the new site.
+	m.RecordCommand("e2", "snapshot", "mail.example.com", 1, nil)
+	m.RecordResult("e2", "snapshot", "mail.example.com", 1, core.ResponsePayload{
+		Status: "ok",
+		Data:   json.RawMessage(`{"snapshot":"Page: News | https://news.example.com/\nheading @e1\n","nodes_total":1,"nodes_emitted":1}`),
+	})
+
+	recs, _, _, err := m.Stream().ReadFrom(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var snap *TraceRecord
+	for i := range recs {
+		if recs[i].Command == "snapshot" && recs[i].Page != nil {
+			snap = &recs[i]
+		}
+	}
+	if snap == nil {
+		t.Fatal("no snapshot record found")
+	}
+	if snap.Page.URL != "https://news.example.com/" {
+		t.Errorf("the digest's own url = %q, want the news site", snap.Page.URL)
+	}
+	if snap.Host != "news.example.com" {
+		t.Errorf("the snapshot is filed under %q; the news page was merged into the mail card", snap.Host)
 	}
 }

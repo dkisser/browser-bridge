@@ -48,7 +48,14 @@ func Tasks() []Task {
 		{
 			Name: "mark a named message as read",
 			Run: func(s *Session) bool {
-				return s.solve(goal{Kind: wantMarkRead, Subject: "Welcome aboard"})
+				// "Re: invoice 4471" is row 2, and row 2 is in the fixture's
+				// unread set. The subject this used to name, "Welcome aboard",
+				// is row 3 — which is *not* unread, so the success check
+				// `!Unread[idx]` was already true before the click and the task
+				// reported success for any run that reached the click. One of the
+				// numbers in the baseline table was measuring nothing, and it
+				// measured it the way that flatters the card.
+				return s.solve(goal{Kind: wantMarkRead, Subject: "Re: invoice 4471"})
 			},
 		},
 		{

@@ -32,10 +32,10 @@ func newMemoryCommand(g *globals) *cobra.Command {
 	}
 	cmd.AddCommand(
 		newMemoryListCommand(g),
-		newMemoryShowCommand(),
-		newMemoryLearnCommand(),
-		newMemoryHistoryCommand(),
-		newMemoryRemoveCommand(),
+		newMemoryShowCommand(g),
+		newMemoryLearnCommand(g),
+		newMemoryHistoryCommand(g),
+		newMemoryRemoveCommand(g),
 		newMemoryBenchCommand(),
 	)
 	return cmd
@@ -112,7 +112,7 @@ func newMemoryListCommand(g *globals) *cobra.Command {
 	}
 }
 
-func newMemoryShowCommand() *cobra.Command {
+func newMemoryShowCommand(g *globals) *cobra.Command {
 	var raw, resolve bool
 	cmd := &cobra.Command{
 		Use:   "show <host>",
@@ -144,6 +144,9 @@ func newMemoryShowCommand() *cobra.Command {
 			env, err := EnvFromOSEnv()
 			if err != nil {
 				return err
+			}
+			if g != nil && g.json {
+				return showCardJSON(cmd, g, env.DataDir(), host)
 			}
 			card, err := readCard(store, host)
 			if err != nil {
@@ -181,6 +184,58 @@ func newMemoryShowCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&raw, "raw", false, "Print the stored card JSON instead of the rendered view")
 	cmd.Flags().BoolVar(&resolve, "resolve", false, "Also resolve the site map against the last recorded page for this host")
 	return cmd
+}
+
+// cardJSON is `bridge memory show --json`.
+//
+// --json is a persistent root flag, so every subcommand either honours it or
+// silently ignores a flag the caller passed — and both browser-bridge skills
+// name `bridge memory show <host> --json` as *the* way an agent pulls a card
+// (ADR-0027: at coding time nothing has been injected, so the pull is the only
+// way to get it). An agent piping that command into a JSON parser was getting
+// the human rendering instead.
+//
+// A missing card is a value here, not a failure. The skill says so explicitly —
+// "a `no card for <host>` answer is normal — continue without it" — and the
+// human path keeps its exit code either way, so nothing that relied on it
+// changes.
+type cardJSON struct {
+	Host      string           `json:"host"`
+	Card      *memory.SiteCard `json:"card"`
+	Rendered  string           `json:"rendered"`
+	Guide     *string          `json:"guide"`
+	GuidePath string           `json:"guidePath,omitempty"`
+}
+
+func showCardJSON(cmd *cobra.Command, g *globals, dataDir, host string) error {
+	store, err := openStore()
+	if err != nil {
+		return err
+	}
+	out := cardJSON{Host: host, Rendered: ""}
+
+	// A card that will not parse is reported, not hidden: the field says which
+	// and the message says where, so an agent can ask a human rather than
+	// concluding the card is empty.
+	card, readErr := store.Read(host)
+	switch {
+	case readErr != nil:
+		return fmt.Errorf("the card for %s exists but will not parse (%v)\n  %s",
+			host, readErr, store.Path(host))
+	case card != nil:
+		out.Card = card
+		out.Rendered = memory.RenderCard(card, memory.RenderOptions{MaxTokens: memory.DefaultInjectTokens})
+	}
+
+	guide, gerr := memory.ReadGuide(dataDir, host)
+	if gerr != nil {
+		return fmt.Errorf("the guide for %s exists but will not read: %v", host, gerr)
+	}
+	if guide != "" {
+		out.Guide = &guide
+		out.GuidePath = memory.GuidePath(dataDir, host)
+	}
+	return printJSONRows(cmd, g, out)
 }
 
 // printGuide appends the human-curated site guide when one exists. The guide
@@ -294,7 +349,7 @@ func lastPageFor(dir string, host string) (*memory.PageDigest, int64, error) {
 	return best, bestA, nil
 }
 
-func newMemoryLearnCommand() *cobra.Command {
+func newMemoryLearnCommand(g *globals) *cobra.Command {
 	return &cobra.Command{
 		Use:   "learn",
 		Short: "Run one learner pass over the recorded trace, now",
@@ -318,6 +373,24 @@ func newMemoryLearnCommand() *cobra.Command {
 				return err
 			}
 			hosts := m.Store().Hosts()
+			if g != nil && g.json {
+				type row struct {
+					Host       string `json:"host"`
+					Revision   int    `json:"revision"`
+					Map        int    `json:"map"`
+					Failures   int    `json:"failures"`
+					Procedures int    `json:"procedures"`
+				}
+				rows := make([]row, 0, len(hosts))
+				for _, h := range hosts {
+					card, ok := m.Store().Get(h)
+					if !ok {
+						continue
+					}
+					rows = append(rows, row{card.Host, card.Revision, len(card.Map), len(card.Failures), len(card.Procedures)})
+				}
+				return printJSONRows(cmd, g, rows)
+			}
 			if len(hosts) == 0 {
 				fmt.Fprintln(cmd.OutOrStdout(), "Nothing learned yet — no recorded calls on a host that has failed or repeated.")
 				return nil
@@ -336,7 +409,7 @@ func newMemoryLearnCommand() *cobra.Command {
 	}
 }
 
-func newMemoryHistoryCommand() *cobra.Command {
+func newMemoryHistoryCommand(g *globals) *cobra.Command {
 	var limit int
 	cmd := &cobra.Command{
 		Use:   "history <host>",
@@ -369,6 +442,28 @@ func newMemoryHistoryCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if g != nil && g.json {
+				type row struct {
+					Host     string   `json:"host"`
+					Revision int      `json:"revision"`
+					At       string   `json:"at"`
+					Reason   string   `json:"reason"`
+					Summary  string   `json:"summary"`
+					Stale    bool     `json:"stale"`
+					Evidence []string `json:"evidence,omitempty"`
+				}
+				rows := make([]row, 0, len(revs)+len(stale))
+				for _, r := range revs {
+					rows = append(rows, row{host, r.Revision, formatMs(r.AtMs), r.Reason, r.Summary, false, r.Evidence})
+				}
+				// Staleness is an observation, not a change, and the two are
+				// marked apart so a reader does not count one as the other.
+				for _, r := range stale {
+					rows = append(rows, row{host, r.Revision, formatMs(r.AtMs), "stale", r.Summary, true, nil})
+				}
+				sort.SliceStable(rows, func(i, j int) bool { return rows[i].Revision > rows[j].Revision })
+				return printJSONRows(cmd, g, rows)
+			}
 			if len(revs) == 0 && len(stale) == 0 {
 				fmt.Fprintf(cmd.OutOrStdout(), "No revisions recorded for %s\n", host)
 				return nil
@@ -397,7 +492,7 @@ func newMemoryHistoryCommand() *cobra.Command {
 	return cmd
 }
 
-func newMemoryRemoveCommand() *cobra.Command {
+func newMemoryRemoveCommand(g *globals) *cobra.Command {
 	return &cobra.Command{
 		Use:   "rm <host>",
 		Short: "Delete a card so the agent stops being told about that site",
@@ -433,6 +528,9 @@ func newMemoryRemoveCommand() *cobra.Command {
 			}
 			if err := store.Remove(host); err != nil {
 				return err
+			}
+			if g != nil && g.json {
+				return printJSONRows(cmd, g, map[string]any{"host": host, "removed": true})
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Removed card for %s\n", host)
 			return nil

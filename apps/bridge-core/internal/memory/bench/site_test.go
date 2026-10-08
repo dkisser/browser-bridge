@@ -161,3 +161,66 @@ func firstRefOf(t *testing.T, s *Site, role, name string) string {
 	t.Fatalf("no %s [%s] on the page", role, name)
 	return ""
 }
+
+// A task's success check has to be able to fail, or the row measures nothing.
+//
+// "mark a named message as read" asked for "Welcome aboard", which is row 3 —
+// and the fixture's unread set is {0, 2, 4}. The check is `!Unread[idx]`, so it
+// was already true before the click: any run that reached the click scored a
+// success, and one of the numbers in the baseline table measured nothing at
+// all.
+// A task's success check has to be able to fail, or the row measures nothing.
+//
+// "mark a named message as read" asked for "Welcome aboard", which is row 3 —
+// and the fixture's unread set is {0, 2, 4}. The check is `!Unread[idx]`, so it
+// was already true before the click: any run that reached the click scored a
+// success, and one of the numbers in the baseline table measured nothing at
+// all, the way that flatters a card.
+//
+// Asserted by running the task and requiring it to change the state, not by
+// repeating the subject literal — a test that asserted against its own copy of
+// the value passed with the bug still in place.
+func TestTheMarkReadTaskActuallyMarksSomethingRead(t *testing.T) {
+	var task Task
+	found := false
+	for _, candidate := range Tasks() {
+		if candidate.Name == "mark a named message as read" {
+			task = candidate
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("the mark-read task does not exist")
+	}
+
+	site := NewFixture()
+	before := make(map[int]bool, len(site.Unread))
+	for k, v := range site.Unread {
+		before[k] = v
+	}
+	snap, _, _ := site.Snapshot()
+
+	sess := &Session{
+		Site:    site,
+		TabID:   1,
+		Note:    func(string, string, int) string { return "" },
+		Record:  func(string, string, bool, string) {},
+		pending: snap,
+	}
+
+	if !task.Run(sess) {
+		t.Fatal("the task failed against a fresh fixture, so this test cannot " +
+			"distinguish a real success from a vacuous one")
+	}
+
+	changed := false
+	for k, was := range before {
+		if was && !site.Unread[k] {
+			changed = true
+		}
+	}
+	if !changed {
+		t.Errorf("the task reported success without marking anything read, so its "+
+			"success check is true before and after: %+v", site.Unread)
+	}
+}

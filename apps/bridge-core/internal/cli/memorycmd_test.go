@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -286,6 +287,18 @@ func TestShowWithoutAGuidePrintsNoGuideSection(t *testing.T) {
 	}
 }
 
+// writeTestGuide writes a curated guide the way a human would, so a test can
+// assert the JSON carries it.
+func writeTestGuide(t *testing.T, dataDir, host, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dataDir, "guides"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(memory.GuidePath(dataDir, host), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // `bridge memory rm` is the escape hatch ADR-0031 §3 is built around: "a card
 // has to be removable". It checked for the file by re-deriving the store's
 // naming rule as host+".json", while the store escapes any host that needs it
@@ -344,5 +357,111 @@ func TestUnparseableCardHintNamesTheFileThatExists(t *testing.T) {
 	}
 	if !strings.Contains(stderr, store.Path(host)) {
 		t.Errorf("the parse-failure hint does not name the file that exists:\n%s", stderr)
+	}
+}
+
+// `--json` is a persistent root flag, so a subcommand that accepts it and
+// ignores it is worse than one that lacks it: the caller has no way to tell.
+//
+// Both skills name `bridge memory show <host> --json` as *the* way an agent
+// pulls a card (ADR-0027 — at coding time nothing has been injected, so the
+// pull is the only way to get it), and an agent piping that command into a JSON
+// parser was getting the human rendering. `memory learn`, `history` and `rm`
+// had the same gap.
+func TestEveryMemorySubcommandHonoursJSON(t *testing.T) {
+	home := resolvedHome(t)
+	store, err := memory.OpenStore(home + "/data")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Put(mailCard()); err != nil {
+		t.Fatal(err)
+	}
+	writeTestGuide(t, home+"/data", "mail.example.com", "# mail\n\nLayout notes.\n")
+
+	for _, args := range [][]string{
+		{"memory", "show", "mail.example.com", "--json"},
+		{"memory", "list", "--json"},
+		{"memory", "history", "mail.example.com", "--json"},
+		{"memory", "learn", "--json"},
+		{"memory", "rm", "mail.example.com", "--json"},
+	} {
+		t.Run(args[1], func(t *testing.T) {
+			stdout, stderr, err := runCLI(t, args...)
+			_ = stderr
+			// rm removes the card, so it is the last case to run; the others
+			// tolerate its absence, and every one is asserted on shape only.
+			if err != nil && args[1] != "rm" {
+				t.Fatalf("%v: %v\n%s", args, err, stderr)
+			}
+			var out any
+			if uerr := json.Unmarshal([]byte(stdout), &out); uerr != nil {
+				t.Errorf("%v printed something that is not JSON: %v\n%s", args, uerr, stdout)
+			}
+		})
+	}
+}
+
+// The pull an agent actually makes has to carry the content, not just be
+// parseable. `card` is the stored card and `guide` the human-curated prose, so
+// a single command gives the agent both halves.
+func TestMemoryShowJSONCarriesTheCardAndTheGuide(t *testing.T) {
+	home := resolvedHome(t)
+	store, err := memory.OpenStore(home + "/data")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Put(mailCard()); err != nil {
+		t.Fatal(err)
+	}
+	writeTestGuide(t, home+"/data", "mail.example.com", "Layout notes.\n")
+
+	stdout, stderr, err := runCLI(t, "memory", "show", "mail.example.com", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, stderr)
+	}
+	var out struct {
+		Host      string           `json:"host"`
+		Card      *memory.SiteCard `json:"card"`
+		Rendered  string           `json:"rendered"`
+		Guide     *string          `json:"guide"`
+		GuidePath string           `json:"guidePath"`
+	}
+	if err = json.Unmarshal([]byte(stdout), &out); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, stdout)
+	}
+	if out.Host != "mail.example.com" {
+		t.Errorf("host = %q", out.Host)
+	}
+	if out.Card == nil {
+		t.Fatal("card is null; the agent gets nothing to select from")
+	}
+	if len(out.Card.Map) == 0 {
+		t.Error("the card came back with an empty site map")
+	}
+	if out.Guide == nil || *out.Guide != "Layout notes.\n" {
+		t.Errorf("guide = %v, want the curated prose", out.Guide)
+	}
+	if out.GuidePath == "" {
+		t.Error("guidePath is empty, so the agent cannot open the file itself")
+	}
+}
+
+// "A `no card for <host>` answer is normal — continue without it." The skill
+// says so, so in JSON mode a missing card is a value and the command succeeds.
+func TestMemoryShowJSONTreatsAMissingCardAsAValue(t *testing.T) {
+	resolvedHome(t)
+	stdout, stderr, err := runCLI(t, "memory", "show", "nothing.example.com", "--json")
+	if err != nil {
+		t.Fatalf("a missing card failed in JSON mode, but the skill says to continue: %v\n%s", err, stderr)
+	}
+	var out struct {
+		Card *memory.SiteCard `json:"card"`
+	}
+	if err = json.Unmarshal([]byte(stdout), &out); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, stdout)
+	}
+	if out.Card != nil {
+		t.Errorf("card = %+v, want null", out.Card)
 	}
 }

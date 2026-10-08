@@ -155,3 +155,55 @@ func TestTabHostStaysBoundedWithoutCloses(t *testing.T) {
 		t.Errorf("tabHost holds %d entries, over the %d bound", size, maxTabHost)
 	}
 }
+
+// A tab the agent never navigated must still be known to the router.
+//
+// tabHost was written by landing commands alone, and the flow the MCP tools
+// document is tab_list then snapshot. An agent following it reached a tab it
+// never navigated, so HostForTab returned "", TakeSiteNote bailed at its own
+// host == "" guard, and the learner's snapshot branch never armed either — so
+// the documented path injected nothing and learned nothing, on a card that
+// existed.
+//
+// These are the commands whose entire answer *is* a location, so they may
+// correct the router's view. They are not landings, so nothing re-arms a card
+// or discards a digest: the page did not change.
+func TestAHostReportingCommandTeachesTheRouterWhereATabIs(t *testing.T) {
+	t.Run("pageinfo names the addressed tab", func(t *testing.T) {
+		r, _ := makeRouterWithHook(t, &hostHook{})
+		payload := ResponsePayload{Data: json.RawMessage(`{"id":5,"url":"https://mail.example.com/u/0/","active":true}`)}
+		r.hostAfter(5, "pageinfo", payload)
+		if got := r.HostForTab(5); got != "mail.example.com" {
+			t.Errorf("HostForTab(5) = %q after pageinfo, want mail.example.com", got)
+		}
+	})
+
+	t.Run("tab:list names every tab", func(t *testing.T) {
+		r, _ := makeRouterWithHook(t, &hostHook{})
+		payload := ResponsePayload{Data: json.RawMessage(
+			`[{"id":1,"url":"https://a.example/"},{"id":2,"url":"https://b.example/x"},{"id":3,"url":"chrome://extensions"}]`)}
+		r.hostAfter(0, "tab:list", payload)
+		for tab, want := range map[int]string{1: "a.example", 2: "b.example"} {
+			if got := r.HostForTab(tab); got != want {
+				t.Errorf("HostForTab(%d) = %q, want %q", tab, got, want)
+			}
+		}
+		// chrome:// names no site, and must not become one.
+		if got := r.HostForTab(3); got != "" {
+			t.Errorf("HostForTab(3) = %q for a chrome:// tab, want empty", got)
+		}
+	})
+
+	// And a host report is not a landing: the card stays armed and the digest
+	// is not discarded, because the page did not change.
+	t.Run("a host report is not a landing", func(t *testing.T) {
+		if IsLandingCommand("pageinfo") || IsLandingCommand("tab:list") {
+			t.Error("a host report was classified as a landing, so it would re-arm a card " +
+				"and discard a digest for a page that did not change")
+		}
+		payload := ResponsePayload{Data: json.RawMessage(`{"url":"https://a.example/"}`)}
+		if got := LandingHost(payload); got != "a.example" {
+			t.Errorf("LandingHost on a pageinfo result = %q, want a.example", got)
+		}
+	})
+}

@@ -334,6 +334,37 @@ func (r *Router) hostAfter(tab int, command string, payload ResponsePayload) str
 	if tab < 0 {
 		tab = 0
 	}
+	// A result that names where a tab is, without the tab having moved.
+	//
+	// These are the commands whose whole answer *is* a location, so they are
+	// allowed to correct the router's view. They are not landings, so nothing
+	// here re-arms a card or discards a digest — the page did not change, and
+	// the previous site is still the right one to hold.
+	//
+	// Without this, tabHost was written by landings alone and the flow the MCP
+	// tools document — tab_list, then snapshot — left the router knowing
+	// nothing about the tab the agent was working on.
+	if IsHostReportingCommand(command) {
+		addressed := tab
+		for id, h := range LandedTabIDs(command, payload) {
+			if id == hostReportingAddressee {
+				id = addressed
+			}
+			if h == "" {
+				continue
+			}
+			if _, exists := r.tabHost[id]; !exists {
+				r.tabHostOrder = append(r.tabHostOrder, id)
+			}
+			r.tabHost[id] = h
+		}
+		for len(r.tabHostOrder) > maxTabHost {
+			oldest := r.tabHostOrder[0]
+			r.tabHostOrder = r.tabHostOrder[1:]
+			delete(r.tabHost, oldest)
+		}
+		return r.tabHost[addressed]
+	}
 	// A closed tab has no site. Guarded on the close having succeeded, so a
 	// failed close leaves the tab's host in place — the tab is still open.
 	if command == "tab:close" {

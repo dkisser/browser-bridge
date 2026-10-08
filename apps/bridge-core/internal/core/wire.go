@@ -198,6 +198,30 @@ func IsLandingCommand(command string) bool {
 	}
 }
 
+// IsHostReportingCommand reports the commands whose *result* names the site a
+// tab is on, without the tab having gone anywhere.
+//
+// Distinct from IsLandingCommand because the two need opposite treatment. A
+// landing ends one attempt and starts another, so it re-arms the card and
+// discards the digest; a report changes nothing, so it may only correct the
+// router's view of where the tab is.
+//
+// They exist because tabHost used to be written by landings alone, and the
+// flow the MCP tools themselves document is tab_list → snapshot. An agent
+// following it reaches a tab it never navigated, so HostForTab returned "",
+// TakeSiteNote bailed at its own host == "" guard and no card was injected —
+// and the learner's snapshot branch never armed either, so nothing was learned
+// from the whole session. The card existed and was never shown, on the most
+// common path there is.
+func IsHostReportingCommand(command string) bool {
+	switch command {
+	case "pageinfo", "tab:list":
+		return true
+	default:
+		return false
+	}
+}
+
 // LandingHost extracts the site a landing command arrived at, from the url in
 // its result body. It returns "" when the result names no site, which is the
 // normal case for chrome:// and about:blank.
@@ -228,6 +252,67 @@ func LandingHost(payload ResponsePayload) string {
 	}
 	return ""
 }
+
+// LandedTabIDs reports every tab a result names, with the site each is on.
+//
+// tab:list answers with the whole set of open tabs, so it is the one result
+// that can teach the router about tabs it was not addressed to at all — which
+// is the whole point of it, and the reason the documented flow starts there.
+func LandedTabIDs(command string, payload ResponsePayload) map[int]string {
+	if !IsHostReportingCommand(command) || len(payload.Data) == 0 {
+		return nil
+	}
+	hosts := make(map[int]string)
+
+	// Two shapes reach here, and they are unambiguous: decoding a JSON array
+	// into a struct fails and vice versa, so trying both in turn is exact
+	// rather than a guess.
+	//
+	// tab:list answers with a top-level array of tabs. pageinfo answers with
+	// the object it was addressed to, naming no id — so its URL goes under the
+	// sentinel and the caller substitutes the tab the command was addressed to.
+	var listed []struct {
+		ID  *int   `json:"id"`
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(payload.Data, &listed); err == nil {
+		for _, it := range listed {
+			if it.ID != nil && *it.ID >= 0 {
+				if h := HostOf(it.URL); h != "" {
+					hosts[*it.ID] = h
+				}
+			}
+		}
+		return hosts
+	}
+	var single struct {
+		URL   string `json:"url"`
+		Items []struct {
+			ID  *int   `json:"id"`
+			URL string `json:"url"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(payload.Data, &single); err != nil {
+		return nil
+	}
+	if single.URL != "" {
+		hosts[hostReportingAddressee] = HostOf(single.URL)
+	}
+	for _, it := range single.Items {
+		if it.ID != nil && *it.ID >= 0 {
+			if h := HostOf(it.URL); h != "" {
+				hosts[*it.ID] = h
+			}
+		}
+	}
+	return hosts
+}
+
+// hostReportingAddressee is the sentinel host:list/pageinfo stores under when
+// the result names a URL but no tab, so the caller can substitute the tab the
+// command was addressed to. A real tab id can never collide with it — Chrome
+// ids are non-negative, and -1 is not a tab.
+const hostReportingAddressee = -1
 
 // LandedTabID reports which tab a command left the agent on, when that is not
 // the tab the command was addressed to.
