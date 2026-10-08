@@ -2,6 +2,8 @@ package memory
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -334,5 +336,167 @@ func TestTheSoftFailureGateMeasuresReadCharacters(t *testing.T) {
 		}
 		t.Errorf("%s was recorded as a soft failure (%s): a %s-sized result is not a page dump",
 			r.Command, r.ErrCode, map[string]string{"gettext": "30,000-character", "screenshot": "90KB"}[r.Command])
+	}
+}
+
+// New must not leak the stream's file handle when a later step fails.
+//
+// OpenStream holds an append handle for the life of the manager, and the caller
+// treats New's error as recoverable: app.go logs "self-learning disabled" and
+// brings the control plane up anyway. So a leaked handle is not a transient —
+// the daemon lives on with an unclosed append fd, reachable whenever
+// data/cards exists as a regular file.
+func TestNewReleasesTheStreamWhenALaterOpenFails(t *testing.T) {
+	dir := t.TempDir()
+	// Make OpenStore fail: the cards path exists, as a regular file.
+	if err := os.WriteFile(filepath.Join(dir, "cards"), []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	before := openFDs(t)
+	if _, err := New(Options{DataDir: dir, BrowserID: "b"}); err == nil {
+		t.Fatal("New succeeded with an unusable cards path")
+	}
+	after := openFDs(t)
+	if after > before {
+		t.Errorf("New leaked %d file descriptor(s): %d before, %d after", after-before, before, after)
+	}
+}
+
+// openFDs counts this process's open file descriptors, or returns 0 where the
+// platform does not expose the directory (in which case the assertion above is
+// a no-op rather than a false failure).
+func openFDs(t *testing.T) int {
+	t.Helper()
+	entries, err := os.ReadDir("/dev/fd")
+	if err != nil {
+		return 0
+	}
+	return len(entries)
+}
+
+// A process that does not own $BB_HOME/data must not roll its stream over.
+//
+// `bridge memory learn` and `bench record` open a second Manager over the live
+// directory while the daemon holds its own handle. Rotate closes the caller's
+// fd, renames stream.jsonl to stream.jsonl.1 and creates a fresh empty
+// stream.jsonl — so the daemon's already-open fd follows the inode to the
+// renamed file and keeps appending there, while its own ReadFrom reads the new
+// empty one and never sees another record. Learning stops for the rest of that
+// daemon's life and nothing reports it.
+func TestOnlyTheOwningManagerRotatesTheStream(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		owns     bool
+		wantFile bool // whether stream.jsonl.1 should exist afterwards
+	}{
+		{"the daemon rotates", true, true},
+		{"a second Manager over a live dir does not", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			// A stream past the ceiling, fully consumed, which is the state
+			// Rotate requires.
+			stream, err := OpenStream(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = stream.Append(TraceRecord{
+				Kind: KindCommand, AtMs: 1, Envelope: "e1", Command: "gettext",
+				Args: map[string]any{"selector": strings.Repeat("x", streamRotateBytes)},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, _, err = stream.ReadFrom(0); err != nil {
+				t.Fatal(err)
+			}
+			if err = stream.Close(); err != nil {
+				t.Fatal(err)
+			}
+			cursor := LoadCursor(dir)
+			if err = cursor.Set(1); err != nil {
+				t.Fatal(err)
+			}
+
+			m, err := New(Options{DataDir: dir, BrowserID: "b", OwnsRotation: tc.owns})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = m.Close() })
+
+			_, statErr := os.Stat(filepath.Join(dir, "stream.jsonl.1"))
+			if got := statErr == nil; got != tc.wantFile {
+				t.Errorf("retained generation present = %v, want %v", got, tc.wantFile)
+			}
+		})
+	}
+}
+
+// The ceiling has to be enforced for the whole life of the process, not only at
+// startup.
+//
+// Rotate ran from one place: New. A daemon left running for a week therefore
+// accumulated records without bound — and because ReadFrom scans from the
+// cursor each pass while the file keeps growing, idle CPU stayed a function of
+// uptime, which is the specific cost ADR-0032 says it fixed. The check is
+// repeated after each learn pass for a Manager that owns the stream.
+func TestTheOwningManagerRotatesDuringItsLifeNotOnlyAtStartup(t *testing.T) {
+	dir := t.TempDir()
+	m, err := New(Options{DataDir: dir, BrowserID: "b", OwnsRotation: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = m.Close() })
+
+	// Nothing to rotate yet.
+	m.rotateIfOwned()
+	if _, statErr := os.Stat(filepath.Join(dir, "stream.jsonl.1")); statErr == nil {
+		t.Fatal("rotated an empty stream; the test is not testing the ceiling")
+	}
+
+	// Outgrow the ceiling in one record, well after startup.
+	if err = m.Stream().Append(TraceRecord{
+		Kind: KindCommand, AtMs: 2, Envelope: "e1", Command: "gettext",
+		Args: map[string]any{"selector": strings.Repeat("x", streamRotateBytes)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The learner has to have consumed it, which is the state Rotate requires.
+	if err = m.LearnNow(); err != nil {
+		t.Fatalf("learn pass: %v", err)
+	}
+	m.rotateIfOwned()
+
+	if _, statErr := os.Stat(filepath.Join(dir, "stream.jsonl.1")); statErr != nil {
+		t.Errorf("the stream outgrew its ceiling during the process's life and was not rotated: %v", statErr)
+	}
+}
+
+// The store's per-tab scratch state must be pruned too, not only the router's.
+//
+// tabLocked creates a tabState on first sight and nothing ever deleted one, so
+// the two maps grew together, one entry per tab id Chrome ever assigned. It
+// matters beyond the memory: Chrome reuses ids, so a card still armed for a
+// closed tab would be verified against whatever page the *next* tab with that
+// id showed.
+func TestTheStoreForgetsAClosedTabsScratchState(t *testing.T) {
+	m := newTestManager(t, "b-1")
+	recordNavigate(t, m, "e1", "https://news.example.com/", 7)
+
+	m.mu.Lock()
+	_, had := m.tabs[tabKey(7)]
+	m.mu.Unlock()
+	if !had {
+		t.Fatal("the tab was never tracked; the test is not testing the prune")
+	}
+
+	m.RecordResult("e2", "tab:close", "news.example.com", 7,
+		core.ResponsePayload{Status: "ok", Data: json.RawMessage(`{"ok":true}`)})
+
+	m.mu.Lock()
+	_, still := m.tabs[tabKey(7)]
+	m.mu.Unlock()
+	if still {
+		t.Error("the tab's scratch state survived its close")
 	}
 }

@@ -120,6 +120,11 @@ func Run(ctx context.Context, cfg Config) error {
 		BrowserID:  st.BrowserID(),
 		Compressor: memory.NewCompressorFromEnv(),
 		Logf:       logger.Printf,
+		// This is the process that owns $BB_HOME/data. A CLI or bench that
+		// opens a second Manager over it must not rotate: doing so renames the
+		// live stream out from under this one's open handle and stops its
+		// learning for the rest of its life, silently.
+		OwnsRotation: true,
 	})
 	if memErr != nil {
 		logger.Printf("self-learning disabled: %v", memErr)

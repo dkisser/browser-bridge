@@ -31,6 +31,11 @@ type Manager struct {
 	// dataDir is Options.DataDir, kept because the store only knows its own
 	// cards/ subdirectory and the guides live beside it (ADR-0034).
 	dataDir string
+	// ownsStream says this Manager may rotate the stream. False for a CLI or
+	// bench process that opened a second Manager over the live directory while
+	// the daemon holds its own handle — rotating from there renames the file
+	// out from under the daemon and stops its learning silently.
+	ownsStream bool
 
 	// signal is the coalescing wakeup (ADR-0020). Capacity one is the whole
 	// design: the unread suffix of the stream is the record of the work, so
@@ -56,6 +61,13 @@ type Manager struct {
 	inflight map[string]inflightCmd
 	// inflightOrder is the insertion order, for that eviction.
 	inflightOrder []string
+	// tabs is per-tab scratch state, and like inflight it was only ever added
+	// to: tabLocked created an entry on first sight and nothing ever deleted
+	// one. A long-running session that opens and closes thousands of tabs
+	// accumulated a tabState per id Chrome ever assigned, growing alongside the
+	// router's own tabHost. tab:close now prunes it, and the map is capped for
+	// the closes the router never sees — a tab the *user* closed.
+	tabsOrder []int
 	// browserID is the profile cards are attributed to (ADR-0019's
 	// per-browser annotation). A card entry remembers the browser it was
 	// observed under and is withheld from the others.
@@ -71,6 +83,14 @@ type inflightCmd struct {
 // live command is never the thing evicted, and small enough that a leak is
 // bounded rather than merely slow.
 const maxInflight = 4096
+
+// maxTabs caps the per-tab maps (this one and the router's tabHost, which
+// bounds at the same number). A browser session works with tabs in the tens,
+// so this is generous; the eviction is safe because a forgotten tab reads as
+// "no host known yet", which is the state every fresh tab is in anyway. It is
+// the same trade maxInflight makes, for the same reason: a leak that is
+// bounded beats one that is merely slow.
+const maxTabs = 4096
 
 // tabState is what the store keeps per tab, and it is deliberately almost
 // nothing. Where the tab *is* belongs to the control plane, which is told and
@@ -103,6 +123,42 @@ type Options struct {
 	// IdleAfter overrides how long the learner waits for quiet.
 	IdleAfter time.Duration
 	Logf      func(format string, args ...any)
+	// OwnsRotation says this Manager may roll the stream over: at open, and
+	// again after every learn pass so the ceiling is enforced for the whole
+	// life of the process rather than only at startup.
+	//
+	// Only the process that owns $BB_HOME/data may set it — the daemon.
+	// `bridge memory learn` and `bench record` open a *second* Manager over
+	// the live directory while the daemon still holds its own handle, and
+	// Rotate renames stream.jsonl out from under it: the daemon's open fd
+	// follows the inode to stream.jsonl.1 and keeps appending there, while its
+	// ReadFrom reads the new empty file and never sees another record. Learning
+	// stops for the rest of that daemon's life and nothing reports it.
+	OwnsRotation bool
+}
+
+// rotateOwnedStream rolls the stream over when it has outgrown its ceiling and
+// the learner has consumed all of it, resetting the cursor to the start of the
+// retained generation.
+//
+// Called at open and again after every learn pass. A ceiling checked once per
+// process start is not a ceiling on the process that matters: a daemon up for a
+// week is the one that accumulates records without bound, and because ReadFrom
+// scans from the cursor each pass while the file keeps growing, idle CPU stays a
+// function of uptime — the exact cost ADR-0032 says it fixed.
+func rotateOwnedStream(stream *Stream, cursor *Cursor, logf func(string, ...any)) {
+	rotated, err := stream.Rotate(cursor.Get())
+	if err != nil {
+		logf("memory: rotate stream: %v", err)
+		return
+	}
+	if !rotated {
+		return
+	}
+	if err := cursor.Set(0); err != nil {
+		logf("memory: reset cursor after rotation: %v", err)
+	}
+	logf("memory: rotated the trace stream")
 }
 
 // defaultIdleAfter is long enough that a session's back-and-forth is one batch,
@@ -119,6 +175,19 @@ func New(opts Options) (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
+	// OpenStream holds an append handle for the life of the manager, so a
+	// failure on any later step has to release it. Without this the handle was
+	// dropped on the floor and leaked: the caller treats the error as
+	// recoverable — app.go logs "self-learning disabled" and runs anyway — so
+	// the daemon lived on with an unclosed append handle, reachable whenever
+	// data/cards exists as a regular file or the data dir turns read-only
+	// between the two opens.
+	ok := false
+	defer func() {
+		if !ok {
+			_ = stream.Close()
+		}
+	}()
 	store, err := OpenStore(opts.DataDir)
 	if err != nil {
 		return nil, err
@@ -128,31 +197,33 @@ func New(opts Options) (*Manager, error) {
 	// consumed all of it. See Stream.Rotate for why the second half is the
 	// condition that makes it safe. Restarting the cursor is the whole cost, and
 	// it costs one idempotent re-read of the retained generation.
-	if rotated, err := stream.Rotate(cursor.Get()); err != nil {
-		logf("memory: rotate stream: %v", err)
-	} else if rotated {
-		if err := cursor.Set(0); err != nil {
-			logf("memory: reset cursor after rotation: %v", err)
-		}
-		logf("memory: rotated the trace stream")
+	//
+	// Gated on owning the stream, and repeated after every learn pass — a
+	// check that runs once per process start does not enforce a ceiling on a
+	// daemon that stays up for a week, which is the only process that
+	// accumulates enough to matter.
+	if opts.OwnsRotation {
+		rotateOwnedStream(stream, cursor, logf)
 	}
 	learn := NewLearn(stream, store, cursor, opts.Compressor, logf)
 	idle := opts.IdleAfter
 	if idle <= 0 {
 		idle = defaultIdleAfter
 	}
+	ok = true
 	return &Manager{
-		stream:    stream,
-		store:     store,
-		cursor:    cursor,
-		learn:     learn,
-		logf:      logf,
-		dataDir:   opts.DataDir,
-		signal:    make(chan struct{}, 1),
-		idleAfter: idle,
-		tabs:      make(map[int]*tabState),
-		inflight:  make(map[string]inflightCmd),
-		browserID: opts.BrowserID,
+		stream:     stream,
+		store:      store,
+		cursor:     cursor,
+		learn:      learn,
+		logf:       logf,
+		ownsStream: opts.OwnsRotation,
+		dataDir:    opts.DataDir,
+		signal:     make(chan struct{}, 1),
+		idleAfter:  idle,
+		tabs:       make(map[int]*tabState),
+		inflight:   make(map[string]inflightCmd),
+		browserID:  opts.BrowserID,
 	}, nil
 }
 
@@ -272,6 +343,17 @@ func (m *Manager) RecordResult(envelopeID, command, host string, tabID int, p co
 	rec.Args = m.takeInflight(envelopeID)
 
 	tab := tabKey(tabID)
+
+	// A closed tab is gone, so its scratch state is too. Pruned here as well as
+	// bounded above: the bound covers the closes the router never sees — a tab
+	// the user closed — while this keeps the common case exact. Guarded on the
+	// close having succeeded, because a failed close leaves the tab open and
+	// its digest worth keeping.
+	if command == "tab:close" && p.Status != "error" {
+		m.mu.Lock()
+		m.forgetTabLocked(tabID)
+		m.mu.Unlock()
+	}
 
 	if p.Status == "error" {
 		// A failure is worth waking the learner for immediately: it is the
@@ -568,12 +650,29 @@ func (m *Manager) takeInflight(envelopeID string) map[string]any {
 }
 
 func (m *Manager) tabLocked(tabID int) *tabState {
-	ts, ok := m.tabs[tabKey(tabID)]
+	key := tabKey(tabID)
+	ts, ok := m.tabs[key]
 	if !ok {
 		ts = &tabState{}
-		m.tabs[tabKey(tabID)] = ts
+		m.tabs[key] = ts
+		m.tabsOrder = append(m.tabsOrder, key)
+		for len(m.tabsOrder) > maxTabs {
+			oldest := m.tabsOrder[0]
+			m.tabsOrder = m.tabsOrder[1:]
+			delete(m.tabs, oldest)
+		}
 	}
 	return ts
+}
+
+// forgetTabLocked drops a tab's scratch state. The caller must hold m.mu.
+//
+// Called when a tab closes. Anything still armed for it is discarded, which is
+// correct rather than lossy: a card armed for a tab that no longer exists would
+// otherwise be verified against whatever page the *next* tab with that id
+// showed, since Chrome reuses ids.
+func (m *Manager) forgetTabLocked(tabID int) {
+	delete(m.tabs, tabKey(tabID))
 }
 
 // armLocked schedules this tab's card for the named host and asks the next
@@ -717,6 +816,7 @@ func (m *Manager) loop(ctx context.Context) {
 			if err := m.learn.Run(); err != nil {
 				m.logf("memory: learn pass: %v", err)
 			}
+			m.rotateIfOwned()
 			timer.Reset(m.idleAfter)
 		case <-timer.C:
 			// A pass on a timer as well as on a signal: if the daemon was
@@ -725,9 +825,23 @@ func (m *Manager) loop(ctx context.Context) {
 			if err := m.learn.Run(); err != nil {
 				m.logf("memory: learn pass: %v", err)
 			}
+			m.rotateIfOwned()
 			timer.Reset(m.idleAfter)
 		}
 	}
+}
+
+// rotateIfOwned rolls the stream over when this Manager owns it.
+//
+// The cursor has just been advanced to the end of a pass, which is the state
+// Rotate requires: every record in the active generation is learned, so moving
+// the file aside cannot renumber anything out from under a reader. A no-op for
+// a Manager that does not own the stream.
+func (m *Manager) rotateIfOwned() {
+	if !m.ownsStream {
+		return
+	}
+	rotateOwnedStream(m.stream, m.cursor, m.logf)
 }
 
 // waitQuiet blocks until no new record has arrived for idleAfter, reporting

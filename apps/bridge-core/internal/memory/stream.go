@@ -281,8 +281,15 @@ func (s *Stream) Rotate(cursorLine int64) (bool, error) {
 	// so the buffer has to clear the ceiling rather than assume small records.
 	// If the count cannot be established, do not rotate: not knowing is a
 	// reason to leave the file alone, and the next start will try again.
-	lines, ok := s.lineCount()
-	if !ok || cursorLine < lines {
+	// The safety condition is "nothing unlearned would be renumbered", and it
+	// used to be written as `cursorLine >= lines`. That is stricter than the
+	// condition, and strictly unreachable: Run appends its own learn_run record
+	// *after* it advances the cursor, so the cursor is permanently one line
+	// short of the end and the test could never pass. The 16MB ceiling ADR-0032
+	// introduced therefore rotated nothing, ever — not merely "only at
+	// startup" — which is why the stream simply grew. See
+	// unconsumedIsBookkeeping for what is safe to leave behind.
+	if !s.unconsumedIsBookkeeping(cursorLine) {
 		return false, nil
 	}
 
@@ -310,24 +317,45 @@ func (s *Stream) Rotate(cursorLine int64) (bool, error) {
 // rotate with records still unlearned.
 const maxStreamLineBytes = 2 * streamRotateBytes
 
-// lineCount counts the lines in the active generation, or reports that it
-// could not.
-func (s *Stream) lineCount() (int64, bool) {
+// unconsumedIsBookkeeping reports whether every record after the first `from`
+// lines of the active generation is one the learner wrote about itself.
+//
+// Rotate's whole precondition is that moving the file aside cannot renumber a
+// record out from under a reader, which means no *learning* record may be
+// unread. A learn_run record — a description of a pass, written by the pass
+// itself after the cursor moved — carries nothing to learn, so leaving one
+// behind is safe and re-reading it is free. Requiring the cursor to be past it
+// instead made the condition unsatisfiable.
+//
+// A line that will not parse counts as unconsumed: a torn tail is a record
+// somebody may still be able to read.
+func (s *Stream) unconsumedIsBookkeeping(from int64) bool {
+	if from < 0 {
+		return false
+	}
 	f, err := os.Open(s.path)
 	if err != nil {
-		return 0, false
+		return false
 	}
 	defer func() { _ = f.Close() }()
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), maxStreamLineBytes)
-	var lines int64
+	var line int64
 	for sc.Scan() {
-		lines++
+		if line < from {
+			line++
+			continue
+		}
+		line++
+		var rec TraceRecord
+		if err := json.Unmarshal(sc.Bytes(), &rec); err != nil {
+			return false
+		}
+		if rec.Kind != KindLearnRun {
+			return false
+		}
 	}
-	if sc.Err() != nil {
-		return 0, false
-	}
-	return lines, true
+	return sc.Err() == nil
 }
 
 // Close releases the append handle.

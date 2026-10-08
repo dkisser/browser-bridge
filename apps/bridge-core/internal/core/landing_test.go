@@ -111,3 +111,47 @@ func TestHostAfterDoesNotHandBackThePreviousHostForANamelessLanding(t *testing.T
 		t.Errorf("hostAfter(navigate) = %q, want other.example", got)
 	}
 }
+
+// A closed tab's host must be forgotten, and the map must not grow forever.
+//
+// tabHost was only ever written to: hostAfter added an entry per landing and
+// nothing removed one, and tab:close is not a landing command so it never
+// reached that branch at all. A long-running session that opens and closes
+// thousands of tabs accumulated an entry per id Chrome ever assigned, with the
+// memory store's own tabState growing alongside it — the same class of
+// unbounded state ADR-0032 added maxInflight to fix, missed in two places.
+func TestAClosedTabIsForgotten(t *testing.T) {
+	r, _ := makeRouterWithHook(t, &hostHook{})
+
+	r.hostAfter(7, "navigate", ResponsePayload{Data: json.RawMessage(`{"url":"https://a.example/x"}`)})
+	if got := r.HostForTab(7); got != "a.example" {
+		t.Fatalf("HostForTab(7) = %q, want a.example", got)
+	}
+
+	r.hostAfter(7, "tab:close", ResponsePayload{Data: json.RawMessage(`{"ok":true}`)})
+	if got := r.HostForTab(7); got != "" {
+		t.Errorf("HostForTab(7) = %q after the tab closed, want empty", got)
+	}
+
+	// A close that failed leaves the tab open, so its host stays.
+	r.hostAfter(8, "navigate", ResponsePayload{Data: json.RawMessage(`{"url":"https://b.example/x"}`)})
+	r.hostAfter(8, "tab:close", ResponsePayload{Status: "error", Error: "no_such_tab"})
+	if got := r.HostForTab(8); got != "b.example" {
+		t.Errorf("HostForTab(8) = %q after a failed close, want b.example", got)
+	}
+}
+
+// The bound has to hold for the closes the router never sees — a tab the user
+// closed produces no tab:close at all.
+func TestTabHostStaysBoundedWithoutCloses(t *testing.T) {
+	r, _ := makeRouterWithHook(t, &hostHook{})
+	for i := 0; i < maxTabHost+64; i++ {
+		r.hostAfter(i, "navigate", ResponsePayload{Data: json.RawMessage(`{"url":"https://a.example/x"}`)})
+	}
+	r.mu.Lock()
+	size := len(r.tabHost)
+	r.mu.Unlock()
+	if size > maxTabHost {
+		t.Errorf("tabHost holds %d entries, over the %d bound", size, maxTabHost)
+	}
+}

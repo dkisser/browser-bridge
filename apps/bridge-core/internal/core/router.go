@@ -81,6 +81,8 @@ type Router struct {
 	// is not browser state the extension could be asked instead — the extension
 	// is the thing being driven.
 	tabHost map[int]string
+	// tabHostOrder is the insertion order, for the eviction in hostAfter.
+	tabHostOrder []int
 	// pending mirrors inboundByID again, and holds what the *response* path
 	// needs to know about the command: which command it was and which tab it
 	// was aimed at. A response envelope carries the originating envelope's id
@@ -332,16 +334,41 @@ func (r *Router) hostAfter(tab int, command string, payload ResponsePayload) str
 	if tab < 0 {
 		tab = 0
 	}
+	// A closed tab has no site. Guarded on the close having succeeded, so a
+	// failed close leaves the tab's host in place — the tab is still open.
+	if command == "tab:close" {
+		if payload.Status != "error" {
+			delete(r.tabHost, tab)
+		}
+		return ""
+	}
 	if IsLandingCommand(command) {
 		h := LandingHost(payload)
 		if h == "" {
 			return ""
 		}
+		if _, exists := r.tabHost[tab]; !exists {
+			r.tabHostOrder = append(r.tabHostOrder, tab)
+		}
 		r.tabHost[tab] = h
+		// Bounded, because tab:close only prunes the closes the agent makes.
+		// A tab the user closed is never reported, and Chrome reuses ids, so
+		// without a cap a long-lived daemon grows one entry per id it ever saw.
+		// Evicting is safe: a tab with no known host is the state every fresh
+		// tab is in, and the next landing names it again.
+		for len(r.tabHostOrder) > maxTabHost {
+			oldest := r.tabHostOrder[0]
+			r.tabHostOrder = r.tabHostOrder[1:]
+			delete(r.tabHost, oldest)
+		}
 		return h
 	}
 	return r.tabHost[tab]
 }
+
+// maxTabHost bounds the router's per-tab host map. It matches the memory
+// store's own cap, and for the same reason.
+const maxTabHost = 4096
 
 // HostForTab reports the site a tab is currently known to be on, or "" if no
 // landing has named one. The MCP adapter asks this when it takes a site's card
