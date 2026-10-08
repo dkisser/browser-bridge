@@ -126,7 +126,9 @@ func newMemoryShowCommand() *cobra.Command {
 			"the last page the control plane recorded for this host, read out of the\n" +
 			"trace. That is a page from the past, not the one in your browser, and the\n" +
 			"output says so — it is how you see what the map resolves to without a live\n" +
-			"snapshot to check it against (ADR-0026).",
+			"snapshot to check it against (ADR-0026).\n\n" +
+			"When a curated site guide exists (data/guides/<host>.md) it is printed after\n" +
+			"the card — except with --raw, which stays the card alone (ADR-0033).",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if raw && resolve {
@@ -140,8 +142,17 @@ func newMemoryShowCommand() *cobra.Command {
 			if host == "" {
 				return fmt.Errorf("%q is not a host name", args[0])
 			}
+			env, err := EnvFromOSEnv()
+			if err != nil {
+				return err
+			}
 			card, err := readCard(store, host)
 			if err != nil {
+				// A host can have a curated guide before it has a card — guides
+				// are written at the human's request, cards are earned by
+				// traffic. Print what there is; the missing card is still
+				// reported the way it always was.
+				printGuide(cmd, env.DataDir(), host)
 				return err
 			}
 			if raw {
@@ -153,20 +164,44 @@ func newMemoryShowCommand() *cobra.Command {
 				return nil
 			}
 			if resolve {
-				return showResolved(cmd, host, card)
+				err := showResolved(cmd, host, card)
+				printGuide(cmd, env.DataDir(), host)
+				return err
 			}
 			rendered := memory.RenderCard(card, memory.RenderOptions{MaxTokens: memory.DefaultInjectTokens})
 			if rendered == "" {
 				fmt.Fprintf(cmd.ErrOrStderr(), "card for %s is empty\n", host)
+				printGuide(cmd, env.DataDir(), host)
 				return ErrReported
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), rendered)
+			printGuide(cmd, env.DataDir(), host)
 			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&raw, "raw", false, "Print the stored card JSON instead of the rendered view")
 	cmd.Flags().BoolVar(&resolve, "resolve", false, "Also resolve the site map against the last recorded page for this host")
 	return cmd
+}
+
+// printGuide appends the human-curated site guide when one exists. The guide
+// is the card's missing half — the semantics structural learning cannot hold
+// (ADR-0028) — and show is the pull every recall path already makes, so the
+// guide rides it (ADR-0033). A missing guide is the normal state and prints
+// nothing; an unreadable one is a warning rather than a failure, because the
+// card — the thing show exists for — was already printed.
+func printGuide(cmd *cobra.Command, dir, host string) {
+	guide, err := memory.ReadGuide(dir, host)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: the guide for %s exists but will not read: %v\n", host, err)
+		return
+	}
+	if guide == "" {
+		return
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "\n[站点指南] %s — %s（人类策展，与实时页面冲突时以页面为准）\n",
+		host, memory.GuidePath(dir, host))
+	fmt.Fprintln(cmd.OutOrStdout(), guide)
 }
 
 // showResolved renders a card with its site map resolved, and says where the

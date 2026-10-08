@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -191,5 +193,95 @@ func TestShowWithoutResolveHasNoRefs(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "no such element") {
 		t.Errorf("plain `memory show` lost the failure list:\n%s", stdout)
+	}
+}
+
+// The guide is the card's human-curated half (ADR-0028), and `memory show` is
+// the pull every recall path already makes, so the guide rides it (ADR-0033).
+// The tests below pin when it appears: after the card, never in --raw, and
+// even when the card itself is missing — a host can have a guide before it
+// has earned a card.
+
+const mailGuide = "# mail.example.com site guide\n\n## Layout\n- compose: button[aria-label=Compose]\n"
+
+func writeMailGuide(t *testing.T, home string) {
+	t.Helper()
+	dir := filepath.Join(home, "data", "guides")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "mail.example.com.md"), []byte(mailGuide), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestShowAppendsTheCuratedGuide(t *testing.T) {
+	home := resolvedHome(t)
+	seed(t, home)
+	writeMailGuide(t, home)
+
+	stdout, stderr, err := runCLI(t, "memory", "show", "mail.example.com")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, stderr)
+	}
+	for _, want := range []string{
+		"no such element", // the card is still there
+		"[站点指南] mail.example.com",
+		"data/guides/mail.example.com.md",
+		"aria-label=Compose", // and the guide's own text
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("show with a guide is missing %q:\n%s", want, stdout)
+		}
+	}
+	// The guide rides *after* the card: the card is the machine's claim, the
+	// guide is commentary on it.
+	if strings.Index(stdout, "站点指南") < strings.Index(stdout, "no such element") {
+		t.Errorf("the guide printed before the card:\n%s", stdout)
+	}
+}
+
+func TestShowWithoutACardStillPrintsTheGuide(t *testing.T) {
+	home := resolvedHome(t)
+	writeMailGuide(t, home)
+
+	stdout, _, err := runCLI(t, "memory", "show", "mail.example.com")
+	if err == nil || !strings.Contains(err.Error(), "no card for mail.example.com") {
+		t.Fatalf("the missing card is still reported the way it always was: %v", err)
+	}
+	if !strings.Contains(stdout, "aria-label=Compose") {
+		t.Errorf("a host with a guide but no card must still hand back the guide:\n%s", stdout)
+	}
+}
+
+func TestShowRawOmitsTheGuide(t *testing.T) {
+	home := resolvedHome(t)
+	seed(t, home)
+	writeMailGuide(t, home)
+
+	stdout, stderr, err := runCLI(t, "memory", "show", "mail.example.com", "--raw")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, stderr)
+	}
+	// --raw is the editing surface: it prints the stored card JSON, and mixing
+	// prose into it would break the pipe it was asked for.
+	if !strings.Contains(stdout, `"rev": 7`) {
+		t.Errorf("--raw lost the card JSON:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "站点指南") {
+		t.Errorf("--raw printed the guide into what must stay card JSON:\n%s", stdout)
+	}
+}
+
+func TestShowWithoutAGuidePrintsNoGuideSection(t *testing.T) {
+	home := resolvedHome(t)
+	seed(t, home)
+
+	stdout, stderr, err := runCLI(t, "memory", "show", "mail.example.com")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, stderr)
+	}
+	if strings.Contains(stdout, "站点指南") {
+		t.Errorf("a missing guide is the normal state and must print nothing:\n%s", stdout)
 	}
 }

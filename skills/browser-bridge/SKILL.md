@@ -89,11 +89,11 @@ Tabs opened via `tab_new` are automatically grouped per window into the 'browser
 
 The control plane learns how each site works from what agents actually do and keeps a per-host *site card*: which containers hold the content, which selector shapes have failed there, which sequences have worked.
 
-- **MCP path**: the card is injected automatically into the `navigate` result and the first `snapshot` after landing, labelled `可参考的站点访问模式`. Nothing to do.
-- **CLI path**: pull it explicitly right after landing on a host: `bridge memory show <host> --json`. A `no card for <host>` answer is normal — continue without it.
+- **MCP path**: the card is injected automatically into the `navigate` result and the first `snapshot` after landing, labelled `可参考的站点访问模式`. Nothing to do. Guides are *not* injected — if you can read files, check `$BB_HOME/data/guides/<host>.md` (`~/.browser-bridge` by default) for the human-curated half yourself.
+- **CLI path**: pull it explicitly right after landing on a host: `bridge memory show <host> --json`. A `no card for <host>` answer is normal — continue without it. When a curated **site guide** exists for the host, the same command prints it after the card, labelled `[站点指南]` — layout, gotchas, and why steps are ordered, written by the human (or a previous agent at the human's request).
 - **Before writing a routine** (a saved multi-step script for a host — see the `browser-bridge-memory` skill): always pull the card *first*, at coding time, so selectors and layout come from memory instead of guesses. At coding time no `navigate` has happened yet, so nothing will be injected — this pull is the only way to get it.
 
-A card is advice about where to look first, never ground truth: sites change, and a wrong card costs a call, not correctness. Confirm against a live `snapshot` before acting.
+A card is advice about where to look first, never ground truth: sites change, and a wrong card costs a call, not correctness. Confirm against a live `snapshot` before acting. The same holds for a guide — if it contradicts the live page, the page wins; report the mismatch instead of following the artifact.
 
 ## Snapshot first: pick the follow-up by goal
 
