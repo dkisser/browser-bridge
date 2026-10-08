@@ -76,7 +76,28 @@ func RenderCard(card *SiteCard, opts RenderOptions) string {
 	// last compression makes it stale, and serving it would hide whatever the
 	// newest evidence said — which is how a newly learned failure can go missing
 	// from every subsequent injection without a single error anywhere.
-	if opts.Compressed && card.Compressed != "" && card.CompressedRev == card.Revision {
+	//
+	// It is a substitute for a *render*, though, and two of the things a render
+	// can be asked for are not in it at all:
+	//
+	//   - Live refs. The compressed view is the model's prose (ADR-0022), so it
+	//     contains no @eN and the Resolver has nothing to bind. A snapshot is the
+	//     only injection point that can hand back a usable ref — that is the
+	//     whole reason it exists (ADR-0019) — so short-circuiting before the
+	//     Resolver was consulted made the site-map tier stop working on exactly
+	//     the calls that need it, silently, and only for hosts with a key
+	//     configured.
+	//   - The map alone. OnlyMap is the second injection point's shape, and the
+	//     compressed view is the opposite of that shape.
+	//
+	// So the cache is used only where it is a like-for-like substitute: a
+	// landing render, with nothing to resolve against.
+	//
+	// `stale` is false here on purpose and not an oversight: a landing has no
+	// page behind it, so there is nothing to check the card against. Every
+	// snapshot — the one call that does have a page — now takes the path below.
+	if opts.Compressed && !opts.OnlyMap && opts.Resolver == nil &&
+		card.Compressed != "" && card.CompressedRev == card.Revision {
 		if out := finish(opts, card.Host, card.Compressed, false); out != "" {
 			return out
 		}

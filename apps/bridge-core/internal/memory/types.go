@@ -288,6 +288,25 @@ func HostFromURL(raw string) string { return Host(raw) }
 // redactArgs reduces a command's params to the structural facts worth
 // recording. This is the other half of ADR-0018: what the user typed never
 // reaches disk, and neither does what the page said.
+//
+// An *allowlist*, and that is the whole design. It was an exclusion list —
+// four keys handled, everything else copied verbatim through `default` — which
+// meant the safety property was "no key anyone has thought of yet carries
+// something private". Three ways that fails, all of them silent:
+//
+//   - A new command with a new key. A `fill_form` that carries
+//     `fields: {pass: "..."}` is the obvious next one, and nothing about adding
+//     it would prompt anyone to come back here.
+//   - Nesting. Only the top level is inspected, so a map or slice under any
+//     unrecognised key is stored whole, with everything inside it.
+//   - A renamed or aliased key. `text` is reduced; `content`, `body` and
+//     `query` are not.
+//
+// The cost of the allowlist is that a genuinely useful structural field is
+// dropped until someone adds it on purpose. That is the right way round: a
+// missing field costs a slightly poorer card, and a leaked one costs a
+// credential on disk in a file that outlives the visit — and, with a
+// compression endpoint configured, in a request that leaves the machine.
 func redactArgs(command string, args map[string]any) map[string]any {
 	if len(args) == 0 {
 		return nil
@@ -295,12 +314,12 @@ func redactArgs(command string, args map[string]any) map[string]any {
 	out := make(map[string]any, len(args))
 	for k, v := range args {
 		switch k {
-		case "text", "value":
-			// Typed content: length only.
+		case "text", "value", "content", "body", "query", "search":
+			// Typed or searched-for content: length only.
 			if s, ok := v.(string); ok {
 				out[k+"_len"] = len([]rune(s))
 			}
-		case "url", "uri":
+		case "url", "uri", "href":
 			if s, ok := v.(string); ok {
 				out[k] = safeURL(s)
 			}
@@ -310,8 +329,16 @@ func redactArgs(command string, args map[string]any) map[string]any {
 			if s, ok := v.(string); ok {
 				out[k] = safeSelector(s)
 			}
-		default:
+		case "tabId", "tab_id", "windowId", "filter", "max_chars", "maxNodes",
+			"max_nodes", "x", "y", "option", "timeout", "tag", "role":
+			// Structural: what to address, not what was said about it. These
+			// name the target rather than carrying content, and several of them
+			// are load-bearing for the card (the tier counts, the map's filters).
 			out[k] = v
+		default:
+			// Dropped. Not reduced, not escaped — dropped, so a key nobody has
+			// considered cannot become a channel. See the doc above for why the
+			// omission is the safe direction.
 		}
 	}
 	if command == "type" {

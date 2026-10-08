@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -736,7 +737,17 @@ func (m *Manager) takeInflight(envelopeID string) map[string]any {
 		return nil
 	}
 	delete(m.inflight, envelopeID)
-	return in.args
+	// A copy, because a Go map is a reference and this one is already aliased:
+	// redactArgs built it, RecordCommand put the same object in the table, and
+	// the caller is about to hand it to a TraceRecord. Returning it directly
+	// means the record and the table entry are one object, so any later write
+	// through rec.Args edits the other.
+	//
+	// Nothing writes to it today, which is exactly why this reads as harmless
+	// — the kind of thing that survives review and then a future "reduce it
+	// again to be safe" line edits a shared map in place. Cloning costs one
+	// small map per command and makes the record own its data.
+	return maps.Clone(in.args)
 }
 
 func (m *Manager) tabLocked(tabID int) *tabState {

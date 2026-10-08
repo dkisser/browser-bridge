@@ -33,6 +33,22 @@ import (
 // plausibly a new attempt.
 const segmentIdleGap = 2 * time.Minute
 
+// maxSegmentCalls bounds one segment, so a slow-but-continuous session still
+// produces bounded procedures.
+//
+// segmentIdleGap alone measures only against the *previous* call, so a session
+// with a call every ninety seconds never trips it and everything accumulates
+// into one segment. That segment's shape is the whole run, goalOf joins it with
+// an arrow between every step, and mergeProcedure writes it as a single
+// ProcedureEntry — so the entry caps (which bound how many procedures a card
+// holds) bound nothing here. One entry, and its Successes counter then counts
+// unrelated sessions against each other.
+//
+// A real attempt is short: snapshot, act, snapshot, act. Cutting at this many
+// steps splits a long one into consecutive procedures, which is what a reader
+// would have called them anyway.
+const maxSegmentCalls = 32
+
 // maxSegmentsPerPass bounds one pass so a long-idle daemon returning to a large
 // backlog does not hold the goroutine indefinitely. The cursor means the rest is
 // picked up next pass.
@@ -481,6 +497,11 @@ func commandLine(cmd TraceRecord, lines map[string]int64, from int64, respLine i
 }
 
 func startedNewSegment(cur *segment, r TraceRecord) bool {
+	// Length first: a session that never pauses is still accumulating, and no
+	// amount of idle time will ever split it.
+	if len(cur.shape) >= maxSegmentCalls {
+		return true
+	}
 	if cur.endMs == 0 {
 		return false
 	}

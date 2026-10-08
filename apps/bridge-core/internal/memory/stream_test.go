@@ -582,3 +582,43 @@ func fileSize(t *testing.T, path string) int64 {
 	}
 	return fi.Size()
 }
+
+// The cursor is shared between the daemon and any CLI pass, and it must not
+// move backwards.
+//
+// `bridge memory learn` and `bench record` open a second Manager over the live
+// data directory — safe precisely because they do not own the rotation — and
+// each holds its own in-memory copy while the whole file is rewritten by
+// whoever writes last. So a short CLI pass finishing after a long daemon pass
+// used to put the shared cursor back to the CLI's older value, and the daemon's
+// next pass re-read the records the CLI had just consumed. applySegment
+// increments rather than recomputes, so every count doubled.
+func TestTheSharedCursorNeverMovesBackwards(t *testing.T) {
+	dir := t.TempDir()
+	// The daemon's handle, holding an older in-memory value.
+	daemon := LoadCursor(dir)
+	if err := daemon.Set(900); err != nil {
+		t.Fatal(err)
+	}
+	// The CLI opens later, reads 900, and later finishes with a stale 400.
+	cli := LoadCursor(dir)
+	if got := cli.Get(); got != 900 {
+		t.Fatalf("the CLI read the cursor as %d, want 900", got)
+	}
+	if err := cli.Set(400); err != nil {
+		t.Fatal(err)
+	}
+	if got := LoadCursor(dir).Get(); got != 900 {
+		t.Errorf("the cursor went 900 → %d: a second process rewound it", got)
+	}
+
+	// And a stale reader learns where the file actually is, rather than
+	// re-consuming from its own old copy.
+	// A process that has been running a long time holds a stale in-memory
+	// value; Get must reconcile it with the file rather than re-consume.
+	fresh := LoadCursor(dir)
+	fresh.Line = 100 // simulate a process that has been running a long time
+	if got := fresh.Get(); got != 900 {
+		t.Errorf("a stale in-memory cursor read as %d, want the on-disk 900", got)
+	}
+}

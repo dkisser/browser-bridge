@@ -481,18 +481,63 @@ func LoadCursor(dir string) *Cursor {
 	return c
 }
 
+// Get reports the learner's position, re-reading the file first.
+//
+// The file is the shared truth because the cursor is shared: `bridge memory
+// learn` and `bench record` open a second Manager over the live data directory
+// while the daemon holds its own (they are safe to open precisely because they
+// do not own the rotation). Each holds an in-memory copy, and a pass that reads
+// a stale one re-consumes records the other process already consumed — which
+// applySegment then *increments*, so the card's counts double.
 func (c *Cursor) Get() int64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if onDisk, ok := c.readOnDisk(); ok && onDisk > c.Line {
+		c.Line = onDisk
+	}
 	return c.Line
+}
+
+// readOnDisk reports the persisted position, and whether it could be read. A
+// missing or unparseable file reads as "no opinion" rather than as zero, so a
+// corrupt cursor is left alone instead of rewinding the learner to the start.
+func (c *Cursor) readOnDisk() (int64, bool) {
+	data, err := os.ReadFile(c.path)
+	if err != nil {
+		return 0, false
+	}
+	var onDisk struct {
+		Line int64 `json:"line"`
+	}
+	if err := json.Unmarshal(data, &onDisk); err != nil || onDisk.Line < 0 {
+		return 0, false
+	}
+	return onDisk.Line, true
 }
 
 // Set advances the cursor. Writing it before the derived cards are durable
 // would lose work on a crash between the two, so the learner calls this only
 // after its writes have landed.
+// Monotonic: a Set that would move the cursor backwards is ignored.
+//
+// Two processes can hold a Cursor over the same file, and the whole file is
+// rewritten by whoever writes last. Without this a short-lived CLI pass could
+// finish after a long daemon pass and put the shared cursor back to its own
+// older, in-memory value — after which the daemon re-reads the records the CLI
+// just consumed and double-counts them. Refusing the write costs a redundant
+// read; allowing it costs a corrupted card.
+//
+// The invariant this depends on is that the cursor never legitimately moves
+// backwards. It held before this check and it holds now that a rotation does
+// not reset it: after a rename the combined line count is unchanged, so the
+// position is still the right one.
 func (c *Cursor) Set(line int64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if onDisk, ok := c.readOnDisk(); ok && line < onDisk {
+		c.Line = onDisk
+		return nil
+	}
 	data, err := json.Marshal(struct {
 		Line int64 `json:"line"`
 	}{Line: line})

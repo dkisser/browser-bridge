@@ -1463,3 +1463,83 @@ func TestAMergeReportsNoChangeForAnUpdatedEntryTheCapCut(t *testing.T) {
 		}
 	})
 }
+
+// The compressed view must not pre-empt a render that can produce live refs.
+//
+// The ADR-0022 cache is the model's prose, so it contains no @eN at all — the
+// Resolver has nothing to bind. A snapshot is the only injection point that
+// hands back a usable ref (ADR-0019), and the short-circuit ran before the
+// Resolver was consulted, so for any host with a key configured the site-map
+// tier stopped working on exactly the calls that need it. Byte-identical output
+// with and without Compressed is what gave it away.
+//
+// OnlyMap is excluded for the same kind of reason: it is the second injection
+// point's shape, and the cached view is the opposite of that shape.
+func TestTheCompressedViewYieldsToAResolvableRender(t *testing.T) {
+	card := seedCard(t, newTestManager(t, "b-1"), "news.example.com")
+	card.Compressed = "- the inbox is a list; rows open on click"
+	card.CompressedRev = card.Revision
+
+	digest := digestOfText(t, testSnapshot)
+	resolver := func(p Predicate) (string, bool) { return digest.Resolve(p) }
+
+	// The landing has no page, so the cache is a like-for-like substitute.
+	landing := RenderCard(card, RenderOptions{MaxTokens: DefaultInjectTokens, Compressed: true})
+	if !strings.Contains(landing, "inbox is a list") {
+		t.Errorf("the landing did not use the cached view, which is the point of it:\n%s", landing)
+	}
+
+	// The snapshot can produce live refs, so it must not.
+	snap := RenderCard(card, RenderOptions{
+		MaxTokens:  DefaultInjectTokens,
+		Compressed: true,
+		Resolver:   resolver,
+	})
+	if strings.Contains(snap, "inbox is a list") {
+		t.Errorf("the snapshot was served the cached prose, which carries no ref:\n%s", snap)
+	}
+	if !strings.Contains(snap, "Site map") {
+		t.Errorf("the site map tier is missing from the snapshot injection:\n%s", snap)
+	}
+	if !strings.Contains(snap, "→ @e1") {
+		t.Errorf("the snapshot carries no live ref, so the agent cannot act on the map:\n%s", snap)
+	}
+}
+
+// A segment must be bounded in length, not only by how long it pauses.
+//
+// segmentIdleGap measures only against the *previous* call, so a session with a
+// call every ninety seconds never trips it and the whole run accumulates into
+// one segment — whose shape is every step of it, joined by goalOf with an arrow
+// between each, and which mergeProcedure then writes as a single
+// ProcedureEntry. The entry caps bound how many procedures a card holds, so
+// they bound nothing here: one entry, arbitrarily large, and its Successes
+// counter then counts unrelated sessions against one another.
+func TestASegmentIsBoundedEvenWhenTheSessionNeverPauses(t *testing.T) {
+	recs := []TraceRecord{}
+	at := int64(1)
+	add := func(env, command string) {
+		recs = append(recs,
+			TraceRecord{Kind: KindCommand, AtMs: at, Envelope: env, Command: command, TabID: 1},
+			TraceRecord{Kind: KindResponse, AtMs: at + 1, Envelope: env, Command: command, TabID: 1,
+				Outcome: OutcomeOK, Host: "shop.example.com"},
+		)
+		at += 90_000 // 90s: under the 2-minute gap, so only length can split it
+	}
+	add("nav", "navigate")
+	for i := 0; i < maxSegmentCalls*3; i++ {
+		add("c-"+strconv.Itoa(i), "click")
+	}
+
+	segs, _ := buildSegments(recs, 0, nil)
+	if len(segs) < 3 {
+		t.Fatalf("%d calls 90s apart produced %d segment(s); the length bound is not "+
+			"splitting them", maxSegmentCalls*3, len(segs))
+	}
+	for i, seg := range segs {
+		if len(seg.shape) > maxSegmentCalls {
+			t.Errorf("segment %d holds %d steps, over the %d bound",
+				i, len(seg.shape), maxSegmentCalls)
+		}
+	}
+}

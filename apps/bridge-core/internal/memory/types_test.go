@@ -222,3 +222,57 @@ func TestSafeSelectorStillKeepsASelectorsShape(t *testing.T) {
 		}
 	}
 }
+
+// redactArgs has to be an allowlist, because the property ADR-0018 claims is
+// not "no key anyone has thought of yet carries something private".
+//
+// It was an exclusion list: four keys handled, everything else copied verbatim
+// through `default`. So a new command with a new key, a nested structure under
+// any unrecognised key, or a renamed alias all reached disk untouched — and the
+// trace is not only local: with a compression endpoint configured, the card
+// built from it is POSTed off-machine.
+func TestRedactArgsDropsWhatItDoesNotRecognise(t *testing.T) {
+	// Each of these reaches disk byte for byte under the old exclusion list.
+	leaks := []struct {
+		name string
+		cmd  string
+		args map[string]any
+	}{
+		{"a credential under a new key", "type",
+			map[string]any{"selector": "#pw", "text": "x", "password": "hunter2"}},
+		{"a nested structure", "fill_form",
+			map[string]any{"selector": "#login", "fields": map[string]any{"pass": "hunter2"}}},
+		{"a slice of values", "type",
+			map[string]any{"selector": "#x", "text": "a", "lines": []string{"hunter2"}}},
+		{"a renamed alias of text", "type",
+			map[string]any{"selector": "#x", "body": "hunter2"}},
+		{"a free-form note", "gettext",
+			map[string]any{"selector": "#a", "note": "session=eyJhbGciOi"}},
+	}
+	for _, l := range leaks {
+		out, err := json.Marshal(redactArgs(l.cmd, l.args))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(out), "hunter2") || strings.Contains(string(out), "eyJhbGciOi") {
+			t.Errorf("%s: the value reached the trace verbatim: %s", l.name, out)
+		}
+	}
+
+	// And the structural facts a card genuinely needs are still there.
+	out, err := json.Marshal(redactArgs("navigate", map[string]any{
+		"url": "https://mail.example.com/u/0/#inbox", "tabId": 2, "timeout": 5000,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"mail.example.com", `"tabId":2`, `"timeout":5000`} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("the allowlist dropped a structural field (%s): %s", want, out)
+		}
+	}
+	// The fragment and the query are gone even though the rest survived.
+	if strings.Contains(string(out), "#inbox") {
+		t.Errorf("the URL was not reduced: %s", out)
+	}
+}

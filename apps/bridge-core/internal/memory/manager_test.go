@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -809,5 +810,39 @@ func TestARotationDoesNotReapplyWhatWasAlreadyLearned(t *testing.T) {
 	}
 	if afterFails != beforeFails {
 		t.Errorf("failure Count went %d → %d with no traffic", beforeFails, afterFails)
+	}
+}
+
+// A trace record must own its args, not share them with the inflight table.
+//
+// redactArgs builds one map, RecordCommand stores that same object in
+// m.inflight, and takeInflight handed the very same object to the caller's
+// TraceRecord. Nothing writes to it today — which is why it reads as harmless —
+// but the day someone adds a line like
+// `rec.Args["selector"] = safeSelector(...)` to "reduce it again to be safe",
+// that line edits the table's object too, and it looks like a pure function.
+// The project rule is that data is copied rather than shared, so the record
+// gets its own.
+func TestATraceRecordOwnsItsArgs(t *testing.T) {
+	m := newTestManager(t, "b-1")
+	m.RecordCommand("e1", "gettext", "news.example.com", 1, map[string]any{"selector": "#entry"})
+
+	// Hold the same map the table holds, by reading it under the lock.
+	m.mu.Lock()
+	shared := m.inflight["e1"].args
+	m.mu.Unlock()
+
+	got := m.takeInflight("e1")
+	if got == nil {
+		t.Fatal("takeInflight returned nothing")
+	}
+	if reflect.ValueOf(got).Pointer() == reflect.ValueOf(shared).Pointer() {
+		t.Fatal("takeInflight handed back the table's own map, so the record aliases it")
+	}
+
+	// Mutating what the caller received must not reach back into the table.
+	got["selector"] = "mutated"
+	if shared["selector"] == "mutated" {
+		t.Error("writing through the returned map changed the inflight table's object")
 	}
 }
