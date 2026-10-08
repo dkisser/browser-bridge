@@ -822,3 +822,112 @@ func TestEscapedHostsRoundTripThroughListGetAndRemove(t *testing.T) {
 		}
 	}
 }
+
+// A merge that adds an entry the cap then drops must report no change.
+//
+// All three merges append, then rank or sort, then truncate — and the entry
+// that was just added is the one most likely to fall off. They returned true
+// anyway, so applySegment bumped Revision and appended a card_revision record
+// describing an update that never landed. `memory history` is the surface
+// ADR-0019 points a human at before accepting an automatic update, and it was
+// showing updates that had not happened.
+func TestACappedMergeReportsNoChangeForTheEntryItDropped(t *testing.T) {
+	t.Run("procedure", func(t *testing.T) {
+		// Procedures are appended last and capped from the end, so at the cap
+		// a brand new sequence is always the one dropped.
+		card := &SiteCard{Host: "h"}
+		for i := 0; i < maxProcedureEntries; i++ {
+			card.Procedures = append(card.Procedures, ProcedureEntry{
+				Goal:  "goal " + strings.Repeat("x", i+1),
+				Steps: []Step{{Command: "snapshot"}},
+			})
+		}
+		seg := &segment{
+			host: "h",
+			calls: []observedCall{
+				{node: NodeSig{Role: "button", Name: "Pay"}, command: "click", found: true},
+			},
+			shape:   []shapeStep{{command: "snapshot"}, {command: "click", ref: "e1", found: true}},
+			browser: "b",
+		}
+		if mergeProcedure(card, seg) {
+			t.Errorf("mergeProcedure reported a change at the cap, with the new entry dropped")
+		}
+		if len(card.Procedures) != maxProcedureEntries {
+			t.Errorf("the cap was not applied: %d entries", len(card.Procedures))
+		}
+	})
+
+	t.Run("failure", func(t *testing.T) {
+		// A new failure lands at Count: 1 and the sort is by descending
+		// Count, so at the cap it is the first thing cut.
+		card := &SiteCard{Host: "h"}
+		for i := 0; i < maxFailureEntries; i++ {
+			card.Failures = append(card.Failures, FailureEntry{
+				Signature: "sig", Command: "gettext", Sel: "s" + strings.Repeat("x", i+1), Count: 10,
+			})
+		}
+		if mergeFailures(card, []failedCall{{sig: "brand new", sel: ".x", command: "click"}}) {
+			t.Errorf("mergeFailures reported a change at the cap, with the new entry dropped")
+		}
+		for _, f := range card.Failures {
+			if f.Signature == "brand new" {
+				t.Errorf("the new failure survived the cap, so the test is not testing what it claims")
+			}
+		}
+	})
+
+	t.Run("map entry that ranked last", func(t *testing.T) {
+		// The map caps on the ranking, so a new entry only falls off when it
+		// ranks below everything already there.
+		card := &SiteCard{Host: "h"}
+		for i := 0; i < maxMapEntries; i++ {
+			card.Map = append(card.Map, MapEntry{
+				Purpose: "p", Pred: Predicate{Role: "button", Name: "b" + strings.Repeat("x", i+1)},
+				Value: 1000 - i, Uses: 5, ObservedAtMs: int64(i),
+			})
+		}
+		seg := &segment{
+			host: "h",
+			digest: &PageDigest{
+				URL:   "https://h/",
+				Nodes: []NodeSig{{Role: "button", Name: "lowest", Ref: "@e1", Depth: 1}},
+			},
+			calls:   []observedCall{{node: NodeSig{Role: "button", Name: "lowest", Ref: "@e1"}, command: "gettext", found: true, value: 1}},
+			browser: "b",
+		}
+		if mergeMap(card, seg) {
+			t.Errorf("mergeMap reported a change at the cap, with the new entry ranked out")
+		}
+	})
+}
+
+// The other half: a merge that *does* land something still reports a change,
+// including a repeat. Losing the repeat is the bug that was fixed once already
+// in this tier and must not come back through the cap change.
+func TestAMergeThatLandsStillReportsAChange(t *testing.T) {
+	t.Run("new procedure below the cap", func(t *testing.T) {
+		card := &SiteCard{Host: "h", Procedures: []ProcedureEntry{{Goal: "old", Steps: []Step{{Command: "snapshot"}}}}}
+		seg := &segment{
+			host:    "h",
+			calls:   []observedCall{{node: NodeSig{Role: "button", Name: "Pay"}, command: "click", found: true}},
+			shape:   []shapeStep{{command: "snapshot"}, {command: "click", ref: "e1", found: true}},
+			browser: "b",
+		}
+		if !mergeProcedure(card, seg) {
+			t.Errorf("mergeProcedure reported no change for a procedure that landed")
+		}
+	})
+
+	t.Run("repeated failure still counts", func(t *testing.T) {
+		card := &SiteCard{Host: "h", Failures: []FailureEntry{{
+			Signature: "sig", Command: "gettext", Sel: ".x", Count: 3,
+		}}}
+		if !mergeFailures(card, []failedCall{{sig: "sig", sel: ".x", command: "gettext"}}) {
+			t.Errorf("mergeFailures reported no change for a repeated failure")
+		}
+		if card.Failures[0].Count != 4 {
+			t.Errorf("Count = %d, want 4", card.Failures[0].Count)
+		}
+	})
+}

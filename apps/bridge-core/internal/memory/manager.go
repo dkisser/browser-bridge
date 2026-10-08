@@ -480,14 +480,21 @@ func (m *Manager) noteShown(card *SiteCard, digest *PageDigest, verifiedHost str
 	if missing*2 <= len(card.Map) {
 		return
 	}
-	rev := CardRevision{
+	// An observation, recorded as one. The card on disk is untouched, so there
+	// is nothing to number: the revision this names is the one that was found
+	// not to match, which is exactly what a reader of `memory history` needs to
+	// know. Writing KindCardRevision with card.Revision+1 instead minted a
+	// revision that never existed, and applySegment's next write claimed the
+	// same number with different content and a different reason — so the audit
+	// trail showed two versions where there was one, plus one.
+	obs := CardRevision{
 		Host:     card.Host,
-		Revision: card.Revision + 1,
+		Revision: card.Revision,
 		Reason:   "stale",
 		Summary:  fmt.Sprintf("%d of %d site-map entries no longer match the page", missing, len(card.Map)),
 		AtMs:     nowMs(),
 	}
-	if err := m.stream.Append(TraceRecord{Kind: KindCardRevision, AtMs: rev.AtMs, Revision: &rev}); err != nil {
+	if err := m.stream.Append(TraceRecord{Kind: KindCardStale, AtMs: obs.AtMs, Revision: &obs}); err != nil {
 		m.logf("memory: record staleness %s: %v", card.Host, err)
 	}
 	m.wake()

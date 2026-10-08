@@ -603,7 +603,9 @@ func mergeFailures(card *SiteCard, failures []failedCall) bool {
 	if len(failures) == 0 {
 		return false
 	}
-	changed := false
+	before := beforeKeys(card.Failures, failureKey)
+	updated := false
+	added := false
 	for _, f := range failures {
 		found := -1
 		for i := range card.Failures {
@@ -622,7 +624,7 @@ func mergeFailures(card *SiteCard, failures []failedCall) bool {
 				Browser:   f.browser,
 				LastAtMs:  f.atMs,
 			})
-			changed = true
+			added = true
 			continue
 		}
 		// A repeat still changes the card, and the count is the whole point of
@@ -631,7 +633,7 @@ func mergeFailures(card *SiteCard, failures []failedCall) bool {
 		// the failure tier is for.
 		card.Failures[found].Count++
 		card.Failures[found].LastAtMs = f.atMs
-		changed = true
+		updated = true
 	}
 	sort.SliceStable(card.Failures, func(i, j int) bool {
 		return card.Failures[i].Count > card.Failures[j].Count
@@ -639,7 +641,51 @@ func mergeFailures(card *SiteCard, failures []failedCall) bool {
 	if len(card.Failures) > maxFailureEntries {
 		card.Failures = card.Failures[:maxFailureEntries]
 	}
-	return changed
+	// A new entry lands at Count: 1 and the sort is by descending Count, so at
+	// the cap it is the first thing cut. Reporting a change anyway told the
+	// ledger the failure tier had grown when it had not — and the failure tier
+	// is the one signal this package calls unmissable.
+	return updated || (added && additionSurvived(card.Failures, failureKey, before))
+}
+
+// failureKey is the identity a failure entry is grouped by, and the key
+// beforeKeys / additionSurvived compare on.
+func failureKey(e FailureEntry) string {
+	return e.Signature + "\x00" + e.Sel + "\x00" + e.Command
+}
+
+// beforeKeys snapshots which keys a card already holds, so a merge can tell an
+// entry it added from one it only updated — and, after the cap has run, tell
+// whether the addition survived at all.
+func beforeKeys[T any](entries []T, key func(T) string) map[string]bool {
+	out := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		out[key(e)] = true
+	}
+	return out
+}
+
+// additionSurvived reports whether any entry whose key was absent before the
+// merge is still present after the cap.
+//
+// The three merges all append, then rank or sort, then truncate — and an entry
+// that was just added is the one most likely to fall off. They returned true
+// regardless, so applySegment bumped Revision and appended a card_revision
+// record describing an update that never landed. Worse for mergeFailures, where
+// the new entry carries Count: 1 and the sort is by descending Count, so a
+// genuinely new failure mode on a card with twelve existing entries was
+// silently lost while the revision record claimed the failure tier had grown.
+//
+// `memory history` is the review surface ADR-0019 points a human at before
+// accepting an automatic update. An update that did not happen is worse there
+// than a missing one, because the reader cannot tell which is which.
+func additionSurvived[T any](entries []T, key func(T) string, before map[string]bool) bool {
+	for _, e := range entries {
+		if !before[key(e)] {
+			return true
+		}
+	}
+	return false
 }
 
 // mergeMap folds the ref-addressed calls this segment made into the site map.
@@ -663,7 +709,9 @@ func mergeMap(card *SiteCard, seg *segment) bool {
 	if seg.digest == nil {
 		return false
 	}
-	changed := false
+	before := beforeKeys(card.Map, func(e MapEntry) string { return e.Pred.String() })
+	updated := false
+	added := false
 	for _, call := range seg.calls {
 		if !call.found {
 			continue
@@ -702,7 +750,7 @@ func mergeMap(card *SiteCard, seg *segment) bool {
 				Uses:         1,
 				Value:        call.value,
 			})
-			changed = true
+			added = true
 			continue
 		}
 		// A repeat still changes the card. Not marking it dirty here loses the
@@ -711,7 +759,7 @@ func mergeMap(card *SiteCard, seg *segment) bool {
 		// repeated failure counts, in the tier next door.
 		card.Map[found].Uses++
 		card.Map[found].ObservedAtMs = call.atMs
-		changed = true
+		updated = true
 		// Keep the largest reading, not the latest. A container that returned
 		// the whole list once and a title bar the next time is the list, and
 		// taking the last value would rank it as a title bar.
@@ -725,9 +773,11 @@ func mergeMap(card *SiteCard, seg *segment) bool {
 	rankMap(card.Map)
 	if len(card.Map) > maxMapEntries {
 		card.Map = card.Map[:maxMapEntries]
-		changed = true
 	}
-	return changed
+	// The cap is applied to the ranking, so a new entry only falls off when it
+	// ranked below everything already there. That is the system working, not
+	// an update — so it must not be reported as one.
+	return updated || (added && additionSurvived(card.Map, func(e MapEntry) string { return e.Pred.String() }, before))
 }
 
 // rankMap orders the site map best-first. Stable, so entries of equal rank keep
@@ -776,6 +826,7 @@ func mergeProcedure(card *SiteCard, seg *segment) bool {
 	steps := stepsOf(seg)
 	goal := goalOf(seg)
 
+	before := beforeKeys(card.Procedures, procedureKey)
 	for i := range card.Procedures {
 		p := &card.Procedures[i]
 		if p.Goal != goal || !sameSteps(p.Steps, steps) {
@@ -802,7 +853,25 @@ func mergeProcedure(card *SiteCard, seg *segment) bool {
 	if len(card.Procedures) > maxProcedureEntries {
 		card.Procedures = card.Procedures[:maxProcedureEntries]
 	}
-	return true
+	// The new entry was appended last and the cap keeps the first N, so at the
+	// cap it is always the one dropped. The `return true` that used to sit
+	// here said the card had learned a new working sequence when it had not,
+	// and the learner wrote a revision record to match.
+	return additionSurvived(card.Procedures, procedureKey, before)
+}
+
+// procedureKey is the identity a procedure entry is matched on — the same
+// test the loop above does by hand, in a form beforeKeys can use.
+func procedureKey(e ProcedureEntry) string {
+	return e.Goal + "\x00" + strings.Join(stepKeys(e.Steps), "\x01")
+}
+
+func stepKeys(steps []Step) []string {
+	out := make([]string, 0, len(steps))
+	for _, s := range steps {
+		out = append(out, s.Command+"\x00"+s.On)
+	}
+	return out
 }
 
 func sameSteps(a, b []Step) bool {

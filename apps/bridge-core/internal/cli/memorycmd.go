@@ -344,7 +344,8 @@ func newMemoryHistoryCommand() *cobra.Command {
 		Long: "Show why a card says what it says.\n\n" +
 			"Every automatic update appends a card_revision record to the same stream the\n" +
 			"observations live in, so this is the audit trail for the store itself: what\n" +
-			"changed, when, and on what evidence.",
+			"changed, when, and on what evidence. A STALE line is not a change — it is a\n" +
+			"revision that was found not to match the page it was verified against.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			env, err := EnvFromOSEnv()
@@ -364,7 +365,11 @@ func newMemoryHistoryCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if len(revs) == 0 {
+			stale, err := stream.Staleness(host, limit)
+			if err != nil {
+				return err
+			}
+			if len(revs) == 0 && len(stale) == 0 {
 				fmt.Fprintf(cmd.OutOrStdout(), "No revisions recorded for %s\n", host)
 				return nil
 			}
@@ -375,6 +380,15 @@ func newMemoryHistoryCommand() *cobra.Command {
 					sort.Strings(r.Evidence)
 					fmt.Fprintf(cmd.OutOrStdout(), "        evidence: %v\n", r.Evidence)
 				}
+			}
+			// Staleness is not a revision — the card did not change, a revision
+			// was found not to match the page it was verified against. It is
+			// printed under the revision it is about, because that is what
+			// makes it useful: the reader is deciding whether to accept the
+			// automatic update, and this says which one is in doubt.
+			for _, r := range stale {
+				fmt.Fprintf(cmd.OutOrStdout(), "rev %-4d %s  %-8s %s\n",
+					r.Revision, formatMs(r.AtMs), "STALE", r.Summary)
 			}
 			return nil
 		},

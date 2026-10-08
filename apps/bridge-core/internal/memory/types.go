@@ -33,6 +33,19 @@ const (
 	// card was never offered". It is also the only part of the live benchmark
 	// the agent cannot report honestly about itself.
 	KindCardShown = "card_shown"
+	// KindCardStale records that a card was *observed* not to match the page
+	// it was verified against. It is deliberately not a KindCardRevision: the
+	// card did not change, so there is no new revision to number, and the
+	// revision record it used to masquerade as claimed card.Revision+1 — a
+	// number the next real write would then claim with different content and a
+	// different reason. `memory history` is the surface ADR-0019 points a human
+	// at before accepting an automatic update, and it showed two different
+	// contents under one number.
+	//
+	// The same reasoning as KindCardShown above: an observation and a change
+	// are different facts, and a ledger that cannot tell them apart is worse
+	// than one that records less.
+	KindCardStale = "card_stale"
 )
 
 // Outcome of a call. ADR-0018's rule is literal: a thrown error is a failure,

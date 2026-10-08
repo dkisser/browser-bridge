@@ -333,17 +333,29 @@ func (s *Store) Hosts() []string {
 	return cached
 }
 
+// Staleness returns the card_stale observations for a host, newest first. They
+// are kept out of Revisions because they are not changes: a card_stale record
+// says a revision stopped matching the page, and numbering it as a new
+// revision is what made the history show two contents under one number.
+func (s *Stream) Staleness(host string, limit int) ([]CardRevision, error) {
+	return s.revisionsOfKinds(host, limit, KindCardStale)
+}
+
 // Revisions returns the card_revision records for a host, newest first, read
 // from the stream. This is the review surface: the diff a human reads before
-// accepting or reverting an automatic update.
+// accepting or reverting an automatic update. Every entry is a real write.
 func (s *Stream) Revisions(host string, limit int) ([]CardRevision, error) {
+	return s.revisionsOfKinds(host, limit, KindCardRevision)
+}
+
+func (s *Stream) revisionsOfKinds(host string, limit int, kinds ...string) ([]CardRevision, error) {
 	recs, _, _, err := s.ReadFrom(0)
 	if err != nil {
 		return nil, err
 	}
 	var out []CardRevision
 	for _, r := range recs {
-		if r.Kind != KindCardRevision || r.Revision == nil || r.Revision.Host != host {
+		if r.Revision == nil || r.Revision.Host != host || !containsKind(kinds, r.Kind) {
 			continue
 		}
 		out = append(out, *r.Revision)
@@ -353,6 +365,15 @@ func (s *Stream) Revisions(host string, limit int) ([]CardRevision, error) {
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+func containsKind(kinds []string, k string) bool {
+	for _, want := range kinds {
+		if k == want {
+			return true
+		}
+	}
+	return false
 }
 
 func cloneCard(c *SiteCard) *SiteCard {

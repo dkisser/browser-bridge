@@ -137,3 +137,75 @@ func countKind(t *testing.T, m *Manager, kind string) int {
 	t.Helper()
 	return len(recordsOfKind(t, m, kind))
 }
+
+// A revision number in the audit trail must name a card that exists.
+//
+// noteShown observed that a card no longer matched the page and wrote a
+// card_revision record claiming card.Revision+1 — a revision it never wrote.
+// The learner's next write then claimed the same number with different content
+// and a different reason, so `memory history` (the surface ADR-0019 points a
+// human at before accepting an automatic update) showed two different contents
+// under one number, plus a stale record describing a revision that was never
+// on disk.
+//
+// The rule this pins: the set of card_revision numbers is exactly the set of
+// revisions the store actually wrote.
+func TestStalenessDoesNotMintARevisionThatWasNeverWritten(t *testing.T) {
+	dir := t.TempDir()
+	m, err := New(Options{DataDir: dir, BrowserID: "browser-test"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = m.Close() })
+
+	const host = "shop.example.com"
+	card := &SiteCard{
+		Host:     host,
+		Revision: 3,
+		Map: []MapEntry{
+			{Purpose: "open cart", Pred: Predicate{Role: "button", Name: "Cart"}},
+			{Purpose: "search", Pred: Predicate{Role: "textbox", Name: "Search"}},
+			{Purpose: "checkout", Pred: Predicate{Role: "button", Name: "Pay now"}},
+		},
+	}
+	if err = m.store.Put(card); err != nil {
+		t.Fatal(err)
+	}
+	// One real revision, so the ledger has a baseline.
+	real := CardRevision{Host: host, Revision: 3, Reason: "learned", AtMs: 2}
+	if err = m.stream.Append(TraceRecord{Kind: KindCardRevision, AtMs: 2, Revision: &real}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A page where two of the three entries no longer resolve — past the
+	// majority rule, so the observation fires.
+	digest := &PageDigest{
+		URL:   "https://shop.example.com/",
+		Nodes: []NodeSig{{Role: "button", Name: "Cart", Ref: "@e1", Depth: 1}},
+	}
+	m.noteShown(card, digest, host)
+
+	revs, err := m.stream.Revisions(host, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(revs) != 1 {
+		t.Fatalf("the change ledger has %d entries for one real write: %+v", len(revs), revs)
+	}
+	if revs[0].Revision != 3 {
+		t.Errorf("the surviving entry is rev %d, want the real rev 3", revs[0].Revision)
+	}
+
+	// And the observation is still on the record, against the revision it is
+	// about — not dropped just because it is no longer a change.
+	stale, err := m.stream.Staleness(host, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stale) != 1 {
+		t.Fatalf("Staleness returned %d observations, want 1", len(stale))
+	}
+	if stale[0].Revision != 3 {
+		t.Errorf("the observation names rev %d, want the rev it found stale (3)", stale[0].Revision)
+	}
+}
