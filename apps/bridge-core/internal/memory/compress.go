@@ -213,10 +213,26 @@ var cardSectionHeaders = []string{
 // nobody chose.
 func sanitizeCompressed(text string) (string, error) {
 	// @eN, the one handle form the whole feature rests on.
-	if i := strings.Index(text, "@e"); i >= 0 {
-		if j := i + 2; j < len(text) && text[j] >= '0' && text[j] <= '9' {
-			return "", fmt.Errorf("memory: chat response invented a ref (%s)", text[i:min(i+6, len(text))])
+	//
+	// Every occurrence, not the first. `strings.Index` finds one and the guard
+	// inspected only the byte after it, so any earlier "@e" followed by a
+	// non-digit short-circuited the scan: a reply reading "checked
+	// @example.com and also @e12" passed the check and was stored with the
+	// invented ref intact, re-served under the injection's own trust label at
+	// every landing for the life of the card. An email address in ordinary
+	// prose is enough to open the hole, and a page echoing one is enough to
+	// trigger it.
+	for from := 0; from < len(text); {
+		i := strings.Index(text[from:], "@e")
+		if i < 0 {
+			break
 		}
+		at := from + i
+		if j := at + 2; j < len(text) && text[j] >= '0' && text[j] <= '9' {
+			return "", fmt.Errorf("memory: chat response invented a ref (%s)", text[at:min(at+6, len(text))])
+		}
+		// Past this occurrence, so the next scan cannot land on it again.
+		from = at + 2
 	}
 	var kept []string
 	for _, line := range strings.Split(text, "\n") {

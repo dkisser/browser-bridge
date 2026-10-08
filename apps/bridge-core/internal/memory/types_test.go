@@ -163,3 +163,52 @@ func TestErrCodeRefusesASentenceShapedLikeACode(t *testing.T) {
 		t.Errorf("errCode with a capital = %q, want it classified, not stored", got)
 	}
 }
+
+// The prose the previous test did not cover: an ordinary sentence, which ends
+// in a period and therefore contains a "selector character".
+//
+// The old test was `strings.ContainsAny(sel, ".#[]():>+~*=")`, so a period was
+// enough to route prose down the structural path, where it is copied byte for
+// byte into a card file that outlives the visit. `get_text "Contact support."`
+// wrote the page's own words to $BB_HOME/data/cards/<host>.json permanently —
+// the exact failure safeSelector's own doc says it exists to prevent, closed
+// only for prose that happened to avoid a period.
+func TestSafeSelectorReducesProseThatContainsPunctuation(t *testing.T) {
+	prose := []string{
+		"Contact support.",
+		"Click here. Then wait.",
+		"her lawyer's private note.",
+		"See the attached note.",
+		"v1.2 released",
+		"issue #42",
+		"Note: see below",
+		"see [1]",
+		"2 + 2",
+		"~5 items left",
+		"footnote*",
+	}
+	for _, in := range prose {
+		if got := safeSelector(in); got != "…" {
+			t.Errorf("safeSelector(%q) = %q, want … (the prose was kept)", in, got)
+		}
+	}
+}
+
+// And the other direction: narrowing the marker test must not cost a real
+// selector its shape, or the reduction protects against nothing.
+func TestSafeSelectorStillKeepsASelectorsShape(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"div>p", "div>p"},
+		{"div > p > a", "div > p > a"},
+		{"a.b.c", "a.b.c"},
+		{"#main", "#main"},
+		{"li:nth-child(2)", "li:nth-child(2)"},
+		{"[name=x]", "[name=x]"},
+		{`[class*="note"]`, "[class*=…]"},
+	}
+	for _, c := range cases {
+		if got := safeSelector(c.in); got != c.want {
+			t.Errorf("safeSelector(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}

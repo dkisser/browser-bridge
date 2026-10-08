@@ -342,6 +342,72 @@ func redactArgs(command string, args map[string]any) map[string]any {
 // the page's largest containers as `#id` / `tag.class` with a character count and
 // never quotes the page (describeCandidate, ADR-0003) — so the shape it returns
 // is already safe and is not re-reduced here.
+// hasSelectorStructure reports whether sel contains a character doing selector
+// work, as opposed to prose that happens to include the same punctuation.
+//
+// Kept deliberately narrow. A marker counts only in the position a selector
+// grammar puts it, because the characters are shared with ordinary English:
+//
+//   - `.` / `#` / `:` are class, id and pseudo markers only when a name
+//     follows immediately. "Contact support." ends on the period, "issue #42"
+//     has a digit, "Note: see below" has a space.
+//   - `[` opens an attribute selector only when a name or a quote follows.
+//     "see [1]" does not.
+//   - `=` means an assignment only inside brackets.
+//   - `>` is a child combinator only when a name or a separator sits on each
+//     side, so "div>p" and "div > p" both count and ". " in prose does not.
+//
+// `+`, `~` and `*` are deliberately absent. Each is a real selector token, but
+// each also appears as ordinary prose punctuation ("2 + 2", "~5 left", a
+// footnote's "*"), and every one of their genuinely structural uses is covered
+// by something else: `[class*="x"]` by the bracket rule, `:nth-child(2n+1)` by
+// the pseudo rule. Dropping them costs a bare `a + b` selector its shape — the
+// same trade the paragraph above already accepts for descendant selectors —
+// and buys back the prose that used them.
+func hasSelectorStructure(sel string) bool {
+	for i := 0; i < len(sel); i++ {
+		switch c := sel[i]; c {
+		case '.', '#', ':':
+			if i+1 < len(sel) && isSelectorNameStart(sel[i+1]) {
+				return true
+			}
+		case '[':
+			if i+1 < len(sel) && (isSelectorNameStart(sel[i+1]) || sel[i+1] == '"' || sel[i+1] == '\'') {
+				return true
+			}
+		case '=':
+			if strings.LastIndexByte(sel[:i], '[') > strings.LastIndexByte(sel[:i], ']') {
+				return true
+			}
+		case '>':
+			if selectorFlank(sel, i-1) && selectorFlank(sel, i+1) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isSelectorNameStart reports whether b can begin a tag, class, id or attribute
+// name. A digit deliberately does not: it is what tells `#main` from the
+// "issue #42" that prose produces.
+func isSelectorNameStart(b byte) bool {
+	return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b == '-' || b == '_'
+}
+
+// selectorFlank reports whether position i is a boundary, whitespace, or part
+// of a name — the things a combinator can legitimately sit beside.
+func selectorFlank(sel string, i int) bool {
+	if i < 0 || i >= len(sel) {
+		return true
+	}
+	switch sel[i] {
+	case ' ', '\t', '\n', '\r':
+		return true
+	}
+	return isSelectorNameStart(sel[i]) || sel[i] >= '0' && sel[i] <= '9'
+}
+
 func safeSelector(sel string) string {
 	sel = strings.TrimSpace(sel)
 	if sel == "" {
@@ -359,17 +425,24 @@ func safeSelector(sel string) string {
 	// A bare string is text, by the querySelectorByText path. There is no
 	// structure to keep.
 	//
-	// The space is deliberately *not* in the marker set. It looks like the one
-	// thing that would tell "div span" (a descendant combinator) from "her
-	// lawyer private note" (prose), and it is also the character every sentence
-	// of prose contains — with it here, any multi-word phrase fails this test,
-	// falls through to the structural path below, and is copied byte for byte
-	// into a card file. The two are genuinely indistinguishable, so the
-	// ambiguity has to resolve toward the side that cannot leak: a real
-	// descendant selector loses its shape and reduces to "…", which still
-	// teaches the thing that matters (a bare selector did not resolve here),
-	// where prose would be written down permanently.
-	if !strings.ContainsAny(sel, ".#[]():>+~*=") {
+	// The test is not "does this contain a selector character" — that is what
+	// it used to be, and a period ends most English sentences, so
+	// `get_text "Contact support."` was classified as structural and copied
+	// byte for byte into a card file that outlives the visit. The leak the
+	// function documents was closed only for prose that happened to avoid a
+	// period. `.`, `#` and `:` also appear in ordinary prose ("issue #42",
+	// "Note: see below", "v1.2 released").
+	//
+	// So a marker counts only where it is doing selector work: attached to a
+	// name (`.entry-content`, `#main`, `li:nth-child(2)`), opening an attribute
+	// selector (`[name]`), or standing as a combinator (`div > p`). Detached,
+	// the same characters are punctuation. The space is still deliberately not
+	// a marker: it cannot tell "div span" from "her lawyer private note", and
+	// the ambiguity has to resolve toward the side that cannot leak. A real
+	// descendant selector therefore reduces to "…", which still teaches the
+	// thing that matters (a bare selector did not resolve here), where prose
+	// would be written down permanently.
+	if !hasSelectorStructure(sel) {
 		return "…"
 	}
 	var b strings.Builder
