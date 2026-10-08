@@ -1287,3 +1287,112 @@ func TestARedirectCannotDowngradeTheCompressorToCleartext(t *testing.T) {
 		t.Error("an unbounded redirect chain was followed")
 	}
 }
+
+// A single-line body must still be trimmable.
+//
+// truncateLines shed whole lines and refused to drop the last one, so a body
+// with no newline in it could not be reduced at all. That is not a corner case:
+// the ADR-0022 compressed view is a single block by construction — sanitize
+// Compressed folds the model's reply onto one line — and refreshCompressed
+// stores up to maxCompressedRunes of it, so with the compression endpoint
+// configured a long reply rendered at roughly 500 estimated tokens against the
+// 400-token budget, on every landing and every snapshot.
+func TestASingleLineBodyIsStillTrimmedToBudget(t *testing.T) {
+	card := &SiteCard{
+		Host:           "shop.example.com",
+		Revision:       3,
+		Compressed:     strings.Repeat("word ", 400), // one line, no newlines
+		CompressedRev:  3,
+		CompressedAtMs: 1,
+	}
+	out := RenderCard(card, RenderOptions{MaxTokens: DefaultInjectTokens, Compressed: true})
+	if out == "" {
+		t.Fatal("the compressed view rendered nothing")
+	}
+	if got := estimateTokens(out); got > DefaultInjectTokens+16 {
+		t.Errorf("the render is %d estimated tokens against a %d budget:\n%s",
+			got, DefaultInjectTokens+16, out)
+	}
+	// And the body was actually shortened rather than the whole thing dropped:
+	// the host line is still there to say whose card this is.
+	if !strings.Contains(out, "shop.example.com") {
+		t.Errorf("the header was lost while trimming:\n%s", out)
+	}
+}
+
+// A command whose segment the pass cap discards must stay in the carried
+// window.
+//
+// The cap rewinds the cursor to the start of the last segment the pass *did*
+// process, which is ahead of a carried command's own line — so the command will
+// not be re-read. Marking it answered anyway dropped it from the window, and the
+// next pass found its response with nothing to pair it to and discarded it: the
+// same loss the window exists to prevent, one cap-sized step further along, and
+// in the failure tier the cold-start rule depends on.
+func TestACappedPassDoesNotDropTheEvidenceItDeferred(t *testing.T) {
+	learn, stream, store := newLearner(t)
+	const host = "shop.example.com"
+
+	nav := "nav-1"
+	if err := stream.Append(TraceRecord{Kind: KindCommand, AtMs: 1, Envelope: nav, Command: "navigate", TabID: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Append(TraceRecord{Kind: KindResponse, AtMs: 2, Envelope: nav, Command: "navigate", TabID: 1,
+		Outcome: OutcomeOK, Host: host}); err != nil {
+		t.Fatal(err)
+	}
+
+	// One command whose response has not arrived, then enough traffic to fill
+	// the pass past its cap.
+	const late = "late-1"
+	if err := stream.Append(TraceRecord{Kind: KindCommand, AtMs: 3, Envelope: late, Command: "click", TabID: 1,
+		Args: map[string]any{"selector": ".buy"}}); err != nil {
+		t.Fatal(err)
+	}
+	// Each fill is far enough apart in time to start its own segment —
+	// segmentIdleGap splits them — so the pass really does run past its cap.
+	const step = int64(segmentIdleGap/time.Millisecond) + 1000
+	for i := 0; i < maxSegmentsPerPass+8; i++ {
+		env := "fill-" + strconv.Itoa(i)
+		at := int64(1000) + int64(i)*step
+		if err := stream.Append(TraceRecord{Kind: KindCommand, AtMs: at, Envelope: env, Command: "click", TabID: 1}); err != nil {
+			t.Fatal(err)
+		}
+		if err := stream.Append(TraceRecord{Kind: KindResponse, AtMs: at + 10, Envelope: env, Command: "click", TabID: 1,
+			Outcome: OutcomeOK, Host: host}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// This pass trips the cap, and the late command's response arrives during
+	// it, folding into the newest (deferred) segment.
+	if err := stream.Append(TraceRecord{Kind: KindResponse, AtMs: int64(1000) + int64(maxSegmentsPerPass+8)*step + 10,
+		Envelope: late, Command: "click", TabID: 1,
+		Outcome: OutcomeError, ErrCode: "no_element", Host: host}); err != nil {
+		t.Fatal(err)
+	}
+	if err := learn.Run(); err != nil {
+		t.Fatalf("capped pass: %v", err)
+	}
+
+	// Drain the deferred work.
+	for i := 0; i < 4; i++ {
+		if err := learn.Run(); err != nil {
+			t.Fatalf("drain pass %d: %v", i, err)
+		}
+	}
+
+	card, ok := store.Get(host)
+	if !ok {
+		t.Fatal("no card at all after draining; the capped pass dropped its evidence")
+	}
+	found := false
+	for _, f := range card.Failures {
+		if f.Signature == "no_element" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the deferred failure never reached the card: %+v", card.Failures)
+	}
+}

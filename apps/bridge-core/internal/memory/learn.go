@@ -66,6 +66,13 @@ type segment struct {
 	// failures are the failed calls, in order.
 	failures []failedCall
 
+	// idx is this segment's position in the pass that built it. The pass cap
+	// discards everything at or past maxSegmentsPerPass, and a response that
+	// lands in a discarded segment must leave its command in the carried window
+	// — otherwise the rewound cursor skips the command on the next read and the
+	// pairing is lost for good.
+	idx int
+
 	// shape is the canonical call sequence, used to recognise a repeat. Each
 	// entry carries the ref the call addressed, if any, so a procedure step and
 	// the observation behind it are the same record rather than two lists that
@@ -368,9 +375,23 @@ func buildSegments(recs []TraceRecord, from int64, carried map[string]TraceRecor
 			if !ok {
 				continue
 			}
-			answered[r.Envelope] = true
+			// A response that lands in a segment this pass will discard must not
+			// mark its command answered.
+			//
+			// The cap rewinds the cursor to the start of the last segment the
+			// pass *did* process — which is ahead of a carried command's own
+			// line — so the command will not be re-read. Marking it answered
+			// then drops it from the carried window, and the next pass finds the
+			// response with nothing to pair it to and hits the `continue`,
+			// losing the evidence permanently. That is the same loss the window
+			// exists to prevent, one cap-sized step further along.
+			//
+			// A landing never creates a segment, so it is answered here; whether
+			// the segment a *call* lands in survives the cap is only known once
+			// `cur` is resolved, below.
 			tab := tabKey(cmd.TabID)
 			if isLanding(cmd.Command) {
+				answered[r.Envelope] = true
 				// The landing command's own response is what tells us the host.
 				host := hostFromRecord(r, cmd)
 				if host != "" {
@@ -399,8 +420,15 @@ func buildSegments(recs []TraceRecord, from int64, carried map[string]TraceRecor
 					firstEnvelope: cmd.Envelope,
 					startLine:     commandLine(cmd, commandLines, from, line),
 				}
+				cur.idx = len(out)
 				curByTab[tab] = cur
 				out = append(out, cur)
+			}
+			// Only a segment this pass will keep counts as answered. A deferred
+			// one is discarded by the cap, and the rewound cursor never comes
+			// back far enough to re-read its command.
+			if cur.idx < maxSegmentsPerPass {
+				answered[r.Envelope] = true
 			}
 			cur.endMs = r.AtMs
 			cur.shape = append(cur.shape, shapeStep{command: cmd.Command})

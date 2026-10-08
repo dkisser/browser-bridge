@@ -356,19 +356,35 @@ func (s *MCPServer) executeNavigate(ctx context.Context, req *mcp.CallToolReques
 		fmt.Sprintf("Navigated to %s in tab %d", args.URL, args.TabID))
 }
 
+// goBack and goForward wait for the navigation to settle, so they get the same
+// arrangement navigate has: the caller's budget goes to the extension as its
+// in-page timeout, and the transport waits that plus the slack.
+//
+// They did not, and the extension's own fallback for a history move is the
+// 30-second navigation budget — while the transport gave up at the caller's
+// default of 10. So on a slow history navigation the route was removed before
+// the answer arrived, the agent was told "timeout: no response for command
+// goBack" for a navigation that had succeeded, and the router never recorded
+// the landing, leaving tabHost on the site the agent had just left. Before the
+// handlers waited at all this race could not happen; waiting without telling
+// the transport is what created it.
 func (s *MCPServer) executeGoBack(ctx context.Context, req *mcp.CallToolRequest, args tabIDTimeoutArgs) (*mcp.CallToolResult, any, error) {
+	budget := s.commandTimeout(args.TimeoutMS)
 	return s.runMessageTool(ctx, req, "go_back", commandSpec{
-		name:   "goBack",
-		tabID:  args.TabID,
-		params: tabParams{TabID: args.TabID},
+		name:       "goBack",
+		tabID:      args.TabID,
+		params:     waitParams{Timeout: int(budget.Milliseconds()), TabID: args.TabID},
+		waitBudget: budget,
 	}, args.TimeoutMS, "Go back failed", "Went back")
 }
 
 func (s *MCPServer) executeGoForward(ctx context.Context, req *mcp.CallToolRequest, args tabIDTimeoutArgs) (*mcp.CallToolResult, any, error) {
+	budget := s.commandTimeout(args.TimeoutMS)
 	return s.runMessageTool(ctx, req, "go_forward", commandSpec{
-		name:   "goForward",
-		tabID:  args.TabID,
-		params: tabParams{TabID: args.TabID},
+		name:       "goForward",
+		tabID:      args.TabID,
+		params:     waitParams{Timeout: int(budget.Milliseconds()), TabID: args.TabID},
+		waitBudget: budget,
 	}, args.TimeoutMS, "Go forward failed", "Went forward")
 }
 

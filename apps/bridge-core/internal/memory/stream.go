@@ -294,20 +294,41 @@ func (s *Stream) Rotate(cursorLine int64) (bool, error) {
 	}
 
 	rotated := filepath.Join(filepath.Dir(s.path), rotatedStreamName)
-	_ = os.Remove(rotated)
-	if cerr := s.f.Close(); cerr != nil {
-		return false, fmt.Errorf("memory: close stream for rotation: %w", cerr)
-	}
+	// The rename comes first, and the old handle stays open across it.
+	//
+	// This used to close s.f, then rename, then reopen — and the reopen is
+	// fallible (a read-only remount, ENOSPC, EMFILE). On that path the function
+	// returned with s.f a closed, non-nil *os.File: Append's guard is
+	// `if s.f == nil`, so it passed, every later write returned "file already
+	// closed", and commands, results and card_shown records stopped being
+	// written for the rest of the process's life with one log line per command
+	// and no recovery. Rotate's own s.f.Stat() failed from then on too.
+	//
+	// Renaming under the open handle is safe on the platforms this runs on, and
+	// os.Rename replaces the destination atomically, so the unlink the old code
+	// did first — which destroyed the retained generation before the rename
+	// could fail — is gone as well.
 	if rerr := os.Rename(s.path, rotated); rerr != nil {
 		return false, fmt.Errorf("memory: rotate stream: %w", rerr)
 	}
 	f, err := os.OpenFile(s.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
+		// Put it back, so a failed rotation leaves the stream exactly as it
+		// was rather than half-moved with no active file.
+		if backErr := os.Rename(rotated, s.path); backErr != nil {
+			return false, fmt.Errorf("memory: reopen stream: %w (and rolling the rename back failed: %v)", err, backErr)
+		}
 		return false, fmt.Errorf("memory: reopen stream: %w", err)
 	}
+	// Only now is the old descriptor retired. A close error here is reported
+	// but not fatal: the new handle is already in place and the stream works.
+	cerr := s.f.Close()
 	s.f = f
 	s.rotated = rotated
 	s.lastByte = '\n'
+	if cerr != nil {
+		return true, fmt.Errorf("memory: close rotated stream: %w", cerr)
+	}
 	return true, nil
 }
 
@@ -333,6 +354,34 @@ func (s *Stream) unconsumedIsBookkeeping(from int64) bool {
 	if from < 0 {
 		return false
 	}
+	// `from` is an index into the *combined* numbering ReadFrom produces — the
+	// retained generation first, the active file after it — so it has to be
+	// rebased before it can index the active file's own lines.
+	//
+	// Without this the comparison below was between a combined index and a
+	// per-file line number, so with any retained generation present every line
+	// of the active file was skipped, nothing was parsed, and the function
+	// reported success for a stream it had not looked at. Rotate then moved the
+	// active file over a retained generation the learner had never read — the
+	// one thing ADR-0032 and ADR-0036 both say the precondition exists to
+	// prevent.
+	base := int64(0)
+	if s.rotated != "" {
+		n, ok := countLines(s.rotated)
+		if !ok {
+			// Not knowing how the generations line up is a reason to leave the
+			// file alone, which is what Rotate's other unknown does.
+			return false
+		}
+		base = n
+	}
+	if from < base {
+		// The cursor is still inside the retained generation, so every line of
+		// the active file is unread.
+		return false
+	}
+	skip := from - base
+
 	f, err := os.Open(s.path)
 	if err != nil {
 		return false
@@ -342,7 +391,7 @@ func (s *Stream) unconsumedIsBookkeeping(from int64) bool {
 	sc.Buffer(make([]byte, 0, 64*1024), maxStreamLineBytes)
 	var line int64
 	for sc.Scan() {
-		if line < from {
+		if line < skip {
 			line++
 			continue
 		}
@@ -356,6 +405,28 @@ func (s *Stream) unconsumedIsBookkeeping(from int64) bool {
 		}
 	}
 	return sc.Err() == nil
+}
+
+// countLines reports how many complete lines a file holds, or that it could not
+// be established. A line can be large — a single command's recorded args, in
+// principle — so the scanner buffer clears the rotation ceiling rather than
+// assuming small records.
+func countLines(path string) (int64, bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, false
+	}
+	defer func() { _ = f.Close() }()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), maxStreamLineBytes)
+	var lines int64
+	for sc.Scan() {
+		lines++
+	}
+	if sc.Err() != nil {
+		return 0, false
+	}
+	return lines, true
 }
 
 // Close releases the append handle.

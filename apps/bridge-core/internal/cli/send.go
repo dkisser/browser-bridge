@@ -40,7 +40,7 @@ func sendCommand(ctx context.Context, g *globals, command string, params map[str
 
 	env, err := client.SendCommand(ctx, g.browser, core.CommandPayload{
 		Command: command,
-		TabID:   g.tab,
+		TabID:   addressedTab(g, params),
 		Params:  params,
 	}, cliTransportTimeout(g, params))
 	if err != nil {
@@ -58,6 +58,23 @@ func sendCommand(ctx context.Context, g *globals, command string, params map[str
 		return json.RawMessage(`{"status":"ok"}`), nil
 	}
 	return payload.Data, nil
+}
+
+// addressedTab is the tab a command is addressed to.
+//
+// For the tab-scoped commands the target is the positional argument —
+// `tab:close 5`, `tab:switch 5` — which the parameter function puts in
+// params.tabId, while the envelope's top-level TabID carried the global --tab
+// and defaulted to 0. The router reads only the top-level field, so
+// `bridge tab:close 5` pruned tab 0: the tab it deleted was not the tab it
+// closed, and tab 5's host and digest survived to be inherited by whatever tab
+// Chrome later reused id 5 for. Only those two commands set params.tabId, so
+// preferring it cannot move a command that means the global.
+func addressedTab(g *globals, params map[string]any) int {
+	if v, ok := params["tabId"].(int); ok {
+		return v
+	}
+	return g.tab
 }
 
 // cliTransportTimeout is how long the CLI waits for a command's response.
@@ -198,6 +215,24 @@ func selectorParam(_ *globals, args []string) (map[string]any, error) {
 
 // intParam parses a positional integer. The TS CLI passed Number() through
 // (NaN serialized as null); failing fast keeps the error local and legible.
+// navSettleParams is the params every command that waits for a navigation to
+// settle must carry.
+//
+// The extension bounds its own wait with this budget and falls back to a
+// hardcoded 30s when it is absent, so a command that omits it makes the two
+// entry points disagree: the CLI's default --timeout is 10s, and the extension
+// would sit on a listener for 20s after the CLI had already given up — for a
+// navigation that then succeeds, the agent is told it timed out and the router
+// never records the landing, leaving the tab attributed to the site it just
+// left.
+//
+// navigate had this reasoning in its own params function; goBack and goForward
+// did too much the same thing to reach the settle and did not. One helper, so
+// the next command that waits inherits the reasoning rather than the bug.
+func navSettleParams(g *globals, _ []string) (map[string]any, error) {
+	return map[string]any{"timeout": g.timeout}, nil
+}
+
 func intParam(name string) func(_ *globals, args []string) (map[string]any, error) {
 	return func(_ *globals, args []string) (map[string]any, error) {
 		n, err := strconv.Atoi(args[0])
@@ -223,13 +258,12 @@ var browserCommands = []browserCommand{
 		args:    cobra.ExactArgs(1),
 		command: "navigate",
 		params: func(g *globals, args []string) (map[string]any, error) {
-			// The extension bounds its own wait for the page to reach
-			// 'complete' with this budget, and falls back to a hardcoded 30s
-			// when it is absent. Without it the two entry points disagree:
-			// the CLI's default --timeout is 10s, so the extension would sit
-			// on a listener for 20s after the CLI had already given up, and
-			// `--timeout 60000` would still be capped at 30s.
-			return map[string]any{"url": args[0], "timeout": g.timeout}, nil
+			params, err := navSettleParams(g, args)
+			if err != nil {
+				return nil, err
+			}
+			params["url"] = args[0]
+			return params, nil
 		},
 	},
 	{
@@ -238,7 +272,7 @@ var browserCommands = []browserCommand{
 		short:   "Go back in browser history",
 		args:    cobra.NoArgs,
 		command: "goBack",
-		params:  noParams,
+		params:  navSettleParams,
 	},
 	{
 		use:     "go-forward",
@@ -246,7 +280,7 @@ var browserCommands = []browserCommand{
 		short:   "Go forward in browser history",
 		args:    cobra.NoArgs,
 		command: "goForward",
-		params:  noParams,
+		params:  navSettleParams,
 	},
 	{
 		use:     "refresh",

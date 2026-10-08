@@ -96,8 +96,14 @@ func TestSafeSelectorKeepsStructure(t *testing.T) {
 		{`[data-message-subject="Standup notes"]`, `[data-message-subject=…]`},
 		{".entry-content", ".entry-content"},
 		{"#main", "#main"},
-		{"div > p", "div > p"},
 		{"input[name]", "input[name]"},
+		// A child combinator no longer keeps its shape. `Home > Inbox` is prose
+		// an agent really does pass as a selector, and no flank test separates
+		// it from `div > p` — so the ambiguity resolves toward the side that
+		// cannot leak, exactly as it already does for a descendant selector.
+		// The reduction still teaches the actionable thing: a bare selector did
+		// not resolve here.
+		{"div > p", "…"},
 		// A ref is the one address form the feature is built on.
 		{"@e14", "@e14"},
 	}
@@ -186,6 +192,7 @@ func TestSafeSelectorReducesProseThatContainsPunctuation(t *testing.T) {
 		"2 + 2",
 		"~5 items left",
 		"footnote*",
+		"Home > Inbox",
 	}
 	for _, in := range prose {
 		if got := safeSelector(in); got != "…" {
@@ -198,12 +205,15 @@ func TestSafeSelectorReducesProseThatContainsPunctuation(t *testing.T) {
 // selector its shape, or the reduction protects against nothing.
 func TestSafeSelectorStillKeepsASelectorsShape(t *testing.T) {
 	cases := []struct{ in, want string }{
-		{"div>p", "div>p"},
-		{"div > p > a", "div > p > a"},
 		{"a.b.c", "a.b.c"},
 		{"#main", "#main"},
 		{"li:nth-child(2)", "li:nth-child(2)"},
-		{"[name=x]", "[name=x]"},
+		// An attribute value is page-derived whether or not it was quoted, so
+		// both forms reduce. This used to keep the value.
+		{"[name=x]", "[name=…]"},
+		// The value is the page's, quoted or not; the attribute name is the
+		// structure worth keeping, and it survives.
+		{"[data-order-id=ORD12345]", "[data-order-id=…]"},
 		{`[class*="note"]`, "[class*=…]"},
 	}
 	for _, c := range cases {

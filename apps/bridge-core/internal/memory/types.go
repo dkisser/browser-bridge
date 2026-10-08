@@ -361,16 +361,15 @@ func redactArgs(command string, args map[string]any) map[string]any {
 //   - `[` opens an attribute selector only when a name or a quote follows.
 //     "see [1]" does not.
 //   - `=` means an assignment only inside brackets.
-//   - `>` is a child combinator only when a name or a separator sits on each
-//     side, so "div>p" and "div > p" both count and ". " in prose does not.
 //
-// `+`, `~` and `*` are deliberately absent. Each is a real selector token, but
-// each also appears as ordinary prose punctuation ("2 + 2", "~5 left", a
-// footnote's "*"), and every one of their genuinely structural uses is covered
-// by something else: `[class*="x"]` by the bracket rule, `:nth-child(2n+1)` by
-// the pseudo rule. Dropping them costs a bare `a + b` selector its shape — the
-// same trade the paragraph above already accepts for descendant selectors —
-// and buys back the prose that used them.
+// `+`, `~`, `*` and `>` are deliberately absent. Each is a real selector token,
+// but each also appears as ordinary prose punctuation ("2 + 2", "~5 left", a
+// footnote's "*", a breadcrumb's "Home > Inbox"), and every one of their
+// genuinely structural uses is covered by something else: `[class*="x"]` by the
+// bracket rule, `:nth-child(2n+1)` by the pseudo rule. Dropping them costs a
+// bare `a + b` or `div > p` selector its shape — the same trade the paragraph
+// above already accepts for descendant selectors — and buys back the prose that
+// used them.
 func hasSelectorStructure(sel string) bool {
 	for i := 0; i < len(sel); i++ {
 		switch c := sel[i]; c {
@@ -386,10 +385,11 @@ func hasSelectorStructure(sel string) bool {
 			if strings.LastIndexByte(sel[:i], '[') > strings.LastIndexByte(sel[:i], ']') {
 				return true
 			}
-		case '>':
-			if selectorFlank(sel, i-1) && selectorFlank(sel, i+1) {
-				return true
-			}
+			// '>' is deliberately absent, for the reason '+' and '~' are: a breadcrumb
+			// reads `Home > Inbox`, which is prose an agent really would pass, and
+			// no flank test separates it from `div > p`. The space rule above
+			// already accepts that a descendant combinator loses its shape; a child
+			// combinator loses it for the same reason and by the same trade.
 		}
 	}
 	return false
@@ -400,19 +400,6 @@ func hasSelectorStructure(sel string) bool {
 // "issue #42" that prose produces.
 func isSelectorNameStart(b byte) bool {
 	return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b == '-' || b == '_'
-}
-
-// selectorFlank reports whether position i is a boundary, whitespace, or part
-// of a name — the things a combinator can legitimately sit beside.
-func selectorFlank(sel string, i int) bool {
-	if i < 0 || i >= len(sel) {
-		return true
-	}
-	switch sel[i] {
-	case ' ', '\t', '\n', '\r':
-		return true
-	}
-	return isSelectorNameStart(sel[i]) || sel[i] >= '0' && sel[i] <= '9'
 }
 
 func safeSelector(sel string) string {
@@ -454,30 +441,72 @@ func safeSelector(sel string) string {
 	}
 	var b strings.Builder
 	b.Grow(len(sel))
+	depth := 0
 	for i := 0; i < len(sel); {
 		switch q := sel[i]; q {
-		case '"', '\'':
-			// Skip the whole quoted run, whatever is inside it, including
-			// escapes and a quote character of the other kind.
+		case '[':
+			depth++
+			b.WriteByte(q)
 			i++
-			for i < len(sel) {
-				if sel[i] == '\\' {
-					i += 2
-					continue
-				}
-				if sel[i] == q {
-					i++
-					break
-				}
-				i++
+		case ']':
+			if depth > 0 {
+				depth--
 			}
+			b.WriteByte(q)
+			i++
+		case '"', '\'':
+			// A quoted run outside an assignment is a literal the selector
+			// carries; there is no structure in it to keep.
+			i = skipQuoted(sel, i)
 			b.WriteString("…")
+		case '=':
+			// An attribute *value* — quoted or not. These were treated as two
+			// different things and they are one: `[data-message-subject="Standup
+			// notes"]` leaked its value through the quoted-run case and
+			// `[data-order-id=ORD12345]` leaked it byte for byte through this
+			// one, because the loop only ever looked for quotes. Both are
+			// page-derived by construction — an order id, a user id, a document
+			// key — and both were written to the stream and then to
+			// cards/<host>.json, outliving the visit and leaving the machine
+			// when the compression endpoint is configured. The doc above calls
+			// the literal "a guess *about* page content, and the guess is the
+			// content"; unquoted it is exactly as much the content.
+			b.WriteByte('=')
+			i++
+			if depth > 0 {
+				if i < len(sel) && (sel[i] == '"' || sel[i] == '\'') {
+					i = skipQuoted(sel, i)
+				} else {
+					for i < len(sel) && sel[i] != ']' && sel[i] != ' ' && sel[i] != '\t' {
+						i++
+					}
+				}
+				b.WriteString("…")
+			}
 		default:
 			b.WriteByte(q)
 			i++
 		}
 	}
 	return strings.Join(strings.Fields(b.String()), " ")
+}
+
+// skipQuoted returns the index just past the quoted run starting at i, whatever
+// the run contains — escapes, and a quote character of the other kind.
+func skipQuoted(sel string, i int) int {
+	q := sel[i]
+	i++
+	for i < len(sel) {
+		if sel[i] == '\\' {
+			i += 2
+			continue
+		}
+		if sel[i] == q {
+			return i + 1
+		}
+		i++
+	}
+	return i
 }
 
 // safeURL keeps the part of a URL that identifies a site and drops the part

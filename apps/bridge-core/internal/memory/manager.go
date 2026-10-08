@@ -677,6 +677,19 @@ func (m *Manager) tabLocked(tabID int) *tabState {
 	return ts
 }
 
+// withoutKey returns order with every occurrence of key removed, reusing the
+// underlying array. Used by the eviction order slices, where a duplicate entry
+// means a live map entry can be evicted by its own stale slot.
+func withoutKey[T comparable](order []T, key T) []T {
+	kept := order[:0]
+	for _, k := range order {
+		if k != key {
+			kept = append(kept, k)
+		}
+	}
+	return kept
+}
+
 // forgetTabLocked drops a tab's scratch state. The caller must hold m.mu.
 //
 // Called when a tab closes. Anything still armed for it is discarded, which is
@@ -684,7 +697,15 @@ func (m *Manager) tabLocked(tabID int) *tabState {
 // otherwise be verified against whatever page the *next* tab with that id
 // showed, since Chrome reuses ids.
 func (m *Manager) forgetTabLocked(tabID int) {
-	delete(m.tabs, tabKey(tabID))
+	key := tabKey(tabID)
+	delete(m.tabs, key)
+	// The order slice has to lose it too. Leaving the entry behind means a
+	// reused tab id holds two slots, and the eviction loop below pops the stale
+	// first one and deletes the *live* entry — discarding the armed card,
+	// verifyOn and lastDigest of a tab that is open, so the next TakeSiteNote
+	// finds nothing and injects nothing. Chrome reuses ids, so this is a matter
+	// of when.
+	m.tabsOrder = withoutKey(m.tabsOrder, key)
 }
 
 // armLocked schedules this tab's card for the named host and asks the next

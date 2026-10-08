@@ -258,24 +258,40 @@ const HISTORY_NAV_GRACE_MS = 300;
  * the tab attributed to the site the agent had just left, and the next
  * snapshot recorded a healthy card as stale.
  *
- * Resolves rather than rejects on timeout: the caller reads the tab either
- * way, and a navigation that did not happen is a no-op rather than a failure
- * worth surfacing.
+ * The listener is attached *before* `start` issues the history call, which is
+ * the only ordering that works. chrome.tabs.goBack resolves as soon as the
+ * navigation is initiated, and the 'loading' event for a fast move can fire
+ * before the awaiting microtask resumes — so a listener attached afterwards
+ * missed it, nothing re-armed the timer, and the grace expired with
+ * chrome.tabs.get still returning the URL the tab was on before. The handler
+ * then answered with that URL, which the control plane records as a landing on
+ * the site the agent just left: the exact back/forward defeat this function was
+ * written to fix, from the other side.
+ *
+ * Resolves rather than rejects when the navigation produces no event in time: a
+ * history move that did not happen is a no-op, and the caller reads the tab
+ * either way. A rejection from the history call itself still propagates, as it
+ * did before — that is a real error, not a quiet no-op.
  */
 function settleHistoryNav(
   tabId: number,
   before: string | undefined,
   timeout: number,
+  start: () => Promise<unknown>,
 ): Promise<void> {
-  return new Promise<void>((resolve) => {
+  return new Promise<void>((resolve, reject) => {
     let settled = false;
     let timer: ReturnType<typeof setTimeout>;
-    const finish = () => {
+    const finish = (error?: unknown) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       chrome.tabs.onUpdated.removeListener(listener);
-      resolve();
+      if (error === undefined) {
+        resolve();
+      } else {
+        reject(error);
+      }
     };
     const listener = (
       updatedTabId: number,
@@ -285,23 +301,23 @@ function settleHistoryNav(
       if (changeInfo.status === 'loading') {
         // A navigation is definitely under way; it now gets the real budget.
         clearTimeout(timer);
-        timer = setTimeout(finish, timeout);
+        timer = setTimeout(() => finish(), timeout);
         return;
       }
       if (changeInfo.status === 'complete') finish();
     };
-    timer = setTimeout(finish, HISTORY_NAV_GRACE_MS);
     chrome.tabs.onUpdated.addListener(listener);
-    chrome.tabs
-      .get(tabId)
+    timer = setTimeout(() => finish(), HISTORY_NAV_GRACE_MS);
+    start()
+      .then(() => chrome.tabs.get(tabId))
       .then((current) => {
+        // The move may already have committed before the listener could see an
+        // event, which is the lost-wakeup case this re-check covers.
         if (current.status === 'complete' && current.url !== before) {
           finish();
         }
       })
-      .catch(() => {
-        // Tab lookup failed; rely on the event listener and the grace timer.
-      });
+      .catch((error: unknown) => finish(error));
   });
 }
 
@@ -488,11 +504,11 @@ export async function handleCommand(
       }
       const tab = tabId;
       const before = (await chrome.tabs.get(tab)).url;
-      await chrome.tabs.goBack(tab);
       await settleHistoryNav(
         tab,
         before,
         (params.timeout as number) || DEFAULT_NAV_TIMEOUT_MS,
+        () => chrome.tabs.goBack(tab),
       );
       const t = await chrome.tabs.get(tab);
       return { url: t.url, title: t.title };
@@ -504,11 +520,11 @@ export async function handleCommand(
       }
       const tab = tabId;
       const before = (await chrome.tabs.get(tab)).url;
-      await chrome.tabs.goForward(tab);
       await settleHistoryNav(
         tab,
         before,
         (params.timeout as number) || DEFAULT_NAV_TIMEOUT_MS,
+        () => chrome.tabs.goForward(tab),
       );
       const t = await chrome.tabs.get(tab);
       return { url: t.url, title: t.title };

@@ -332,7 +332,42 @@ func truncateLines(s string, maxTokens int) string {
 	for len(lines) > 1 && estimateTokens(strings.Join(lines, "\n")) > maxTokens {
 		lines = lines[:len(lines)-1]
 	}
-	return strings.Join(lines, "\n") + "\n…"
+	out := strings.Join(lines, "\n")
+	if len(lines) == 1 {
+		// One line and still over budget: shedding lines cannot help, and the
+		// loop above refuses to drop the last one. That is not a corner case —
+		// the ADR-0022 compressed view is a single block by construction
+		// (sanitizeCompressed folds the model's reply onto one line), and
+		// refreshCompressed stores up to maxCompressedRunes of it, so a long
+		// reply rendered at roughly 500 estimated tokens against a 400-token
+		// budget on every landing and every snapshot. Trimming the rune count
+		// is what the budget is actually about.
+		out = truncateRunes(out, maxTokens)
+	}
+	return out + "\n…"
+}
+
+// truncateRunes cuts a string down to an estimated token budget, by runes.
+//
+// The estimate is characters over the usual ratio, so shrinking the rune count
+// shrinks the estimate; the loop converges in a few passes and the exactness
+// does not matter, because the caller only needs to land near the budget.
+func truncateRunes(s string, maxTokens int) string {
+	if maxTokens <= 0 {
+		return ""
+	}
+	r := []rune(s)
+	for len(r) > 1 && estimateTokens(string(r)) > maxTokens {
+		// Cut proportionally to how far over the budget it is, with a floor so
+		// it always makes progress.
+		over := estimateTokens(string(r)) - maxTokens
+		cut := len(r) * over / max(1, estimateTokens(string(r)))
+		if cut < 1 {
+			cut = 1
+		}
+		r = r[:len(r)-cut]
+	}
+	return string(r)
 }
 
 // RenderStaleNotice is the short form used by the verification pass: the card

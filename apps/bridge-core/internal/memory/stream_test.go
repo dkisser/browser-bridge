@@ -506,3 +506,79 @@ func TestOpenStreamFindsTheGenerationAPriorProcessRotated(t *testing.T) {
 		t.Errorf("next = %d, want 2", next)
 	}
 }
+
+// A rotation must not move the active file over a retained generation the
+// learner has not finished reading.
+//
+// The cursor is an index into the *combined* numbering ReadFrom produces —
+// retained generation first, active file after it — and the precondition that
+// guards rotation counted only the active file, from zero. With any retained
+// generation present every active line compared less than the cursor, so the
+// loop skipped all of them, parsed nothing, and reported success for a stream
+// it had never looked at. Rotate then replaced the unread retained generation.
+func TestRotationDoesNotDiscardAnUnreadRetainedGeneration(t *testing.T) {
+	dir := t.TempDir()
+	s, err := OpenStream(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	// A first generation big enough to rotate, and fully read.
+	if err = s.Append(TraceRecord{
+		Kind: KindCommand, AtMs: 1, Envelope: "e1", Command: "gettext",
+		Args: map[string]any{"selector": strings.Repeat("x", streamRotateBytes)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, next, _, rerr := s.ReadFrom(0)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if next != 1 {
+		t.Fatalf("ReadFrom(0) next = %d, want 1", next)
+	}
+	rotated, err := s.Rotate(1)
+	if err != nil || !rotated {
+		t.Fatalf("first rotation: rotated=%v err=%v", rotated, err)
+	}
+	retained := filepath.Join(dir, "stream.jsonl.1")
+
+	// The learner has now read nothing of the combined stream: its cursor sits
+	// inside the retained generation. Nothing in the active file may be
+	// rotated away on that basis.
+	if ok := s.unconsumedIsBookkeeping(0); ok {
+		t.Error("the precondition passed with the cursor inside an unread retained generation")
+	}
+	// Nor may a second rotation throw the retained generation away.
+	was := fileSize(t, retained)
+	if err = s.Append(TraceRecord{
+		Kind: KindCommand, AtMs: 2, Envelope: "e2", Command: "gettext",
+		Args: map[string]any{"selector": strings.Repeat("y", streamRotateBytes)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Rotate(0); err != nil {
+		t.Fatalf("second rotation: %v", err)
+	}
+	if got := fileSize(t, retained); got < was {
+		t.Errorf("the retained generation shrank from %d to %d bytes, so unread records were discarded", was, got)
+	}
+	// And the whole combined stream is still readable from the start.
+	recs, _, _, err := s.ReadFrom(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 2 {
+		t.Errorf("ReadFrom(0) returned %d records, want both: %+v", len(recs), recs)
+	}
+}
+
+func fileSize(t *testing.T, path string) int64 {
+	t.Helper()
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fi.Size()
+}

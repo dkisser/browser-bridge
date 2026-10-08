@@ -144,6 +144,9 @@ func TestCommandConstruction(t *testing.T) {
 		args       []string
 		wantCmd    string
 		wantParams map[string]any
+		// wantTabID overrides the --tab default of 7 for the commands whose
+		// target is their positional argument, not the global flag.
+		wantTabID int
 		// jsonMode runs with --json so the bespoke human output of snapshot
 		// does not fight the shared compact-JSON assertion.
 		jsonMode bool
@@ -153,16 +156,24 @@ func TestCommandConstruction(t *testing.T) {
 		// would otherwise disagree with the CLI's --timeout.
 		{name: "navigate", args: []string{"navigate", "https://example.com"}, wantCmd: "navigate", wantParams: map[string]any{"url": "https://example.com", "timeout": float64(10000)}},
 		{name: "navigate local timeout", args: []string{"navigate", "https://example.com", "--timeout", "60000"}, wantCmd: "navigate", wantParams: map[string]any{"url": "https://example.com", "timeout": float64(60000)}},
-		{name: "go-back", args: []string{"go-back"}, wantCmd: "goBack", wantParams: map[string]any{}},
-		{name: "goBack alias", args: []string{"goBack"}, wantCmd: "goBack", wantParams: map[string]any{}},
-		{name: "go-forward", args: []string{"go-forward"}, wantCmd: "goForward", wantParams: map[string]any{}},
-		{name: "goForward alias", args: []string{"goForward"}, wantCmd: "goForward", wantParams: map[string]any{}},
+		// go-back and go-forward wait for the navigation to settle, so they carry
+		// the same budget navigate does — without it the extension falls back to
+		// its 30s default inside a 10s transport deadline and reports a timeout
+		// for a navigation that succeeded.
+		{name: "go-back", args: []string{"go-back"}, wantCmd: "goBack", wantParams: map[string]any{"timeout": float64(10000)}},
+		{name: "goBack alias", args: []string{"goBack"}, wantCmd: "goBack", wantParams: map[string]any{"timeout": float64(10000)}},
+		{name: "go-forward", args: []string{"go-forward"}, wantCmd: "goForward", wantParams: map[string]any{"timeout": float64(10000)}},
+		{name: "goForward alias", args: []string{"goForward"}, wantCmd: "goForward", wantParams: map[string]any{"timeout": float64(10000)}},
 		{name: "refresh", args: []string{"refresh"}, wantCmd: "refresh", wantParams: map[string]any{}},
 		{name: "tab:list", args: []string{"tab:list"}, wantCmd: "tab:list", wantParams: map[string]any{}},
 		{name: "tab:new without url", args: []string{"tab:new"}, wantCmd: "tab:new", wantParams: map[string]any{}},
 		{name: "tab:new with url", args: []string{"tab:new", "https://example.com"}, wantCmd: "tab:new", wantParams: map[string]any{"url": "https://example.com"}},
-		{name: "tab:close", args: []string{"tab:close", "5"}, wantCmd: "tab:close", wantParams: map[string]any{"tabId": float64(5)}},
-		{name: "tab:switch", args: []string{"tab:switch", "5"}, wantCmd: "tab:switch", wantParams: map[string]any{"tabId": float64(5)}},
+		// The positional argument is the tab these are addressed to, so the
+		// envelope's top-level tabId has to be it and not the global --tab. The
+		// router reads only the top-level field, so sending 7 here made
+		// `tab:close 5` prune tab 7's host and leave tab 5's behind.
+		{name: "tab:close", args: []string{"tab:close", "5"}, wantCmd: "tab:close", wantParams: map[string]any{"tabId": float64(5)}, wantTabID: 5},
+		{name: "tab:switch", args: []string{"tab:switch", "5"}, wantCmd: "tab:switch", wantParams: map[string]any{"tabId": float64(5)}, wantTabID: 5},
 		{name: "click", args: []string{"click", "#btn"}, wantCmd: "click", wantParams: map[string]any{"selector": "#btn"}},
 		{name: "type", args: []string{"type", "#input", "hello"}, wantCmd: "type", wantParams: map[string]any{"selector": "#input", "text": "hello"}},
 		{name: "select", args: []string{"select", "#dd", "v1"}, wantCmd: "select", wantParams: map[string]any{"selector": "#dd", "value": "v1"}},
@@ -181,7 +192,11 @@ func TestCommandConstruction(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			url, done := fakeBridge(t, serveCommand(tt.wantCmd, 7, tt.wantParams, `{"status":"ok","data":{"ok":true}}`))
+			wantTabID := tt.wantTabID
+			if wantTabID == 0 {
+				wantTabID = 7
+			}
+			url, done := fakeBridge(t, serveCommand(tt.wantCmd, wantTabID, tt.wantParams, `{"status":"ok","data":{"ok":true}}`))
 			args := []string{"--server", url, "--browser", "b-1", "--tab", "7"}
 			if tt.jsonMode {
 				args = append(args, "--json")

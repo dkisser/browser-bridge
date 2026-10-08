@@ -339,6 +339,16 @@ func (r *Router) hostAfter(tab int, command string, payload ResponsePayload) str
 	if command == "tab:close" {
 		if payload.Status != "error" {
 			delete(r.tabHost, tab)
+			// The order slice has to lose it too, or a reused tab id holds two
+			// slots and the eviction below can delete a *live* entry against
+			// its own stale one. Chrome reuses ids.
+			kept := r.tabHostOrder[:0]
+			for _, k := range r.tabHostOrder {
+				if k != tab {
+					kept = append(kept, k)
+				}
+			}
+			r.tabHostOrder = kept
 		}
 		return ""
 	}
