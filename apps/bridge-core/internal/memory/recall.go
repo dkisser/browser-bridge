@@ -195,27 +195,41 @@ func RenderCard(card *SiteCard, opts RenderOptions) string {
 }
 
 func finish(opts RenderOptions, host, body string, stale bool) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "[%s] %s\n", InjectionLabel, host)
-	b.WriteString(body)
+	header := fmt.Sprintf("[%s] %s\n", InjectionLabel, host)
+	notice := ""
 	if stale {
 		// The tense matters for the same reason the map header's does: a card
 		// rendered offline is reporting that its entries did not match *that*
 		// page, not that they stopped matching *this* one. The advice is the
 		// same either way, so only the claim needs rewording.
 		if opts.PageNote != "" {
-			fmt.Fprintf(&b, "\n  (some notes above did not match that page — take a fresh snapshot to re-check)")
+			notice = "\n  (some notes above did not match that page — take a fresh snapshot to re-check)"
 		} else {
-			fmt.Fprintf(&b, "\n  (some notes above no longer match this page — re-check with a snapshot)")
+			notice = "\n  (some notes above no longer match this page — re-check with a snapshot)"
 		}
 	}
-	out := b.String()
-	if estimateTokens(out) > opts.MaxTokens+16 {
-		// The header alone should not blow the budget; if the body still does,
-		// cut it hard rather than truncate mid-line.
-		out = truncateLines(out, opts.MaxTokens+16)
+	out := header + body + notice
+	if len(out) == 0 || estimateTokens(out) <= opts.MaxTokens+16 {
+		return out
 	}
-	return out
+	// Only the *body* is cut, never the assembled string.
+	//
+	// The budget loop above trims the body to MaxTokens and then this adds the
+	// header and the notice (~18 tokens) on top, so a body that legitimately
+	// landed at the budget overflowed the slack — and truncateLines cuts from
+	// the end, where the notice is. The result was a card that ended in "…"
+	// with a fully-resolved-looking site map and *no* staleness warning: the
+	// caveat removed, the claims it was warning about kept. That is the more
+	// dangerous direction of the two, and it is the exact silent truncation the
+	// whole stale plumbing exists to prevent.
+	//
+	// The notice is load-bearing, so it is a fixed cost, spent before the body
+	// is measured — including the ellipsis the cut itself appends.
+	budget := opts.MaxTokens + 16 - estimateTokens(header) - estimateTokens(notice) - estimateTokens("\n…")
+	if budget < 0 {
+		budget = 0
+	}
+	return header + truncateLines(body, budget) + notice
 }
 
 // mapNote is what the site map section claims it was checked against. It is the

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1198,5 +1199,91 @@ func TestARouterErrorNeverBecomesASiteFailure(t *testing.T) {
 	}
 	if routerErrors != 6 {
 		t.Errorf("the trace holds %d router errors, want 6: they belong in the trace", routerErrors)
+	}
+}
+
+// A truncated card must keep the caveat, not only the claims.
+//
+// The budget loop trims the body to MaxTokens and finish() then adds the header
+// and the staleness notice (~18 tokens) on top, so a body that legitimately
+// landed at the budget overflowed the slack — and truncateLines cuts from the
+// end, where the notice is. The agent received a confident, fully-resolved-
+// looking site map ending in "…" with no signal that entries were dropped or
+// that the card was partly stale. Removing the caveat while keeping the claims
+// is the more dangerous direction, and it is the exact silent truncation the
+// stale plumbing exists to prevent.
+func TestATruncatedCardKeepsItsStalenessWarning(t *testing.T) {
+	// Enough entries that the body lands at the budget, with the last one
+	// unresolvable so the card is also stale — the combination the boundary
+	// produces.
+	var cardMap []MapEntry
+	var page strings.Builder
+	page.WriteString("Page: Shop | https://shop.example.com/\n")
+	const entries = 24
+	for i := 0; i < entries; i++ {
+		name := "Control " + strings.Repeat("x", 30) + strconv.Itoa(i)
+		cardMap = append(cardMap, MapEntry{
+			Purpose: "click target",
+			Pred:    Predicate{Role: "button", Name: name},
+		})
+		if i < entries-1 {
+			page.WriteString("button [" + name + "] @e" + strconv.Itoa(i+1) + "\n")
+		}
+	}
+	card := &SiteCard{Host: "shop.example.com", Map: cardMap}
+	digest := digestOfText(t, page.String())
+
+	out := RenderCard(card, RenderOptions{
+		MaxTokens: DefaultInjectTokens,
+		Resolver:  func(p Predicate) (string, bool) { return digest.Resolve(p) },
+	})
+
+	if !strings.Contains(out, "…") {
+		t.Skip("this card no longer overflows the budget, so the boundary is not exercised")
+	}
+	if !strings.Contains(out, "no longer match this page") {
+		t.Errorf("the truncated card dropped its staleness warning and kept the claims:\n%s", out)
+	}
+}
+
+// A redirect must not undo the https requirement.
+//
+// NewCompressorFromEnv checks the *configured* URL as a string, and a redirect
+// goes around it: Go follows a 30x and re-sends the Authorization header,
+// stripping it on a cross-host redirect but not on a cross-scheme one. So an
+// https endpoint answering with a 30x to http put the API key and the rendered
+// card on the wire in the clear, with nothing in the config having changed.
+// ADR-0031 states the rule flatly, and it belongs at the layer that can observe
+// the scheme rather than the layer that sees what the operator typed.
+func TestARedirectCannotDowngradeTheCompressorToCleartext(t *testing.T) {
+	policy := compressRedirectPolicy(false)
+
+	mk := func(rawURL string) *http.Request {
+		req, err := http.NewRequest(http.MethodPost, rawURL, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return req
+	}
+
+	// The downgrade is the one that must be refused.
+	if err := policy(mk("http://api.example.invalid/v1/chat"), nil); err == nil {
+		t.Error("a redirect to http:// was followed with the API key attached")
+	}
+	// Staying on https, and upgrading to it, are both ordinary.
+	if err := policy(mk("https://api.example.invalid/v1/chat"), nil); err != nil {
+		t.Errorf("a redirect that stayed on https was refused: %v", err)
+	}
+	if err := policy(mk("https://api.example.invalid/v1/chat"), []*http.Request{mk("http://api.example.invalid/v1")}); err != nil {
+		t.Errorf("an upgrade from http to https was refused: %v", err)
+	}
+	// The explicit opt-in still permits a local proxy to move over http.
+	if err := compressRedirectPolicy(true)(mk("http://127.0.0.1:8080/v1/chat"), nil); err != nil {
+		t.Errorf("the insecure opt-in no longer permits an http redirect: %v", err)
+	}
+	// And the chain is bounded rather than followed forever.
+	via := make([]*http.Request, maxCompressRedirects)
+	if err := policy(mk("https://api.example.invalid/v1/chat"), via); err == nil {
+		t.Error("an unbounded redirect chain was followed")
 	}
 }

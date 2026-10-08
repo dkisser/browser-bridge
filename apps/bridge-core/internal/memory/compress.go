@@ -83,7 +83,46 @@ func NewCompressorFromEnv() Compressor {
 		baseURL: strings.TrimRight(base, "/"),
 		model:   model,
 		apiKey:  key,
-		client:  &http.Client{Timeout: compressTimeout},
+		client: &http.Client{
+			Timeout:       compressTimeout,
+			CheckRedirect: compressRedirectPolicy(os.Getenv(envAllowInsecure) == "1"),
+		},
+	}
+}
+
+// maxCompressRedirects is Go's own default, restated so the bound is explicit.
+const maxCompressRedirects = 10
+
+// compressRedirectPolicy is the compressor client's CheckRedirect.
+//
+// The check in NewCompressorFromEnv is a string test on the *configured* URL,
+// and a redirect goes around it. Go follows a 30x and re-sends the
+// Authorization header — it strips that header on a cross-*host* redirect, not
+// on a cross-*scheme* one — so an https endpoint that answers with a 30x to
+// http sends the API key and the rendered card across in the clear, and the
+// only thing that would have refused is a config string that never changed.
+//
+// ADR-0031 states the rule flatly: "The endpoint must be https://. The key and
+// a page-derived card both travel on that connection, and one env var set to
+// http:// was enough to send both in the clear." The decision belongs at the
+// layer that can observe the scheme — the transport — not at the layer that
+// only sees what the operator typed.
+//
+// A redirect that stays on https, or upgrades to it, is allowed: a provider
+// moving its endpoint is ordinary, and refusing all redirects would break
+// setups for no security gain. The explicit insecure opt-in still permits a
+// downgrade, because a local proxy is the legitimate reason to want http.
+func compressRedirectPolicy(insecureOK bool) func(*http.Request, []*http.Request) error {
+	return func(req *http.Request, via []*http.Request) error {
+		if len(via) >= maxCompressRedirects {
+			return fmt.Errorf("memory: stopped after %d redirects", maxCompressRedirects)
+		}
+		if req.URL.Scheme != "https" && !insecureOK {
+			return fmt.Errorf(
+				"memory: refusing to follow a redirect to %s:// — the API key and card would travel in cleartext",
+				req.URL.Scheme)
+		}
+		return nil
 	}
 }
 
