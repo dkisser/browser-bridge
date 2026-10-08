@@ -12,7 +12,7 @@ point forward, so "this one has been amended" has nowhere to live inside the old
 file. This table is that place. `CONTEXT.md` is the other: it is mutable, and it
 records what is true *now*.
 
-## The self-learning run (0017–0036)
+## The self-learning run (0017–0037)
 
 The most recent decision chain, and the one with amendments. An ADR listed in the
 **Amends** column is not wrong — it was right about what it decided, and a later
@@ -40,6 +40,7 @@ ADR records what changed since. Read the chain, not just the newest file.
 | [0034](./0034-the-landing-announces-a-guide-with-a-pointer.md) | The landing announces a guide with a pointer, never the prose | [0033](./0033-the-guides-read-path-rides-the-cards-pull.md) |
 | [0035](./0035-the-card-is-a-claim-about-a-site.md) | The card is a claim about a site, and a transport error is not one | [0030](./0030-the-boundary-as-implemented.md), [0018](./0018-structural-trace.md) |
 | [0036](./0036-the-ceiling-that-never-fired.md) | The ceiling never fired, and the rotation had two owners | [0032](./0032-the-stream-turns-over.md), [0020](./0020-single-typed-stream.md) |
+| [0037](./0037-a-marker-must-be-doing-selector-work.md) | A selector marker must be doing selector work | [0030](./0030-the-boundary-as-implemented.md), [0025](./0025-what-the-baseline-taught.md) |
 
 ## The rest
 
