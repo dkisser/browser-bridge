@@ -221,7 +221,7 @@ on the MCP path, pulled with `bridge memory show <host>` on the CLI path
 (ADR-0027):
 
 ```
-[可参考的站点访问模式] mail.example.com
+[learned site patterns] mail.example.com
 Observed to fail here (do not repeat):
   - element_not_found on gettext with "[data-message-subject=\"…\"]" (4x)
 ```

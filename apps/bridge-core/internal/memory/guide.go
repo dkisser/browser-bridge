@@ -31,7 +31,7 @@ func GuideNote(dir, host string) string {
 	if err != nil || fi.IsDir() || fi.Size() == 0 {
 		return ""
 	}
-	return "[站点指南] this host has a curated guide: " + path +
+	return "[site guide] this host has a curated guide: " + path +
 		" — read it when you need the why; where it disagrees with the live page, the page wins."
 }
 

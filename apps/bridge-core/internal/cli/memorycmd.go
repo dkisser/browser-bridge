@@ -199,7 +199,7 @@ func printGuide(cmd *cobra.Command, dir, host string) {
 	if guide == "" {
 		return
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "\n[站点指南] %s — %s（人类策展，与实时页面冲突时以页面为准）\n",
+	fmt.Fprintf(cmd.OutOrStdout(), "\n[site guide] %s — %s (human-curated; where it disagrees with the live page, the page wins)\n",
 		host, memory.GuidePath(dir, host))
 	fmt.Fprintln(cmd.OutOrStdout(), guide)
 }

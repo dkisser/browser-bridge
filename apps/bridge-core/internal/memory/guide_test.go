@@ -85,7 +85,7 @@ func TestGuideNotePointsAtTheFileNeverTheProse(t *testing.T) {
 	dir := t.TempDir()
 	writeGuide(t, dir, "mail.example.com", "# the why lives here\n")
 	note := GuideNote(dir, "mail.example.com")
-	for _, want := range []string{"[站点指南]", GuidePath(dir, "mail.example.com")} {
+	for _, want := range []string{"[site guide]", GuidePath(dir, "mail.example.com")} {
 		if !strings.Contains(note, want) {
 			t.Errorf("the pointer is missing %q: %q", want, note)
 		}
@@ -130,7 +130,7 @@ func TestLandingCarriesTheGuidePointer(t *testing.T) {
 
 	land(t, m, host, "e1")
 	note := m.TakeSiteNote("navigate", host, 1)
-	if !strings.Contains(note, "站点指南") {
+	if !strings.Contains(note, "site guide") {
 		t.Errorf("the landing did not announce the guide:\n%s", note)
 	}
 	if !strings.Contains(note, "selector_not_found") {
@@ -139,7 +139,7 @@ func TestLandingCarriesTheGuidePointer(t *testing.T) {
 
 	snapshot(t, m, host, "e2", "link [World] @e1")
 	verify := m.TakeSiteNote("snapshot", host, 1)
-	if strings.Contains(verify, "站点指南") {
+	if strings.Contains(verify, "site guide") {
 		t.Errorf("the verification render must stay the bare map:\n%s", verify)
 	}
 }
@@ -151,7 +151,7 @@ func TestLandingWithGuideButNoCardStillAnnounces(t *testing.T) {
 
 	land(t, m, host, "e1")
 	note := m.TakeSiteNote("navigate", host, 1)
-	if !strings.Contains(note, "站点指南") {
+	if !strings.Contains(note, "site guide") {
 		t.Fatalf("a guide that arrived before the card is still worth the landing: %q", note)
 	}
 	if n := countKind(t, m, KindCardShown); n != 0 {
@@ -165,7 +165,7 @@ func TestLandingWithoutGuideHasNoPointer(t *testing.T) {
 	seedCard(t, m, host)
 
 	land(t, m, host, "e1")
-	if note := m.TakeSiteNote("navigate", host, 1); strings.Contains(note, "站点指南") {
+	if note := m.TakeSiteNote("navigate", host, 1); strings.Contains(note, "site guide") {
 		t.Errorf("a host without a guide must not be announced:\n%s", note)
 	}
 }

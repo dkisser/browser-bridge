@@ -5,7 +5,7 @@ ADR-0033 kept guides out of the landing injection for a good reason — a guide 
 **Decision:** the landing carries a one-line, fixed-shape pointer when a guide exists:
 
 ```
-[站点指南] this host has a curated guide: <absolute path> — read it when you need the why; ...
+[site guide] this host has a curated guide: <absolute path> — read it when you need the why; ...
 ```
 
 A pointer is bounded, so it does not reopen the budget question ADR-0033 settled; the prose still rides only the pull (`bridge memory show`). The same line is appended to the CLI's `navigate`/`tab:new` output, which gets no in-band injection at all — and needs no wire change to get the pointer, because the CLI can read `$BB_HOME/data` as well as the daemon can. The host comes from the landed URL in the command's own result, since navigate follows redirects, falling back to the URL that was asked for.

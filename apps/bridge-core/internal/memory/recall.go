@@ -18,7 +18,7 @@ import (
 // label rather than prose: the agent has to be able to tell this apart from the
 // tool's own output, because the card is a claim about a site that may be out
 // of date, not a fact about this page.
-const InjectionLabel = "可参考的站点访问模式"
+const InjectionLabel = "learned site patterns"
 
 // DefaultInjectTokens is the hard cap from ADR-0019. Past a few hundred tokens
 // the injection costs more context than the card saves, so the tiers are

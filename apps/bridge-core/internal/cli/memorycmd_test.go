@@ -226,7 +226,7 @@ func TestShowAppendsTheCuratedGuide(t *testing.T) {
 	}
 	for _, want := range []string{
 		"no such element", // the card is still there
-		"[站点指南] mail.example.com",
+		"[site guide] mail.example.com",
 		"data/guides/mail.example.com.md",
 		"aria-label=Compose", // and the guide's own text
 	} {
@@ -236,7 +236,7 @@ func TestShowAppendsTheCuratedGuide(t *testing.T) {
 	}
 	// The guide rides *after* the card: the card is the machine's claim, the
 	// guide is commentary on it.
-	if strings.Index(stdout, "站点指南") < strings.Index(stdout, "no such element") {
+	if strings.Index(stdout, "site guide") < strings.Index(stdout, "no such element") {
 		t.Errorf("the guide printed before the card:\n%s", stdout)
 	}
 }
@@ -268,7 +268,7 @@ func TestShowRawOmitsTheGuide(t *testing.T) {
 	if !strings.Contains(stdout, `"rev": 7`) {
 		t.Errorf("--raw lost the card JSON:\n%s", stdout)
 	}
-	if strings.Contains(stdout, "站点指南") {
+	if strings.Contains(stdout, "site guide") {
 		t.Errorf("--raw printed the guide into what must stay card JSON:\n%s", stdout)
 	}
 }
@@ -281,7 +281,7 @@ func TestShowWithoutAGuidePrintsNoGuideSection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, stderr)
 	}
-	if strings.Contains(stdout, "站点指南") {
+	if strings.Contains(stdout, "site guide") {
 		t.Errorf("a missing guide is the normal state and must print nothing:\n%s", stdout)
 	}
 }
