@@ -610,8 +610,11 @@ func (r *Router) sendError(sender TextSender, errCode, message, id, browserID st
 	}
 	if r.mem != nil {
 		// A rejected call never moved the tab, so the host is the one it was
-		// already on — which is exactly the context worth recording alongside
-		// the failure.
+		// already on. Recorded through RecordRouterError rather than
+		// RecordResult, and `host` is passed for the trace only: the codes
+		// reaching here — browser_offline, cannot_buffer, sw_timeout — are the
+		// control plane reporting its own state, not the site failing, so they
+		// must not become the card's claim about that host.
 		r.mu.Lock()
 		tab := call.tabID
 		if tab < 0 {
@@ -619,7 +622,7 @@ func (r *Router) sendError(sender TextSender, errCode, message, id, browserID st
 		}
 		host := r.tabHost[tab]
 		r.mu.Unlock()
-		r.mem.RecordResult(id, call.command, host, call.tabID, payload)
+		r.mem.RecordRouterError(id, call.command, host, call.tabID, payload)
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {

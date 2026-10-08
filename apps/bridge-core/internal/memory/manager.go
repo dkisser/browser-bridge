@@ -202,10 +202,45 @@ func (m *Manager) RecordCommand(envelopeID, command, host string, tabID int, arg
 	m.wake()
 }
 
+// RecordRouterError records a payload the control plane synthesized itself.
+//
+// It goes into the trace with KindRouterError — the kind the reader already
+// knows about — and never into the failure tier. See core.MemoryHook for why
+// the two are separate: a browser that is not connected is not a fact about the
+// site the tab happens to be on, and the failure tier is rendered to future
+// agents as "Observed to fail here (do not repeat)".
+//
+// The record is deliberately minimal. No args lookup (the command did not
+// execute), no payload magnitude (a synthesized error body is a handful of
+// bytes and says nothing about a page), and no soft-failure gate (that rule is
+// about reads).
+func (m *Manager) RecordRouterError(envelopeID, command, host string, tabID int, p core.ResponsePayload) {
+	if m == nil {
+		return
+	}
+	rec := TraceRecord{
+		Kind:     KindRouterError,
+		AtMs:     nowMs(),
+		Envelope: envelopeID,
+		Command:  safeCommand(command),
+		TabID:    tabID,
+		Browser:  m.browserID,
+		Host:     host,
+		Outcome:  OutcomeError,
+		ErrCode:  errCode(p.Error),
+	}
+	if err := m.stream.Append(rec); err != nil {
+		m.logf("memory: record router error %s: %v", command, err)
+	}
+	// The learner is woken so the cursor keeps pace with the trace, but there
+	// is nothing here for it to learn: buildSegments drops the record before it
+	// can reach a segment.
+	m.wake()
+}
+
 // RecordResult records the inbound half and updates the tab's view of where it
-// is. p may be an error payload the router synthesised rather than one the
-// extension sent; both are evidence, and a synthesized failure is often the
-// most instructive kind (the agent asked a browser that was not there).
+// is. This is the extension's answer about the page — see RecordRouterError for
+// the payloads the control plane mints for itself.
 func (m *Manager) RecordResult(envelopeID, command, host string, tabID int, p core.ResponsePayload) {
 	if m == nil {
 		return
@@ -262,7 +297,25 @@ func (m *Manager) RecordResult(envelopeID, command, host string, tabID int, p co
 	// Soft failure: a read that "succeeded" by returning most of a page is the
 	// ADR-0003 incident, and no-error-means-success would otherwise record it as
 	// a good procedure.
-	if n := rec.ResultSz; n > SoftFailureThreshold {
+	//
+	// Measured on ContentSz, not ResultSz, and each half of that matters.
+	//
+	// ResultSz is len(p.Data) — JSON *bytes*. The threshold's own doc and the
+	// message below both speak in characters, so a payload of 30,000 CJK
+	// characters is 90,011 bytes and was recorded as an oversized read at well
+	// under the 60,000-character intent. Every agent working in a non-Latin
+	// script permanently learned "reads fail here", and mergeProcedure refuses
+	// any segment carrying a failure, so the working sequence was never learned
+	// either. contentSize already counts runes, which is what the constant was
+	// always about.
+	//
+	// And the gate applied to *every* command, not the reads it describes. A
+	// screenshot's base64 data URL is always past 60KB, so every screenshot was
+	// recorded as oversized_result — permanently in the failure tier, the one
+	// ADR-0018 calls the signal it trusts most. contentSize is 0 for anything
+	// that is not a content read, which is exactly the scoping wanted: a large
+	// result that is not a page dump is not this rule's business.
+	if n := rec.ContentSz; n > SoftFailureThreshold {
 		rec.Outcome = OutcomeSoft
 		rec.ErrCode = "oversized_result"
 		rec.ErrMsg = fmt.Sprintf("read returned %d chars, past the %d soft limit — whole page, not content", n, SoftFailureThreshold)

@@ -155,7 +155,17 @@ type Learn struct {
 	logf     func(format string, args ...any)
 	// now is injectable so tests are not at the mercy of the wall clock.
 	now func() time.Time
+	// pending carries command records whose response has not arrived yet from
+	// one pass to the next. See buildSegments for why it is carried rather
+	// than re-read. Only Manager.loop and LearnNow call Run, and never
+	// concurrently, so it needs no lock.
+	pending map[string]TraceRecord
 }
+
+// maxPendingCommands bounds the cross-pass command window. A command whose
+// response never arrives — a daemon killed between the two records — would
+// otherwise sit in the map for the life of the process.
+const maxPendingCommands = 512
 
 // Compressor is the optional ADR-0022 model call. It renders a card to a
 // shorter form and never decides what is in the card.
@@ -172,6 +182,7 @@ func NewLearn(stream *Stream, store *Store, cursor *Cursor, compress Compressor,
 		stream:   stream,
 		store:    store,
 		cursor:   cursor,
+		pending:  make(map[string]TraceRecord),
 		compress: compress,
 		logf:     logf,
 		now:      time.Now,
@@ -206,7 +217,8 @@ func (l *Learn) Run() error {
 		}
 	}()
 
-	segments := buildSegments(recs, from)
+	segments, pending := buildSegments(recs, from, l.pending)
+	l.pending = pending
 	cursorTo := next
 	if len(segments) > maxSegmentsPerPass {
 		// Process the oldest ones and leave the cursor at the first one we did
@@ -278,8 +290,33 @@ func (l *Learn) Run() error {
 // The in-progress segment is per tab as well. A single shared one would splice
 // two tabs' calls into a sequence no agent ever performed, and mergeProcedure
 // would then corroborate that invention.
-func buildSegments(recs []TraceRecord, from int64) []*segment {
-	commands := make(map[string]TraceRecord, len(recs))
+//
+// carried holds commands whose response had not arrived when the previous pass
+// ended, and the returned map is that set for the next pass. Without it, a
+// response that crossed a pass boundary found no command to pair with and hit
+// the `continue` below: no segment, no card, and the evidence behind the cursor
+// for good. That is not exotic — Manager.loop runs a pass on a 20s idle timer
+// as well as on the wake signal, so any call slower than that splits — and the
+// loss is worst exactly where it matters, because a failure is the one signal
+// this package says cannot be misread and the cold-start rule is built on.
+//
+// Carried rather than re-read by rewinding the cursor to the command's line.
+// Rewinding would work, but it re-processes the tail of every pass and
+// re-increments the counts of segments already applied, and against a 20s
+// timer that is most passes. Carrying costs one small map.
+//
+// The cost of carrying is that a command with no line in this pass anchors its
+// segment at the response's line instead (see commandLine). The segment is
+// fully processed in this pass either way, so that is the best available
+// anchor rather than a lost one, and strictly better than dropping the pair.
+func buildSegments(recs []TraceRecord, from int64, carried map[string]TraceRecord) ([]*segment, map[string]TraceRecord) {
+	commands := make(map[string]TraceRecord, len(recs)+len(carried))
+	for env, cmd := range carried {
+		commands[env] = cmd
+	}
+	// answered records which commands this pass paired, so only the genuinely
+	// unanswered ones are carried forward.
+	answered := make(map[string]bool, len(recs))
 	// commandLines remembers where each command's *command* record sat, not its
 	// response. A segment has to start at its command: a deferred pass sets the
 	// cursor to the first deferred segment's start, and if that line is the
@@ -311,11 +348,27 @@ func buildSegments(recs []TraceRecord, from int64) []*segment {
 				// twice.
 				curByTab[tabKey(r.TabID)] = nil
 			}
-		case KindRouterError, KindResponse:
+		case KindRouterError:
+			// The control plane's own error — browser_offline, cannot_buffer,
+			// sw_timeout — not the site's. It is paired so the command stops
+			// being pending, then dropped: a card is a claim about a host, and
+			// "the browser was not connected" is not one. Recorded in the
+			// trace for `memory history`, where a human is reading for
+			// diagnostics rather than as learned knowledge about a site.
+			//
+			// sw_timeout is the case that makes this concrete: it times out
+			// against the tab's *previous* host, so keeping it put a failure
+			// on a card asserting that the wrong site times out.
+			if _, ok := commands[r.Envelope]; ok {
+				answered[r.Envelope] = true
+			}
+			continue
+		case KindResponse:
 			cmd, ok := commands[r.Envelope]
 			if !ok {
 				continue
 			}
+			answered[r.Envelope] = true
 			tab := tabKey(cmd.TabID)
 			if isLanding(cmd.Command) {
 				// The landing command's own response is what tells us the host.
@@ -362,7 +415,31 @@ func buildSegments(recs []TraceRecord, from int64) []*segment {
 			}
 		}
 	}
-	return out
+	return out, unansweredCommands(commands, answered)
+}
+
+// unansweredCommands is the window carried into the next pass: every command
+// this one still has no response for, bounded so a command whose response never
+// comes — a daemon killed between the two records — cannot accumulate for the
+// life of the process.
+func unansweredCommands(commands map[string]TraceRecord, answered map[string]bool) map[string]TraceRecord {
+	candidates := make([]TraceRecord, 0, len(commands))
+	for env, cmd := range commands {
+		if !answered[env] {
+			candidates = append(candidates, cmd)
+		}
+	}
+	if len(candidates) > maxPendingCommands {
+		// Keep the newest, so the window tracks current traffic rather than
+		// whatever arrived first.
+		sort.Slice(candidates, func(i, j int) bool { return candidates[i].AtMs > candidates[j].AtMs })
+		candidates = candidates[:maxPendingCommands]
+	}
+	pending := make(map[string]TraceRecord, len(candidates))
+	for _, cmd := range candidates {
+		pending[cmd.Envelope] = cmd
+	}
+	return pending
 }
 
 // commandLine is the absolute stream line of a call's command record, falling

@@ -26,6 +26,8 @@ type stubHook struct {
 func (h *stubHook) RecordCommand(string, string, string, int, map[string]any)      {}
 func (h *stubHook) RecordResult(string, string, string, int, core.ResponsePayload) {}
 
+func (h *stubHook) RecordRouterError(string, string, string, int, core.ResponsePayload) {}
+
 func (h *stubHook) TakeSiteNote(command, _ string, tabID int) string {
 	h.askedFor = append(h.askedFor, command)
 	h.askedTab = append(h.askedTab, tabID)

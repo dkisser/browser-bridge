@@ -76,6 +76,8 @@ type hostHook struct {
 
 func (h *hostHook) RecordCommand(string, string, string, int, map[string]any) {}
 
+func (h *hostHook) RecordRouterError(string, string, string, int, ResponsePayload) {}
+
 func (h *hostHook) RecordResult(_, command, host string, _ int, _ ResponsePayload) {
 	h.hosts = append(h.hosts, command+"="+host)
 }

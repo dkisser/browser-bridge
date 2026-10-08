@@ -1048,3 +1048,155 @@ func unescapedRefs(s string) []string {
 	}
 	return out
 }
+
+// A failure whose response crosses a pass boundary must still reach the card.
+//
+// buildSegments only knows the commands it read *this* pass. A response that
+// arrives after its command's pass finds no entry, hits the `continue`, and
+// takes the evidence with it: no segment, no card, and the records behind the
+// cursor forever. That is routine rather than exotic — Manager.loop runs a pass
+// on a 20s idle timer as well as on the wake signal, so any call slower than
+// that splits — and a failure is the one signal this package says cannot be
+// misread. The cold-start rule depends on it, since a failure is one of the two
+// ways a card comes into existence at all.
+func TestAFailureSurvivesAPassBoundary(t *testing.T) {
+	learn, stream, store := newLearner(t)
+
+	const host = "shop.example.com"
+	// The landing that tells the learner which site the tab is on.
+	nav := "nav-1"
+	if err := stream.Append(TraceRecord{Kind: KindCommand, AtMs: 1, Envelope: nav, Command: "navigate", TabID: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Append(TraceRecord{Kind: KindResponse, AtMs: 2, Envelope: nav, Command: "navigate", TabID: 1,
+		Outcome: OutcomeOK, Host: host}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The command lands in this pass; its response has not arrived yet.
+	const env = "click-1"
+	if err := stream.Append(TraceRecord{Kind: KindCommand, AtMs: 3, Envelope: env, Command: "click", TabID: 1,
+		Args: map[string]any{"selector": ".buy"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := learn.Run(); err != nil {
+		t.Fatalf("first pass: %v", err)
+	}
+	if _, ok := store.Get(host); ok {
+		t.Fatal("a card exists before the response arrived; the test is not testing the boundary")
+	}
+
+	// The response arrives after that pass ended. It carries the host, as
+	// RecordResult always does.
+	if err := stream.Append(TraceRecord{Kind: KindResponse, AtMs: 4, Envelope: env, Command: "click", TabID: 1,
+		Outcome: OutcomeError, ErrCode: "no_element", Host: host}); err != nil {
+		t.Fatal(err)
+	}
+	if err := learn.Run(); err != nil {
+		t.Fatalf("second pass: %v", err)
+	}
+
+	card, ok := store.Get(host)
+	if !ok {
+		t.Fatal("the failure taught nothing: the response was dropped at the pass boundary")
+	}
+	if len(card.Failures) == 0 {
+		t.Errorf("the card exists with no failure recorded: %+v", card)
+	}
+	found := false
+	for _, f := range card.Failures {
+		if f.Command == "click" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the click failure is not on the card: %+v", card.Failures)
+	}
+}
+
+// And the window is bounded: a command whose response never arrives must not
+// accumulate for the life of the process, and it must not stop the learner
+// making progress on everything after it.
+func TestThePendingWindowDoesNotGrowWithoutBound(t *testing.T) {
+	learn, stream, _ := newLearner(t)
+	for i := 0; i < maxPendingCommands+64; i++ {
+		if err := stream.Append(TraceRecord{
+			Kind: KindCommand, AtMs: int64(i + 1), Envelope: "orphan-" + string(rune('a'+i%26)) + string(rune('a'+i/26)),
+			Command: "click", TabID: 1,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := learn.Run(); err != nil {
+		t.Fatalf("pass: %v", err)
+	}
+	if got := len(learn.pending); got > maxPendingCommands {
+		t.Errorf("the pending window holds %d commands, over the %d bound", got, maxPendingCommands)
+	}
+}
+
+// A router-synthesized error must not become the site's failure.
+//
+// The failure tier is injected as "Observed to fail here (do not repeat)" — a
+// claim about the site — and these codes are claims about the control plane.
+// browser_offline means the browser was not connected; sw_timeout times out
+// against the tab's *previous* host, so keeping it asserted that the wrong site
+// times out. And a failure is one of the two ways a card is minted, so
+// transport noise created cards by itself: six clicks against an offline
+// browser wrote a Count: 6 failure into whatever host the tab was on.
+func TestARouterErrorNeverBecomesASiteFailure(t *testing.T) {
+	learn, stream, store := newLearner(t)
+	const host = "shop.example.com"
+
+	// Land on the site, so the tab has a host to misattribute to.
+	nav := "nav-1"
+	if err := stream.Append(TraceRecord{Kind: KindCommand, AtMs: 1, Envelope: nav, Command: "navigate", TabID: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Append(TraceRecord{Kind: KindResponse, AtMs: 2, Envelope: nav, Command: "navigate", TabID: 1,
+		Outcome: OutcomeOK, Host: host}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Six clicks the control plane answered itself.
+	for i := 0; i < 6; i++ {
+		env := "offline-" + string(rune('a'+i))
+		if err := stream.Append(TraceRecord{Kind: KindCommand, AtMs: int64(3 + i), Envelope: env, Command: "click", TabID: 1}); err != nil {
+			t.Fatal(err)
+		}
+		if err := stream.Append(TraceRecord{Kind: KindRouterError, AtMs: int64(10 + i), Envelope: env, Command: "click", TabID: 1,
+			Outcome: OutcomeError, ErrCode: "browser_offline", Host: host}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := learn.Run(); err != nil {
+		t.Fatalf("pass: %v", err)
+	}
+
+	if card, ok := store.Get(host); ok {
+		for _, f := range card.Failures {
+			if f.Signature == "browser_offline" {
+				t.Errorf("the site's card claims browser_offline fails here: %+v", f)
+			}
+		}
+		if len(card.Failures) > 0 {
+			t.Errorf("transport noise became site evidence: %+v", card.Failures)
+		}
+	}
+
+	// The records are still in the trace, which is where diagnostics belong.
+	recs, _, _, err := stream.ReadFrom(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var routerErrors int
+	for _, r := range recs {
+		if r.Kind == KindRouterError {
+			routerErrors++
+		}
+	}
+	if routerErrors != 6 {
+		t.Errorf("the trace holds %d router errors, want 6: they belong in the trace", routerErrors)
+	}
+}

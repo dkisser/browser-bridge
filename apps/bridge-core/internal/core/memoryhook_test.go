@@ -12,9 +12,25 @@ import (
 // recordingHook is a MemoryHook double: it captures what the router told it,
 // in order, so the wiring can be asserted without a real store.
 type recordingHook struct {
-	mu       sync.Mutex
-	commands []string
-	results  []string
+	mu           sync.Mutex
+	commands     []string
+	results      []string
+	routerErrors []string
+}
+
+// RecordRouterError keeps the two channels apart, because keeping them apart
+// is the thing under test.
+func (h *recordingHook) RecordRouterError(_, command, _ string, _ int, payload ResponsePayload) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.routerErrors = append(h.routerErrors, command+":"+payload.Error)
+}
+
+// routerErrorsSnapshot copies the synthesized-error channel under the lock.
+func (h *recordingHook) routerErrorsSnapshot() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]string(nil), h.routerErrors...)
 }
 
 func (h *recordingHook) RecordCommand(envelopeID, command, host string, tabID int, args map[string]any) {
@@ -146,8 +162,18 @@ func TestTabNewKeysItsHostOnTheTabItCreated(t *testing.T) {
 	}
 }
 
-// A router-generated failure is the most instructive kind — the agent asked a
-// browser that was not there — so it has to reach the store like any other.
+// A router-generated failure still reaches the store, but through its own
+// channel.
+//
+// It has to be recorded — the agent asked a browser that was not there, and
+// that belongs in the trace for a human reading `memory history`. It must not
+// be recorded as the *site's* failure: the failure tier is injected as
+// "Observed to fail here (do not repeat)", and browser_offline is a fact about
+// the control plane, not about whatever host the tab happened to be on. Six
+// clicks against an offline browser used to write
+// `FailureEntry{Signature:"browser_offline", Count:6}` into that host's card,
+// and because a failure is one of the two ways a card is minted, transport
+// noise created cards on its own.
 func TestRouterRecordsItsOwnSynthesizedErrors(t *testing.T) {
 	h := &recordingHook{}
 	t.Setenv("BB_HOME", t.TempDir())
@@ -166,8 +192,12 @@ func TestRouterRecordsItsOwnSynthesizedErrors(t *testing.T) {
 	}, sender)
 
 	_, results := h.snapshot()
-	if len(results) != 1 || results[0] != "click:browser_offline" {
-		t.Errorf("recorded results = %v, want [click:browser_offline]", results)
+	if len(results) != 0 {
+		t.Errorf("a router-synthesized error arrived as a site result: %v", results)
+	}
+	routed := h.routerErrorsSnapshot()
+	if len(routed) != 1 || routed[0] != "click:browser_offline" {
+		t.Errorf("router errors = %v, want [click:browser_offline]", routed)
 	}
 }
 

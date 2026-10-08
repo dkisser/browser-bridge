@@ -68,13 +68,20 @@ const (
 	TierProcedure = "procedure"
 )
 
-// SoftFailureThreshold is the result size at which a successful read is
-// recorded as a soft failure instead. MAX_READ_RESULT_CHARS in
-// packages/shared/src/constants.ts rejects reads past 100K, and ADR-0003's
-// incident was exactly this: `get_html` returned 420K characters of chrome
-// with no error raised, which "no error means success" would otherwise record
-// as a good procedure. Two thirds of the hard limit is where a read has already
-// stopped being an answer and started being a page dump.
+// SoftFailureThreshold is the size — in *characters of returned content* — at
+// which a successful read is recorded as a soft failure instead.
+// MAX_READ_RESULT_CHARS in packages/shared/src/constants.ts rejects reads past
+// 100K, and ADR-0003's incident was exactly this: `get_html` returned 420K
+// characters of chrome with no error raised, which "no error means success"
+// would otherwise record as a good procedure. Two thirds of the hard limit is
+// where a read has already stopped being an answer and started being a page
+// dump.
+//
+// Characters, not bytes, and reads only. Both halves were wrong: the gate
+// measured len(payload) bytes while this doc and the recorded message both said
+// characters, so a non-Latin read tripped it far below the intent; and it ran
+// on every command, so every screenshot's base64 data URL was filed as an
+// oversized read. See the call site in RecordResult.
 const SoftFailureThreshold = 60_000
 
 // TraceRecord is one line of the stream. The field names are the on-disk names;

@@ -83,12 +83,30 @@ type MemoryHook interface {
 	// facts.
 	RecordCommand(envelopeID, command, host string, tabID int, args map[string]any)
 
-	// RecordResult is the inbound half: the outcome, and for a snapshot the
-	// page's structural digest. A payload the router synthesized (browser
-	// offline, cannot_buffer, sw_timeout) is recorded like any other, because
-	// an agent asking a browser that is not there is exactly the kind of thing
-	// a card should remember.
+	// RecordResult is the inbound half: the outcome the *extension* reported,
+	// and for a snapshot the page's structural digest.
 	RecordResult(envelopeID, command, host string, tabID int, payload ResponsePayload)
+
+	// RecordRouterError is the inbound half for a payload the router
+	// synthesized itself — browser offline, cannot_buffer, sw_timeout.
+	//
+	// Separate from RecordResult because the two are claims about different
+	// things. A ResponsePayload from the extension is evidence about the page:
+	// "no such element here" is a fact about the site, which is what a Site
+	// card is for. A router-synthesized one is evidence about the control
+	// plane's own state: the browser was not connected, or the command could
+	// not be buffered. Recording them alike put six `browser_offline` results
+	// into the failure tier of whatever site the tab happened to be on, and
+	// that tier is injected as "Observed to fail here (do not repeat)" — a
+	// claim about a site whose controls work fine. sw_timeout is worse: it
+	// times out against the tab's *previous* host, so the card asserts that
+	// the wrong site times out. And because a failure is one of the two ways a
+	// card comes into existence, transport noise minted cards by itself.
+	//
+	// The distinction this preserves is the one ADR-0030 §1 demanded for the
+	// error *code*; this carries it in the record kind as well, so the trace
+	// keeps the diagnostics and the card keeps only what is about the site.
+	RecordRouterError(envelopeID, command, host string, tabID int, payload ResponsePayload)
 
 	// TakeSiteNote returns the text an adapter should append to the result it
 	// is about to show, or "" for nothing. It yields a card at most once per

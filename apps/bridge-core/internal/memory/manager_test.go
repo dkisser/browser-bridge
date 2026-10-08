@@ -293,3 +293,46 @@ func mustJSON(s string) string {
 	}
 	return string(b)
 }
+
+// The soft-failure gate has to measure what its own constant describes.
+//
+// It read len(p.Data) — JSON bytes — while the constant, its doc and the
+// recorded message all spoke in characters. Two consequences, both silent:
+//
+//   - A read in a non-Latin script tripped it far below the intent. 30,000 CJK
+//     characters is 90,011 bytes against a 60,000-*character* threshold, so
+//     every agent working in CJK or Japanese permanently learned "reads fail
+//     here" — and because mergeProcedure refuses any segment carrying a
+//     failure, the working sequence was never learned either.
+//   - It ran on every command, not the reads it is about, so every screenshot
+//     was filed as oversized_result. A screenshot's base64 data URL is always
+//     past the limit, so no screenshot could ever be recorded as a success, in
+//     the tier ADR-0018 calls the one signal it trusts most.
+func TestTheSoftFailureGateMeasuresReadCharacters(t *testing.T) {
+	m := newTestManager(t, "b-1")
+	recordNavigate(t, m, "e1", "https://news.example.com/", 1)
+
+	// 30,000 CJK characters: three bytes each, so 90KB and well under the
+	// 60,000-character intent.
+	cjk := strings.Repeat("読", 30_000)
+	m.RecordCommand("e2", "gettext", "news.example.com", 1, map[string]any{"selector": "body"})
+	m.RecordResult("e2", "gettext", "news.example.com", 1,
+		core.ResponsePayload{Status: "ok", Data: json.RawMessage(`{"text":"` + cjk + `"}`)})
+
+	// A screenshot is large by construction and is not a page dump.
+	m.RecordCommand("e3", "screenshot", "news.example.com", 1, nil)
+	m.RecordResult("e3", "screenshot", "news.example.com", 1,
+		core.ResponsePayload{Status: "ok", Data: json.RawMessage(`{"dataUrl":"data:image/png;base64,` + strings.Repeat("A", 90_000) + `"}`)})
+
+	recs, _, _, err := m.Stream().ReadFrom(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range recs {
+		if r.Outcome != OutcomeSoft {
+			continue
+		}
+		t.Errorf("%s was recorded as a soft failure (%s): a %s-sized result is not a page dump",
+			r.Command, r.ErrCode, map[string]string{"gettext": "30,000-character", "screenshot": "90KB"}[r.Command])
+	}
+}
