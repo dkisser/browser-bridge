@@ -8,6 +8,7 @@
     "apps/extension/src/**/*",
     "apps/extension/tests/**/*",
     "apps/extension/vite.config.ts",
-    "packages/shared/tests/**/*"
+    "packages/shared/tests/**/*",
+    "scripts/**/*"
   ]
 }

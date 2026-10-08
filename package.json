@@ -16,6 +16,8 @@
     "build:tarball": "bash .github/scripts/build-tarball.sh",
     "build:installer": "bash .github/scripts/build-installer.sh",
     "cli": "go -C apps/bridge-core run ./cmd/bridge",
+    "install:local": "bun scripts/local-install.ts",
+    "test:smoke": "bun scripts/smoke.ts",
     "fmt": "biome check --write . && gofmt -w apps/bridge-core",
     "lint": "biome check . && ! gofmt -l apps/bridge-core | grep . && go -C apps/bridge-core vet ./... && cd apps/bridge-core && golangci-lint run",
     "check": "bun run lint && bun run type-check && bun run test",
