@@ -233,6 +233,78 @@ function waitForTabComplete(
   });
 }
 
+// How long a history navigation is given to *start* before the handler accepts
+// the tab's current URL as the answer.
+//
+// A back or forward with no history entry never navigates, so the tab stays
+// exactly where it was and no 'loading' event ever arrives. Waiting out the
+// full navigation budget for that would turn an ordinary no-op into a stall.
+// The distinction is observable in one direction only: seeing the tab go to
+// 'loading' proves a navigation is in flight and buys the full budget, while a
+// tab still sitting at 'complete' on the URL it started on gets only this
+// grace. Getting it wrong in the lenient direction returns the previous URL,
+// which is what the handler did before it reported anything at all — never a
+// wrong-but-confident answer about a page that moved.
+const HISTORY_NAV_GRACE_MS = 300;
+
+/**
+ * Settle a history navigation (goBack / goForward), the one landing whose
+ * destination the caller cannot name in advance.
+ *
+ * navigate hands waitForTabComplete the target URL; there is no equivalent
+ * here. The extension still has to answer with the URL that resulted, because
+ * the control plane files a landing under that URL and keeps the previous
+ * site's card armed when the answer names none — so an `{ok: true}` reply left
+ * the tab attributed to the site the agent had just left, and the next
+ * snapshot recorded a healthy card as stale.
+ *
+ * Resolves rather than rejects on timeout: the caller reads the tab either
+ * way, and a navigation that did not happen is a no-op rather than a failure
+ * worth surfacing.
+ */
+function settleHistoryNav(
+  tabId: number,
+  before: string | undefined,
+  timeout: number,
+): Promise<void> {
+  return new Promise<void>((resolve) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      chrome.tabs.onUpdated.removeListener(listener);
+      resolve();
+    };
+    const listener = (
+      updatedTabId: number,
+      changeInfo: chrome.tabs.TabChangeInfo,
+    ) => {
+      if (updatedTabId !== tabId) return;
+      if (changeInfo.status === 'loading') {
+        // A navigation is definitely under way; it now gets the real budget.
+        clearTimeout(timer);
+        timer = setTimeout(finish, timeout);
+        return;
+      }
+      if (changeInfo.status === 'complete') finish();
+    };
+    timer = setTimeout(finish, HISTORY_NAV_GRACE_MS);
+    chrome.tabs.onUpdated.addListener(listener);
+    chrome.tabs
+      .get(tabId)
+      .then((current) => {
+        if (current.status === 'complete' && current.url !== before) {
+          finish();
+        }
+      })
+      .catch(() => {
+        // Tab lookup failed; rely on the event listener and the grace timer.
+      });
+  });
+}
+
 // assertTakeoverUnchanged re-reads policy state and refuses to proceed if
 // Takeover was engaged after applyPolicyGate allowed the command.
 //
@@ -403,13 +475,27 @@ export async function handleCommand(
       return { url: updatedTab.url, title: updatedTab.title };
     }
 
+    // goBack, goForward and refresh are landing commands: the control plane
+    // records the site a tab is on from what these answer with, and keeps the
+    // previous site's card armed when the answer names no site. They used to
+    // answer `{ok: true}`, so a back out of one site into another re-armed the
+    // card for the site the agent had left, discarded its digest, and the next
+    // snapshot reported that healthy card as stale. Answering with the URL
+    // that resulted is the same contract navigate and wait:navigation keep.
     case 'goBack': {
       if (typeof tabId !== 'number') {
         throw new Error('Missing required tabId');
       }
       const tab = tabId;
+      const before = (await chrome.tabs.get(tab)).url;
       await chrome.tabs.goBack(tab);
-      return { ok: true };
+      await settleHistoryNav(
+        tab,
+        before,
+        (params.timeout as number) || DEFAULT_NAV_TIMEOUT_MS,
+      );
+      const t = await chrome.tabs.get(tab);
+      return { url: t.url, title: t.title };
     }
 
     case 'goForward': {
@@ -417,8 +503,15 @@ export async function handleCommand(
         throw new Error('Missing required tabId');
       }
       const tab = tabId;
+      const before = (await chrome.tabs.get(tab)).url;
       await chrome.tabs.goForward(tab);
-      return { ok: true };
+      await settleHistoryNav(
+        tab,
+        before,
+        (params.timeout as number) || DEFAULT_NAV_TIMEOUT_MS,
+      );
+      const t = await chrome.tabs.get(tab);
+      return { url: t.url, title: t.title };
     }
 
     case 'refresh': {
@@ -427,7 +520,11 @@ export async function handleCommand(
       }
       const tab = tabId;
       await chrome.tabs.reload(tab);
-      return { ok: true };
+      // No settle here: a reload does not change the URL, so there is no
+      // destination to wait for — only the page behind it, which the control
+      // plane learns from the next snapshot rather than from this answer.
+      const t = await chrome.tabs.get(tab);
+      return { url: t.url, title: t.title };
     }
 
     case 'tab:list': {

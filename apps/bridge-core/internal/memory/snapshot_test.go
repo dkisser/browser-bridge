@@ -223,6 +223,29 @@ func TestSplitPageLine(t *testing.T) {
 	}
 }
 
+// A page controls both halves of the prefix: `document.title` and
+// `location.href`. When the snapshot's body is empty the renderer emits
+// `prefix.trimEnd()`, which strips the trailing space and leaves the line
+// ending in a bare `|`. The loop reads rest[i+1] to test for the space after
+// the separator, so a separator on the last byte walked off the end of the
+// slice — and this runs on every snapshot, inside a WS read-loop goroutine
+// that has no recover().
+func TestSplitPageLineSeparatorOnLastByte(t *testing.T) {
+	for _, line := range []string{
+		"Page: A | B",
+		"Page: Gmail |",
+		"Page: A |",
+		"Page: | https://n.test/",
+		"Page: |",
+	} {
+		url, title := splitPageLine(line) // must not panic
+		if line == "Page: A | B" && (url != "B" || title != "A") {
+			t.Errorf("splitPageLine(%q) = (%q, %q), want (B, A)", line, url, title)
+		}
+		_ = title
+	}
+}
+
 // The MCP schema allows a 100,000-character pseudo-tree, which is thousands of
 // nodes. Every snapshot is written to a log that is never rotated, so the digest
 // is capped. Without this a busy session writes hundreds of KB per snapshot.

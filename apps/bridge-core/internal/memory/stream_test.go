@@ -431,3 +431,78 @@ func TestStreamRotatesWhenItIsConsumedAndOverTheCeiling(t *testing.T) {
 		t.Errorf("next = %d, want 2", next)
 	}
 }
+
+// A restarted daemon has to find the generation the previous process rotated
+// out of the way.
+//
+// `rotated` was only ever assigned inside Rotate, which runs from exactly one
+// place: Manager.New at startup. So a stream opened by a *later* process never
+// learns the previous generation exists. Two things break and neither is loud:
+// ReadFrom builds a one-element path list, so the retained generation — the
+// audit trail ADR-0020 calls the point of a single stream — is invisible; and
+// the persisted cursor is a line number in the *combined* numbering, so after
+// the restart it indexes a file that no longer contains those lines, clamps to
+// itself, and the learner stops on `next <= from` forever. Every later command
+// is recorded and never learned, and the only recovery is deleting
+// learner.cursor by hand.
+//
+// Rotation is a property of the directory, not of whichever process happened to
+// be holding the file.
+func TestOpenStreamFindsTheGenerationAPriorProcessRotated(t *testing.T) {
+	dir := t.TempDir()
+	first, err := OpenStream(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Past the ceiling in one enormous record, so the test does not have to
+	// write 16MB of lines to get a rotation.
+	if appendErr := first.Append(TraceRecord{
+		Kind: KindCommand, AtMs: 1, Envelope: "e1", Command: "gettext",
+		Args: map[string]any{"selector": strings.Repeat("x", streamRotateBytes)},
+	}); appendErr != nil {
+		t.Fatal(appendErr)
+	}
+	// The learner has to have caught up first: a rotation while records sit
+	// behind the cursor would renumber them out from under it.
+	if _, next, _, readErr := first.ReadFrom(0); readErr != nil {
+		t.Fatal(readErr)
+	} else if next != 1 {
+		t.Fatalf("ReadFrom(0) next = %d, want 1", next)
+	}
+	rotated, err := first.Rotate(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rotated {
+		t.Fatal("the first process did not rotate")
+	}
+	if err = first.Append(TraceRecord{Kind: KindCommand, AtMs: 2, Envelope: "e2", Command: "click"}); err != nil {
+		t.Fatal(err)
+	}
+	if err = first.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// The restart.
+	second, err := OpenStream(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = second.Close() })
+
+	recs, next, _, err := second.ReadFrom(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 2 {
+		t.Fatalf("after the restart ReadFrom(0) returned %d records, want 2 (%+v)", len(recs), recs)
+	}
+	if recs[0].Envelope != "e1" || recs[1].Envelope != "e2" {
+		t.Errorf("records = %q, %q; want e1, e2", recs[0].Envelope, recs[1].Envelope)
+	}
+	// The combined numbering has to survive the restart, or a cursor persisted
+	// by the previous process would point into the wrong file.
+	if next != 2 {
+		t.Errorf("next = %d, want 2", next)
+	}
+}

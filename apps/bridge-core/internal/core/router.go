@@ -312,6 +312,20 @@ func (r *Router) recordResult(envelope Envelope, call pendingCall) {
 
 // hostAfter returns the host the given call leaves its tab on, updating the
 // Router's own view when the call was a landing that named a site.
+//
+// A landing that names no site reports "" rather than the tab's previous host.
+// The two are different facts and conflating them is what made goBack,
+// goForward and refresh — which the extension answers with a bare {ok:true} —
+// look like a landing on the site the tab had already left. RecordResult takes
+// its re-arm-and-invalidate branch on any landing with a non-empty host, so
+// handing back the stale one re-armed the old card and nil'd lastDigest for a
+// page the agent had left: the next snapshot then verified the old card
+// against the new page, called most entries missing, and recorded a healthy
+// card as stale. The "redesign that never happened" the guard above it exists
+// to prevent, defeated from the other side.
+//
+// "" is also the honest answer for a landing on chrome:// or about:blank,
+// which genuinely names no site.
 func (r *Router) hostAfter(tab int, command string, payload ResponsePayload) string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -319,9 +333,12 @@ func (r *Router) hostAfter(tab int, command string, payload ResponsePayload) str
 		tab = 0
 	}
 	if IsLandingCommand(command) {
-		if h := LandingHost(payload); h != "" {
-			r.tabHost[tab] = h
+		h := LandingHost(payload)
+		if h == "" {
+			return ""
 		}
+		r.tabHost[tab] = h
+		return h
 	}
 	return r.tabHost[tab]
 }

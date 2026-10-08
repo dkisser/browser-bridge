@@ -79,7 +79,31 @@ func OpenStream(dir string) (*Stream, error) {
 			s.lastByte = last
 		}
 	}
+	// Adopt a generation a *previous* process rotated out of the way.
+	//
+	// Rotation is a property of the directory, not of whichever process
+	// happened to be holding the file, and Rotate only ever ran from the
+	// daemon's own startup path. So a stream opened by a later process saw
+	// neither the retained generation nor the combined line numbering the
+	// cursor is written in: ReadFrom built a one-element path list, and the
+	// persisted cursor indexed a file that no longer held those lines, clamped
+	// to itself, and froze the learner for the life of the process. Discovering
+	// the sibling here is what makes a restart pick up where the last one left
+	// off.
+	s.rotated = existingRotation(dir)
 	return s, nil
+}
+
+// existingRotation reports the retained generation in dir, or "" if there is
+// none. A stat error of any kind reads as "no rotation": the active stream is
+// still perfectly usable without it, so a failure to look must not be a
+// failure to open.
+func existingRotation(dir string) string {
+	rotated := filepath.Join(dir, rotatedStreamName)
+	if info, err := os.Stat(rotated); err != nil || info.IsDir() {
+		return ""
+	}
+	return rotated
 }
 
 func readLastByte(path string) (byte, error) {

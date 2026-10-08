@@ -147,9 +147,14 @@ export interface WaitElementResult {
 
 export interface CommandResultMap {
   navigate: UrlTitleResult;
-  goBack: OkResult;
-  goForward: OkResult;
-  refresh: OkResult;
+  // Landing commands answer with the URL that resulted, not a bare ok. The
+  // control plane records a tab's site from these, and keeps the previous
+  // site's card armed when a landing names no site — so `{ok: true}` left a
+  // tab attributed to the site the agent had just left, and the next snapshot
+  // reported that card as stale. Matches navigate and wait:navigation.
+  goBack: UrlTitleResult;
+  goForward: UrlTitleResult;
+  refresh: UrlTitleResult;
   'tab:list': TabListResultItem[];
   'tab:new': TabNewResult;
   'tab:close': OkResult;

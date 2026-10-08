@@ -231,16 +231,27 @@ func LandingHost(payload ResponsePayload) string {
 // LandedTabID reports which tab a command left the agent on, when that is not
 // the tab the command was addressed to.
 //
-// Only tab:new moves the answer. It is the one command sent without a target
-// tab — it is what opens the next one — and it answers with the tab it created
-// (background.ts returns {id, url}). Keying that result under the addressed tab
-// put a real tab's host under key 0, which nothing ever asks for, and left the
-// tab that actually exists with no host at all. The cost was concrete: the
-// agent's next snapshot on that tab resolved no host, so the ADR-0019 second
-// injection point — the only one that hands back resolved refs — never fired,
-// and the learner attributed the snapshot to no site.
+// The tab-opening and tab-switching commands both move the answer, and both
+// say which tab in the result body (background.ts returns {id, url, title}).
+// tab:new is the one command sent without a target tab — it is what opens the
+// next one. tab:switch is sent *to* the current tab and carries its target in
+// params.tabId, which the envelope's top-level tabId does not reflect: the CLI
+// builds `CommandPayload{Command, TabID: g.tab, Params: params}`, so
+// pendingCallFrom sees the global default (0 unless --tab was passed) and
+// nothing else looks at params.
+//
+// Keying either result under the addressed tab put a real tab's host under key
+// 0, which nothing ever asks for, and left the tab that actually exists with no
+// host at all. The cost was concrete: the agent's next snapshot on that tab
+// resolved no host, so the ADR-0019 second injection point — the only one that
+// hands back resolved refs — never fired, and the learner attributed the
+// snapshot to no site. For tab:switch it also collided every switched-to tab
+// on tab 0's single tabState.
 func LandedTabID(command string, payload ResponsePayload, addressed int) int {
-	if command != "tab:new" || len(payload.Data) == 0 {
+	if command != "tab:new" && command != "tab:switch" {
+		return addressed
+	}
+	if len(payload.Data) == 0 {
 		return addressed
 	}
 	var out struct {

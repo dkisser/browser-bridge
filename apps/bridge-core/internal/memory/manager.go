@@ -586,6 +586,14 @@ func contentSize(command string, data json.RawMessage) int {
 // splitPageLine reads the `Page: <title> | <url>` prefix the snapshot renderer
 // puts on the first line (SnapshotMeta in packages/shared/src/snapshot.ts).
 // The split is from the right because a title can contain " | ".
+//
+// Both halves are page-controlled, and the loop below has to be bounded on the
+// right as carefully as on the left: it reads rest[i+1] to test for the space
+// after a separator, so a separator sitting on the last byte walked off the end
+// of the slice. That is not exotic — when a snapshot's body is empty the
+// renderer emits `prefix.trimEnd()`, which strips the trailing space and leaves
+// the line ending in a bare `|`. This runs on every snapshot, in a WS read-loop
+// goroutine, so a page-controlled title could take the whole daemon with it.
 func splitPageLine(snapshot string) (url, title string) {
 	line := snapshot
 	if i := indexByte(snapshot, '\n'); i >= 0 {
@@ -596,7 +604,9 @@ func splitPageLine(snapshot string) (url, title string) {
 		return "", ""
 	}
 	rest := line[len(prefix):]
-	for i := len(rest) - 1; i >= 1; i-- {
+	// The last index a separator can sit at is len(rest)-2, because the
+	// candidate is rest[i] and the space that must follow it is rest[i+1].
+	for i := len(rest) - 2; i >= 1; i-- {
 		if rest[i] == '|' && rest[i-1] == ' ' && rest[i+1] == ' ' {
 			return rest[i+2:], rest[:i-1]
 		}

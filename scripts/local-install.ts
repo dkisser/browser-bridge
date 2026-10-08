@@ -20,6 +20,8 @@
  */
 import { $ } from 'bun';
 
+import { runningStatusLine, stoppedStatus } from './service-status';
+
 const REPO_ROOT = new URL('..', import.meta.url).pathname;
 
 const HOME_DIR = process.env.HOME ?? '';
@@ -175,7 +177,7 @@ const waitForStop = async (timeoutMs = 10_000): Promise<boolean> => {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const { code, out } = await bridgeRun(['service', 'status']);
-    if (code !== 0 || !/running/.test(out)) return true;
+    if (stoppedStatus(code, out)) return true;
     await Bun.sleep(250);
   }
   return false;
@@ -192,9 +194,9 @@ const waitForStop = async (timeoutMs = 10_000): Promise<boolean> => {
 const waitForStart = async (timeoutMs = 15_000): Promise<string | null> => {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const { out } = await bridgeRun(['service', 'status']);
-    const line = out.split('\n').find((l) => /running/.test(l));
-    if (line) return line.trim();
+    const { code, out } = await bridgeRun(['service', 'status']);
+    const line = runningStatusLine(code, out);
+    if (line) return line;
     await Bun.sleep(250);
   }
   return null;
