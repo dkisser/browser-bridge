@@ -14,34 +14,31 @@ Browser Bridge lets any Agent control a real Chrome browser. The browser keeps t
 
 Use it for anything that requires a live browser: search and navigation, forms, clicking, reading or scraping page content, screenshots, tab management, site-specific workflows ("open Gmail and mark GitHub notifications as read"). Do not use it for pure coding tasks with no browser involved.
 
-## Access: MCP first, CLI as fallback
+## Access: CLI first, MCP as an optional adapter
 
-**Prefer the browser-bridge MCP tools.** They are the primary interface — one tool per job, typed arguments, structured results. The MCP server is served by the local services over Streamable HTTP at `http://localhost:3003/mcp`.
+**The `bridge` CLI is the primary interface**, and this skill is written for it: one command per job, `--json` for structured output, stateless calls. The CLI also owns service management, which no other interface exposes: `bridge service up` / `down` / `restart` / `status` / `logs [name]` / `enable` / `disable` / `update [version]` / `doctor` / `version`.
 
-**Fall back to the `bridge` CLI** only when:
+**If your client has the browser-bridge MCP server connected** (`http://localhost:3003/mcp`), its tools are the same commands in typed form — and they get one extra the CLI cannot receive in-band: learned site cards are injected automatically into `navigate` and the following `snapshot` on known hosts (see "Site memory" below). CLI callers pull the same card with `bridge memory show <host>`.
 
-- the MCP tools are not connected in this environment, or
-- the job is service management, which MCP does not expose: `bridge service up` / `down` / `restart` / `status` / `logs [name]` / `enable` / `disable` / `update [version]` / `doctor` / `version`.
-
-Both interfaces drive the same browser; the CLI equivalents in the tables below let you translate any MCP call.
+Both interfaces drive the same browser; the tables below map every command between the two.
 
 ## Before any browser command
 
-1. **Services running?** MCP cannot start services — use the CLI:
+1. **Services running?** Use the CLI:
    ```bash
    bridge service up
    ```
    If already running, `bridge service up` reports that and does nothing harmful.
-2. **Pick a browser**: MCP `list_browsers`. No browsers → ask the user to load and authenticate the extension. Several → ask which one, then `set_browser(browserId=...)`. CLI fallback: `bridge browser:list`, then pass `--browser <id>` to every command.
-3. **Pick a tab**: MCP `tab_list`, then use the reported `tab_id` — never guess. CLI fallback: `bridge --browser <id> tab:list`, then `--tab <id>` on every page-level command.
+2. **Pick a browser**: `bridge browser:list`. No browsers → ask the user to load and authenticate the extension. Several → ask which one, then pass `--browser <id>` to every command. (MCP: `list_browsers`, then `set_browser(browserId=...)`.)
+3. **Pick a tab**: `bridge --browser <id> tab:list`, then `--tab <id>` on every page-level command — never guess a tab id. (MCP: `tab_list`.)
 
-## Tool reference (MCP → CLI)
+## Command reference (CLI ⇄ MCP)
 
-Every tab-scoped tool takes `tab_id: number` (MCP) / `--tab <id>` (CLI), plus an optional `timeout_ms` / `--timeout <ms>` (default 10000).
+Every browser command exists in both interfaces; examples in this skill use the CLI. Every tab-scoped command takes `--tab <id>` (CLI) / `tab_id: number` (MCP), plus an optional `--timeout <ms>` / `timeout_ms` (default 10000).
 
 ### Browser and tabs
 
-| MCP tool | CLI fallback | Notes |
+| MCP tool | CLI equivalent | Notes |
 |---|---|---|
 | `list_browsers` | `bridge browser:list` | call first |
 | `set_browser` | `--browser <id>` flag | pin one browser when several are online |
@@ -51,14 +48,14 @@ Every tab-scoped tool takes `tab_id: number` (MCP) / `--tab <id>` (CLI), plus an
 
 ### Navigation
 
-| MCP tool | CLI fallback |
+| MCP tool | CLI equivalent |
 |---|---|
 | `navigate(url)` | `navigate <url>` |
 | `go_back` / `go_forward` / `refresh` | `goBack` / `goForward` / `refresh` |
 
 ### Page interaction
 
-| MCP tool | CLI fallback |
+| MCP tool | CLI equivalent |
 |---|---|
 | `click(selector)` | `click <selector>` |
 | `type(selector, text, submit?)` | `type <selector> <text>` |
@@ -70,7 +67,7 @@ Every tab-scoped tool takes `tab_id: number` (MCP) / `--tab <id>` (CLI), plus an
 
 ### Reading the page
 
-| MCP tool | CLI fallback |
+| MCP tool | CLI equivalent |
 |---|---|
 | `snapshot(selector?, filter?, max_chars?)` | `snapshot [--selector <sel>] [--filter <interactive\|full>] [--max-chars <n>]` |
 | `get_text(selector)` | `gettext <selector>` |
@@ -84,7 +81,19 @@ Every tab-scoped tool takes `tab_id: number` (MCP) / `--tab <id>` (CLI), plus an
 
 Create a fresh tab per workflow with `tab_new` (CLI: `tab:new`) and pass its `tab_id` to every page-level call; close it with `tab_close` when done. This keeps the user's active tab untouched and lets you run several tab workflows in parallel.
 
+Opening your own tab does **not** buy you a quieter run. Approval is keyed on the **origin**, not on tab ownership: page commands need the origin approved or a one-shot origin grant, and an agent tab changes nothing there. Only two commands are tab-scoped — `tab_close` on a tab you did not open, and `screenshot` on a tab that is not the visible one in its window — and both pause the same way. So open a tab for the reasons above (parallelism, not disturbing the user), not expecting it to be the thing that stops the prompts.
+
 Tabs opened via `tab_new` are automatically grouped per window into the 'browser-bridge' tab group (orange) — purely visual organization, no action or judgment needed from you, and the user's own tabs are never grouped or moved. `tab_list` reports `inAgentGroup: true` for each tab in that group.
+
+## Site memory: pull the card before you explore or code
+
+The control plane learns how each site works from what agents actually do and keeps a per-host *site card*: which containers hold the content, which selector shapes have failed there, which sequences have worked.
+
+- **MCP path**: the card is injected automatically into the `navigate` result and the first `snapshot` after landing, labelled `learned site patterns`. Nothing to do. The guide's prose is not injected, but the landing tells you when one exists — a `[site guide]` line carrying the file's path. Read that file when the task needs the why; skip it when the card suffices.
+- **CLI path**: pull it explicitly right after landing on a host: `bridge memory show <host> --json`. A `no card for <host>` answer is normal — continue without it. When a curated **site guide** exists for the host, the same command prints it after the card, labelled `[site guide]` — layout, gotchas, and why steps are ordered, written by the human (or a previous agent at the human's request). A successful `navigate`/`tab:new` also prints the guide's path as a one-line pointer, so skipping the pull still leaves the door visible.
+- **Before writing a routine** (a saved multi-step script for a host — see the `browser-bridge-memory` skill): always pull the card *first*, at coding time, so selectors and layout come from memory instead of guesses. At coding time no `navigate` has happened yet, so nothing will be injected — this pull is the only way to get it.
+
+A card is advice about where to look first, never ground truth: sites change, and a wrong card costs a call, not correctness. Confirm against a live `snapshot` before acting. The same holds for a guide — if it contradicts the live page, the page wins; report the mismatch instead of following the artifact.
 
 ## Snapshot first: pick the follow-up by goal
 

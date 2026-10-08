@@ -190,7 +190,10 @@ func (s *MCPServer) executeSnapshot(ctx context.Context, req *mcp.CallToolReques
 		truncated = " | truncated"
 	}
 	stats := fmt.Sprintf("[%d/%d nodes | tier=%d%s]", data.NodesEmitted, data.NodesTotal, data.Tier, truncated)
-	return toolText(data.Snapshot + "\n\n" + stats), nil, nil
+	// The snapshot is the second injection point (ADR-0019): the card's
+	// predicates are checked against exactly this page, on a call that was
+	// going to happen anyway.
+	return toolText(appendSiteNote(data.Snapshot+"\n\n"+stats, result)), nil, nil
 }
 
 type screenshotArgs struct {

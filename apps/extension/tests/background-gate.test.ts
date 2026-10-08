@@ -33,6 +33,12 @@ const queriedTabs: unknown[] = [];
 const tabStatuses = new Map<number, string>();
 // URLs staged by chrome.tabs.update, committed when the document loads.
 const pendingNavUrl = new Map<number, string>();
+// Where a goBack / goForward will land. Absent means the history move has no
+// entry and therefore navigates nowhere.
+const historyTarget = new Map<number, string>();
+// Makes the mock's goBack announce 'loading' while the call is still in
+// flight, which is what a real history move does.
+let fireLoadingDuringHistoryCall = false;
 // Live onUpdated listener registry, so a test can fire the event that a real
 // navigation produces — and assert the handler removes it again.
 let onUpdatedListeners: ((
@@ -269,6 +275,30 @@ beforeAll(async () => {
         if (props.url !== undefined) pendingNavUrl.set(tabId, props.url);
         return { id: tabId, url: tabUrls.get(tabId), windowId: 1 };
       },
+      // History moves are modelled the same way tabs.update is: the call
+      // *initiates* a navigation and the URL changes when the new document
+      // commits at status==='complete'. historyTarget is what the history
+      // move will land on; leaving it undefined models a back/forward with no
+      // history entry, where nothing navigates at all.
+      goBack: async (tabId: number) => {
+        if (historyTarget.has(tabId))
+          pendingNavUrl.set(tabId, historyTarget.get(tabId) as string);
+        // A real chrome.tabs.goBack initiates the navigation, so the tab goes
+        // to 'loading' while the call is still in flight — before the awaiting
+        // microtask resumes. Firing it synchronously here is what makes the
+        // listener's attachment order observable.
+        if (fireLoadingDuringHistoryCall) {
+          fireTabUpdated(tabId, { status: 'loading' });
+        }
+      },
+      goForward: async (tabId: number) => {
+        if (historyTarget.has(tabId))
+          pendingNavUrl.set(tabId, historyTarget.get(tabId) as string);
+      },
+      reload: async (tabId: number) => {
+        // A reload keeps the URL; it only puts the tab back into 'loading'.
+        tabStatuses.set(tabId, 'loading');
+      },
       sendMessage: async (_tabId: number, message: Record<string, unknown>) => {
         if (message.type === 'ping') {
           // Failing the first N pings is how a test reaches the *injection*
@@ -384,6 +414,8 @@ beforeEach(() => {
   queriedTabs.length = 0;
   tabStatuses.clear();
   pendingNavUrl.clear();
+  historyTarget.clear();
+  fireLoadingDuringHistoryCall = false;
   onUpdatedListeners = [];
   badgeShouldFail = false;
   badgeTextUpdates = 0;
@@ -1133,6 +1165,124 @@ describe('navigate waits for completion without losing the event', () => {
     fireTabUpdated(1, { status: 'complete' });
     const result = await pending;
     expect(result).toEqual({ url: URL, title: undefined });
+  });
+});
+
+// goBack, goForward and refresh are landing commands: the control plane
+// records a tab's site from what they answer with. They used to answer
+// `{ok: true}`, so a back out of one site into another left the tab filed
+// under the site the agent had just left — the previous card stayed armed and
+// its digest was discarded, and the next snapshot reported that healthy card
+// as stale. The control plane's own guard cannot catch this from the other
+// side; the answer has to name the site.
+describe('history landings answer with the URL that resulted', () => {
+  beforeEach(() => {
+    store.set('policyState', {
+      takeover: false,
+      origins: { 'https://example.com': 'always' },
+    });
+  });
+
+  it('reports where goBack landed', async () => {
+    tabUrls.set(1, 'https://example.com/second');
+    tabStatuses.set(1, 'complete');
+    historyTarget.set(1, 'https://example.com/first');
+
+    const pending = handleCommand(makeCommand('goBack', 1, {}));
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Still moving: the history call has not committed yet.
+    fireTabUpdated(1, { status: 'loading' });
+    fireTabUpdated(1, { status: 'complete' });
+
+    expect(await pending).toEqual({
+      url: 'https://example.com/first',
+      title: undefined,
+    });
+    expect(onUpdatedListeners).toHaveLength(0);
+  });
+
+  it('reports where goForward landed', async () => {
+    tabUrls.set(1, 'https://example.com/first');
+    tabStatuses.set(1, 'complete');
+    historyTarget.set(1, 'https://example.com/second');
+
+    const pending = handleCommand(makeCommand('goForward', 1, {}));
+    await new Promise((r) => setTimeout(r, 0));
+    fireTabUpdated(1, { status: 'complete' });
+
+    expect(await pending).toEqual({
+      url: 'https://example.com/second',
+      title: undefined,
+    });
+  });
+
+  it('reports the same URL for a refresh, without waiting for the page', async () => {
+    // A reload changes the page behind the URL, not the URL. The control
+    // plane learns the new page from the next snapshot, so there is nothing
+    // here to wait for — and a wait would stall every refresh.
+    tabUrls.set(1, 'https://example.com/page');
+    tabStatuses.set(1, 'complete');
+
+    const result = await handleCommand(makeCommand('refresh', 1, {}));
+
+    expect(result).toEqual({
+      url: 'https://example.com/page',
+      title: undefined,
+    });
+    expect(onUpdatedListeners).toHaveLength(0);
+  });
+
+  it('hears the navigation start even though the call is still in flight', async () => {
+    // The listener has to be attached *before* the history call is issued.
+    // chrome.tabs.goBack resolves as soon as the move is initiated, so the
+    // 'loading' event can fire before the awaiting microtask resumes; a
+    // listener attached afterwards missed it, nothing re-armed the timer, and
+    // the 300ms grace expired with chrome.tabs.get still returning the URL the
+    // tab was on before — which the control plane then records as a landing on
+    // the site the agent just left.
+    tabUrls.set(1, 'https://example.com/second');
+    tabStatuses.set(1, 'complete');
+    historyTarget.set(1, 'https://example.com/first');
+    fireLoadingDuringHistoryCall = true;
+
+    let settled: unknown = null;
+    const pending = handleCommand(makeCommand('goBack', 1, {})).then((v) => {
+      settled = v;
+      return v;
+    });
+
+    // Well past the grace, nowhere near the budget: a handler that missed the
+    // event has already answered by now, with the old URL.
+    await new Promise((r) => setTimeout(r, 900));
+    expect(settled).toBeNull();
+
+    // The move completes, and the answer is the URL it landed on.
+    fireTabUpdated(1, { status: 'complete' });
+    expect(await pending).toEqual({
+      url: 'https://example.com/first',
+      title: undefined,
+    });
+  });
+
+  it('does not stall when the history move has no entry to go to', async () => {
+    // No historyTarget: the tab does not move and no 'loading' event ever
+    // arrives. The answer is still the tab's own URL, and it has to arrive
+    // without waiting out the full navigation budget.
+    tabUrls.set(1, 'https://example.com/only');
+    tabStatuses.set(1, 'complete');
+
+    const started = Date.now();
+    const result = await handleCommand(makeCommand('goBack', 1, {}));
+    const elapsed = Date.now() - started;
+
+    expect(result).toEqual({
+      url: 'https://example.com/only',
+      title: undefined,
+    });
+    // The grace is deliberately short; the full budget is 30s.
+    expect(elapsed).toBeLessThan(2_000);
+    expect(onUpdatedListeners).toHaveLength(0);
   });
 });
 

@@ -33,6 +33,11 @@ type CommandRouter interface {
 	// on context cancel / timeout so a flaky extension does not pin the
 	// channelSender in inboundByID after the call has already returned.
 	RemoveRoute(id string)
+	// HostForTab reports the site a tab is known to be on, or "" if no landing
+	// has named one. The control plane owns that answer; the MCP layer asks for
+	// it when taking a site card, so the learning store is never the second
+	// place in the process that tracks browser state.
+	HostForTab(tabID int) string
 }
 
 // BrowserLister is the slice of core.Registry the tools call.
@@ -48,6 +53,11 @@ type MCPOptions struct {
 	DefaultTimeout time.Duration
 	Version        string
 	Logger         *log.Logger
+	// Memory is the optional self-learning collaborator (ADRs 0018-0019). The
+	// MCP server does not record anything itself — the router does that, so
+	// CLI traffic is covered too — but it is the adapter that renders the text
+	// an agent reads, so it is the adapter that appends the card.
+	Memory core.MemoryHook
 }
 
 // MCPServer is the Go port of src/mcp/server.ts. Where the TS server dials
@@ -63,6 +73,7 @@ type MCPServer struct {
 	defaultTimeout time.Duration
 	version        string
 	logger         *log.Logger
+	memory         core.MemoryHook
 
 	httpServer *nethttp.Server
 	tracker    *Tracker
@@ -86,6 +97,7 @@ func NewMCP(opts MCPOptions) *MCPServer {
 		defaultTimeout: opts.DefaultTimeout,
 		version:        semverVersion(opts.Version),
 		logger:         opts.Logger,
+		memory:         opts.Memory,
 	}
 }
 

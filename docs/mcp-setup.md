@@ -2,10 +2,14 @@
 
 Browser Bridge exposes an MCP server over Streamable HTTP so agents can control browsers directly.
 
+**This is one of two equivalent interfaces.** Agents that can run a shell and load the browser-bridge skill (Claude Code, Kimi Code, and similar) are better served by the `bridge` CLI, the primary documented path; this MCP server exists for clients without that ability (Claude Desktop, Cursor). MCP callers do get one extra: learned site cards are injected into `navigate`/`snapshot` results automatically, where CLI callers pull them with `bridge memory show <host>` (ADR-0027).
+
 ## Start the server
 
+The MCP endpoint is served by the control plane, which runs as part of the services:
+
 ```bash
-bun run dev:core
+bridge service up
 ```
 
 The MCP endpoint is available at `http://localhost:3003/mcp`.

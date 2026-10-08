@@ -32,9 +32,17 @@ type capturedCommand struct {
 // fakeRouter implements CommandRouter: it records every inbound command and
 // replies through the sender when the script says so (ok=true).
 type fakeRouter struct {
+	// host is what HostForTab reports, so a test can put a tab on a site
+	// without going through a landing.
+	host string
+
 	mu       sync.Mutex
 	commands []capturedCommand
 	script   func(c capturedCommand) (core.ResponsePayload, bool)
+	// askedTabs records every tab HostForTab was asked about, so a test can
+	// assert *which* tab the adapter consults after a command that lands on a
+	// tab other than the one it was addressed to.
+	askedTabs []int
 }
 
 func (f *fakeRouter) HandleInboundCommand(envelope core.Envelope, sender core.TextSender, opts ...core.InboundOption) {
@@ -75,6 +83,21 @@ func (f *fakeRouter) HandleInboundCommand(envelope core.Envelope, sender core.Te
 		panic(fmt.Sprintf("fake router: encode response: %v", err))
 	}
 	sender.Send(text)
+}
+
+// HostForTab satisfies CommandRouter. The fake answers the host it was told
+// about, so a test that cares can script it; by default nothing is known.
+func (f *fakeRouter) HostForTab(tabID int) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.askedTabs = append(f.askedTabs, tabID)
+	return f.host
+}
+
+func (f *fakeRouter) askedAbout() []int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]int{}, f.askedTabs...)
 }
 
 // RemoveRoute satisfies CommandRouter — the production router uses it to

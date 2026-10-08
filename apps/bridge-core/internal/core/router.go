@@ -75,9 +75,35 @@ type Router struct {
 	// extension cannot pin a sender forever. HandleBrowserResponse stops
 	// the timer when the response lands.
 	inboundTimers map[string]*time.Timer
+	// tabHost is where the control plane remembers which site each tab is on.
+	// The Router owns it because the Router is the only thing that sees every
+	// call: a landing command's result is the sole place the answer appears. It
+	// is not browser state the extension could be asked instead — the extension
+	// is the thing being driven.
+	tabHost map[int]string
+	// tabHostOrder is the insertion order, for the eviction in hostAfter.
+	tabHostOrder []int
+	// pending mirrors inboundByID again, and holds what the *response* path
+	// needs to know about the command: which command it was and which tab it
+	// was aimed at. A response envelope carries the originating envelope's id
+	// and nothing else, so without this the only way to know whether a
+	// response was a snapshot or a get_text is to have kept the command
+	// somewhere — and the response path is where the Memory hook is told
+	// (ADR-0018 captures at the router, the one choke both Inbound adapters
+	// pass through).
+	pending map[string]pendingCall
+	// mem is the optional self-learning collaborator. Nil disables every
+	// memory feature; nothing below may assume it is set.
+	mem MemoryHook
 
 	// routeTTL is exposed for tests; production uses defaultRouteTTL.
 	routeTTL time.Duration
+}
+
+// pendingCall is the part of a command a response needs to be understood.
+type pendingCall struct {
+	command string
+	tabID   int
 }
 
 type RouterOption func(*Router)
@@ -85,6 +111,13 @@ type RouterOption func(*Router)
 // WithRouteTTL overrides defaultRouteTTL (tests).
 func WithRouteTTL(d time.Duration) RouterOption {
 	return func(r *Router) { r.routeTTL = d }
+}
+
+// WithMemoryHook attaches the self-learning store (ADRs 0018-0020). Without it
+// the router behaves exactly as it did before: memory is an opt-in capability
+// of a control plane that must keep working when nothing is learned.
+func WithMemoryHook(h MemoryHook) RouterOption {
+	return func(r *Router) { r.mem = h }
 }
 
 func NewRouter(st *StateManager, browser Browser, reg StatusRegistry, logger *log.Logger, opts ...RouterOption) *Router {
@@ -95,6 +128,8 @@ func NewRouter(st *StateManager, browser Browser, reg StatusRegistry, logger *lo
 		logger:        logger,
 		inboundByID:   make(map[string]TextSender),
 		inboundTimers: make(map[string]*time.Timer),
+		pending:       make(map[string]pendingCall),
+		tabHost:       make(map[int]string),
 		routeTTL:      defaultRouteTTL,
 	}
 	for _, opt := range opts {
@@ -168,12 +203,21 @@ func (r *Router) HandleInboundCommand(envelope Envelope, sender TextSender, opts
 		envelope.ID = NewID()
 	}
 
+	call := pendingCallFrom(envelope)
 	r.mu.Lock()
 	r.inboundByID[envelope.ID] = sender
+	r.pending[envelope.ID] = call
 	r.mu.Unlock()
 
+	// Recorded before any dispatch decision, so a command rejected by the
+	// router is still on the record: "the agent asked a browser that was
+	// offline" is a fact worth having (ADR-0018).
+	if r.mem != nil {
+		r.mem.RecordCommand(envelope.ID, call.command, r.HostForTab(call.tabID), call.tabID, commandParams(envelope))
+	}
+
 	if !r.state.CanAcceptCommand() {
-		r.sendError(sender, "browser_offline", "Browser is offline", envelope.ID, envelope.BrowserID)
+		r.sendError(sender, "browser_offline", "Browser is offline", envelope.ID, envelope.BrowserID, call)
 		r.removeInbound(envelope.ID)
 		return
 	}
@@ -216,11 +260,11 @@ func (r *Router) HandleInboundCommand(envelope Envelope, sender TextSender, opts
 		if target == nil {
 			return
 		}
-		r.sendError(target, "sw_timeout", bufferExpiredMessage, envelope.ID, envelope.BrowserID)
+		r.sendError(target, "sw_timeout", bufferExpiredMessage, envelope.ID, envelope.BrowserID, call)
 		r.removeInbound(envelope.ID)
 	})
 	if !buffered {
-		r.sendError(sender, "cannot_buffer", "Cannot buffer command", envelope.ID, envelope.BrowserID)
+		r.sendError(sender, "cannot_buffer", "Cannot buffer command", envelope.ID, envelope.BrowserID, call)
 		r.removeInbound(envelope.ID)
 	}
 }
@@ -229,9 +273,12 @@ func (r *Router) HandleInboundCommand(envelope Envelope, sender TextSender, opts
 // a response envelope; route it back to the originating inbound connection
 // by envelope id.
 func (r *Router) HandleBrowserResponse(envelope Envelope) {
-	target, ok := r.takeInbound(envelope.ID)
+	target, call, ok := r.takeInbound(envelope.ID)
 	if !ok {
 		return
+	}
+	if r.mem != nil {
+		r.recordResult(envelope, call)
 	}
 	text, err := Encode(envelope.Type, envelope.Payload, envelope.ID, envelope.BrowserID)
 	if err != nil {
@@ -239,6 +286,168 @@ func (r *Router) HandleBrowserResponse(envelope Envelope) {
 		return
 	}
 	target.Send(text)
+}
+
+// recordResult hands the memory hook the response payload. A payload that does
+// not parse is skipped rather than dropped: the hook must never be the reason a
+// response is not delivered.
+func (r *Router) recordResult(envelope Envelope, call pendingCall) {
+	var payload ResponsePayload
+	if len(envelope.Payload) > 0 {
+		if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+			r.logger.Printf("memory: decode response payload: %v", err)
+			return
+		}
+	}
+	// A landing result is where a tab's site becomes known, so it is updated
+	// before the hook is told, and the hook is told the *new* host: an agent
+	// that just navigated is now on that site.
+	//
+	// The tab is resolved before the host, because tab:new is the one command
+	// that lands on a tab other than the one it was addressed to — and both
+	// the Router's view and the hook's bookkeeping have to be keyed on the tab
+	// that now exists, not on the 0 it was sent with.
+	tab := LandedTabID(call.command, payload, call.tabID)
+	host := r.hostAfter(tab, call.command, payload)
+	r.mem.RecordResult(envelope.ID, call.command, host, tab, payload)
+}
+
+// hostAfter returns the host the given call leaves its tab on, updating the
+// Router's own view when the call was a landing that named a site.
+//
+// A landing that names no site reports "" rather than the tab's previous host.
+// The two are different facts and conflating them is what made goBack,
+// goForward and refresh — which the extension answers with a bare {ok:true} —
+// look like a landing on the site the tab had already left. RecordResult takes
+// its re-arm-and-invalidate branch on any landing with a non-empty host, so
+// handing back the stale one re-armed the old card and nil'd lastDigest for a
+// page the agent had left: the next snapshot then verified the old card
+// against the new page, called most entries missing, and recorded a healthy
+// card as stale. The "redesign that never happened" the guard above it exists
+// to prevent, defeated from the other side.
+//
+// "" is also the honest answer for a landing on chrome:// or about:blank,
+// which genuinely names no site.
+func (r *Router) hostAfter(tab int, command string, payload ResponsePayload) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if tab < 0 {
+		tab = 0
+	}
+	// A result that names where a tab is, without the tab having moved.
+	//
+	// These are the commands whose whole answer *is* a location, so they are
+	// allowed to correct the router's view. They are not landings, so nothing
+	// here re-arms a card or discards a digest — the page did not change, and
+	// the previous site is still the right one to hold.
+	//
+	// Without this, tabHost was written by landings alone and the flow the MCP
+	// tools document — tab_list, then snapshot — left the router knowing
+	// nothing about the tab the agent was working on.
+	if IsHostReportingCommand(command) {
+		addressed := tab
+		for id, h := range LandedTabIDs(command, payload) {
+			if id == hostReportingAddressee {
+				id = addressed
+			}
+			if h == "" {
+				continue
+			}
+			if _, exists := r.tabHost[id]; !exists {
+				r.tabHostOrder = append(r.tabHostOrder, id)
+			}
+			r.tabHost[id] = h
+		}
+		for len(r.tabHostOrder) > maxTabHost {
+			oldest := r.tabHostOrder[0]
+			r.tabHostOrder = r.tabHostOrder[1:]
+			delete(r.tabHost, oldest)
+		}
+		return r.tabHost[addressed]
+	}
+	// A closed tab has no site. Guarded on the close having succeeded, so a
+	// failed close leaves the tab's host in place — the tab is still open.
+	if command == "tab:close" {
+		if payload.Status != "error" {
+			delete(r.tabHost, tab)
+			// The order slice has to lose it too, or a reused tab id holds two
+			// slots and the eviction below can delete a *live* entry against
+			// its own stale one. Chrome reuses ids.
+			kept := r.tabHostOrder[:0]
+			for _, k := range r.tabHostOrder {
+				if k != tab {
+					kept = append(kept, k)
+				}
+			}
+			r.tabHostOrder = kept
+		}
+		return ""
+	}
+	if IsLandingCommand(command) {
+		h := LandingHost(payload)
+		if h == "" {
+			return ""
+		}
+		if _, exists := r.tabHost[tab]; !exists {
+			r.tabHostOrder = append(r.tabHostOrder, tab)
+		}
+		r.tabHost[tab] = h
+		// Bounded, because tab:close only prunes the closes the agent makes.
+		// A tab the user closed is never reported, and Chrome reuses ids, so
+		// without a cap a long-lived daemon grows one entry per id it ever saw.
+		// Evicting is safe: a tab with no known host is the state every fresh
+		// tab is in, and the next landing names it again.
+		for len(r.tabHostOrder) > maxTabHost {
+			oldest := r.tabHostOrder[0]
+			r.tabHostOrder = r.tabHostOrder[1:]
+			delete(r.tabHost, oldest)
+		}
+		return h
+	}
+	return r.tabHost[tab]
+}
+
+// maxTabHost bounds the router's per-tab host map. It matches the memory
+// store's own cap, and for the same reason.
+const maxTabHost = 4096
+
+// HostForTab reports the site a tab is currently known to be on, or "" if no
+// landing has named one. The MCP adapter asks this when it takes a site's card
+// to hand back, so that "where is this tab" has exactly one answer in the
+// process and it is not the learning store's to reconstruct.
+func (r *Router) HostForTab(tabID int) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if tabID < 0 {
+		tabID = 0
+	}
+	return r.tabHost[tabID]
+}
+
+// pendingCallFrom reads the command name and target tab out of a command
+// envelope's payload. The payload is `{command, tabId, params}` — the same
+// shape on both adapters (internal/http/command.go builds it, and the inbound
+// WebSocket relays what the CLI sent) — so one decoder serves both.
+func pendingCallFrom(envelope Envelope) pendingCall {
+	if len(envelope.Payload) == 0 {
+		return pendingCall{}
+	}
+	var payload CommandPayload
+	if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+		return pendingCall{}
+	}
+	return pendingCall{command: payload.Command, tabID: payload.TabID}
+}
+
+func commandParams(envelope Envelope) map[string]any {
+	if len(envelope.Payload) == 0 {
+		return nil
+	}
+	var payload CommandPayload
+	if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+		return nil
+	}
+	return payload.Params
 }
 
 // RemoveClient is the inbound-side disconnect hook: every route pointing at
@@ -252,6 +461,7 @@ func (r *Router) RemoveClient(sender TextSender) {
 	for id, s := range r.inboundByID {
 		if s == sender {
 			delete(r.inboundByID, id)
+			delete(r.pending, id)
 			if t, ok := r.inboundTimers[id]; ok {
 				t.Stop()
 				delete(r.inboundTimers, id)
@@ -333,9 +543,12 @@ func (r *Router) HandleBrowserConnect() {
 	// thing left is to fail the caller now instead of leaving it to discover
 	// the loss by timing out on its own deadline.
 	if target := r.lookupInbound(bufferedID); target != nil {
+		r.mu.Lock()
+		call := r.pending[bufferedID]
+		r.mu.Unlock()
 		r.sendError(target, "extension_send_failed",
 			"The extension reconnected but the command could not be delivered.",
-			bufferedID, r.state.BrowserID())
+			bufferedID, r.state.BrowserID(), call)
 		r.removeInbound(bufferedID)
 	}
 }
@@ -354,27 +567,31 @@ func (r *Router) lookupInbound(id string) TextSender {
 }
 
 // takeInbound atomically reads + removes a route and cancels its TTL timer.
-// Returns the sender and ok=true on hit; ok=false when the id is unknown
-// (already cleaned up by the timer or by RemoveRoute).
-func (r *Router) takeInbound(id string) (TextSender, bool) {
+// Returns the sender, the command the route was created for, and ok=true on
+// hit; ok=false when the id is unknown (already cleaned up by the timer or by
+// RemoveRoute).
+func (r *Router) takeInbound(id string) (TextSender, pendingCall, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	s, ok := r.inboundByID[id]
 	if !ok {
-		return nil, false
+		return nil, pendingCall{}, false
 	}
+	call := r.pending[id]
 	delete(r.inboundByID, id)
+	delete(r.pending, id)
 	if t, timerOK := r.inboundTimers[id]; timerOK {
 		t.Stop()
 		delete(r.inboundTimers, id)
 	}
-	return s, true
+	return s, call, true
 }
 
 func (r *Router) removeInbound(id string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.inboundByID, id)
+	delete(r.pending, id)
 	if t, ok := r.inboundTimers[id]; ok {
 		t.Stop()
 		delete(r.inboundTimers, id)
@@ -425,7 +642,9 @@ func (r *Router) armRouteTimer(id string, sender TextSender, browserID string, r
 func (r *Router) fireRouteTimeout(id string, sender TextSender, browserID string) {
 	r.mu.Lock()
 	_, stillTracked := r.inboundByID[id]
+	call := r.pending[id]
 	delete(r.inboundByID, id)
+	delete(r.pending, id)
 	delete(r.inboundTimers, id)
 	r.mu.Unlock()
 	if !stillTracked {
@@ -440,23 +659,45 @@ func (r *Router) fireRouteTimeout(id string, sender TextSender, browserID string
 	// service worker's state any more than the buffer path can. The two
 	// messages used to name a subsystem the router cannot see, forty lines
 	// apart, with one rewritten and the other not.
-	r.sendError(sender, "sw_timeout", "The extension did not answer in time", id, browserID)
+	r.sendError(sender, "sw_timeout", "The extension did not answer in time", id, browserID, call)
 }
 
 // sendError renders and sends the TS encode('response', {status, error,
 // message}, {id, browserId}) shape. Field order (status, error, message)
 // matches the TS object literals.
-func (r *Router) sendError(sender TextSender, errCode, message, id, browserID string) {
-	payload, err := json.Marshal(ResponsePayload{
+//
+// A router-generated error is recorded like any other failure. The three codes
+// it produces — browser_offline, cannot_buffer, sw_timeout — are exactly the
+// cases where the agent asked for something the browser could not do, which is
+// the pattern a Site card exists to prevent (ADR-0018).
+func (r *Router) sendError(sender TextSender, errCode, message, id, browserID string, call pendingCall) {
+	payload := ResponsePayload{
 		Status:  "error",
 		Error:   errCode,
 		Message: message,
-	})
+	}
+	if r.mem != nil {
+		// A rejected call never moved the tab, so the host is the one it was
+		// already on. Recorded through RecordRouterError rather than
+		// RecordResult, and `host` is passed for the trace only: the codes
+		// reaching here — browser_offline, cannot_buffer, sw_timeout — are the
+		// control plane reporting its own state, not the site failing, so they
+		// must not become the card's claim about that host.
+		r.mu.Lock()
+		tab := call.tabID
+		if tab < 0 {
+			tab = 0
+		}
+		host := r.tabHost[tab]
+		r.mu.Unlock()
+		r.mem.RecordRouterError(id, call.command, host, call.tabID, payload)
+	}
+	raw, err := json.Marshal(payload)
 	if err != nil {
 		r.logger.Printf("encode error payload: %v", err)
 		return
 	}
-	text, err := Encode(TypeResponse, payload, id, browserID)
+	text, err := Encode(TypeResponse, raw, id, browserID)
 	if err != nil {
 		r.logger.Printf("encode error envelope: %v", err)
 		return

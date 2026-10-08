@@ -44,8 +44,11 @@ func TestCommandTools(t *testing.T) {
 			args:        map[string]any{"tab_id": 1},
 			respond:     ok,
 			wantCommand: "goBack",
-			wantParams:  map[string]any{"tabId": float64(1)},
-			wantText:    "Went back",
+			// The caller's budget travels with the command so the extension's
+			// wait for the history move to settle fits inside the transport
+			// deadline; see executeGoBack.
+			wantParams: map[string]any{"tabId": float64(1), "timeout": float64(10000)},
+			wantText:   "Went back",
 		},
 		{
 			name:        "go_forward",
@@ -53,7 +56,7 @@ func TestCommandTools(t *testing.T) {
 			args:        map[string]any{"tab_id": 1},
 			respond:     ok,
 			wantCommand: "goForward",
-			wantParams:  map[string]any{"tabId": float64(1)},
+			wantParams:  map[string]any{"tabId": float64(1), "timeout": float64(10000)},
 			wantText:    "Went forward",
 		},
 		{

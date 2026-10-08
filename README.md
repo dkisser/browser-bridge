@@ -48,6 +48,7 @@
 - 🔒 **Local session, local control** — reuse your logged-in browser; no cloud browser or cookie sync needed.
 - 🔗 **MCP server** — Streamable HTTP MCP server exposes browser tools to Claude Desktop, Cursor, and other MCP clients.
 - 🎯 **Token-efficient reads** — observe-first snapshots, targeted container reads, and hard output caps keep page noise out of your agent's context window.
+- 🧠 **Learns how each site works** — the control plane keeps a per-host *site card* built from what your agent actually did, and hands it back the next time the agent lands there: which container holds the content, which calls have already failed on that site, and which sequences have worked. No extra tool call, no new tool — it rides along on the result you were going to get anyway. See [Self-learning](#-self-learning).
 
 ---
 
@@ -180,6 +181,10 @@ bridge --browser <browser-id> --tab <tab-id> type "input#search" "browser bridge
 bridge --browser <browser-id> --tab <tab-id> gettext "h1"
 bridge --browser <browser-id> --tab <tab-id> snapshot
 bridge --browser <browser-id> --tab <tab-id> screenshot
+
+# Learned site cards
+bridge memory list
+bridge memory show <host>
 ```
 
 ### Example workflow
@@ -203,9 +208,129 @@ See `bridge --help` for the full command list.
 
 ---
 
+## 🧠 Self-learning
+
+Agents rediscover the same site over and over. The motivating failure here was
+real: an agent working Gmail burned dozens of round-trips guessing selectors
+that did not exist, and would have done it again on the next visit. This feature
+makes the second visit cheaper than the first.
+
+Everything happens in the control plane. When the agent lands on a host it has
+seen before, it gets a short labelled card — injected into the `navigate` result
+on the MCP path, pulled with `bridge memory show <host>` on the CLI path
+(ADR-0027):
+
+```
+[learned site patterns] mail.example.com
+Observed to fail here (do not repeat):
+  - element_not_found on gettext with "[data-message-subject=\"…\"]" (4x)
+```
+
+and the first `snapshot` after it carries the site map — which container on
+*this* page holds the content, with refs resolved against the page in hand:
+
+```
+Site map (checked against this page):
+  - text container · list [Inbox] → @e12 (6x)
+  - text container · toolbar [Mailbox actions] → @e7 (6x)
+```
+
+A few things worth knowing before you rely on it:
+
+- **It is advice, not a command.** A card never replaces the agent's own reading
+  of the page. A site that redesigns itself makes the card go stale, the agent
+  is told so, and it falls back to looking — a stale card costs calls, never
+  correctness.
+- **Nothing about your browsing is written down in the clear.** The record is
+  structural: commands, outcomes, and the page's shape (roles, truncated
+  labels, one attribute and a ref per node). No page text, no page title, no
+  typed input, and not a query string — a URL is kept down to scheme, host and
+  path, and a selector is kept down to its shape, so
+  `[data-message-subject="Standup notes"]` is recorded as
+  `[data-message-subject=…]`. That is a real trade and it is the right way round:
+  "a data-message-subject selector does not resolve here" is the lesson, and it
+  holds for the next message too, where the literal would not. The one number
+  added per read is how many characters came back, which is what lets the card
+  rank containers by whether they are worth reading.
+- **A card is only created from evidence.** A host with no observed failure and
+  no confirmed read gets no card, so wandering through twenty sites leaves
+  twenty no cards.
+- **Cards update themselves, and every revision is kept.** `bridge memory
+  history <host>` shows what changed and what evidence caused it.
+- **Opt out by deleting the card**, or the whole `data/` directory. The store is
+  plain files under `~/.browser-bridge/data/` and nothing is ever uploaded — with
+  one explicit opt-in exception: setting `BRIDGE_MEMORY_API_KEY` enables card
+  compression, which sends the rendered card (site structure, never the trace)
+  off-machine to your configured OpenAI-compatible endpoint (ADR-0022). The
+  endpoint must be `https://`; a local proxy is the one case that needs
+  `BRIDGE_MEMORY_ALLOW_INSECURE=1` to say so out loud. A reply that tries to
+  hand back a ref, impersonate a card section, or open one of its own is
+  discarded rather than stored — the endpoint is untrusted even when you chose
+  it.
+
+```bash
+bridge memory list                    # every host with a card
+bridge memory show mail.example.com   # exactly what the agent is told
+bridge memory show mail.example.com --resolve  # ...and the site map, resolved
+bridge memory history mail.example.com # what changed, and why
+bridge memory learn                   # run the learner now instead of waiting for idle
+bridge memory rm mail.example.com     # forget a site
+```
+
+`--resolve` exists because plain `show` cannot print the site map: the map's refs
+are only meaningful against the page they were resolved from, and a bare `show`
+has no page. `--resolve` reads the last one out of the trace, so it works with
+the service stopped — and it labels what it did. The refs it prints are real, and
+they are **not** valid for whatever is in your browser right now (ADR-0026).
+
+Curated knowledge sits beside the machine's cards: the `browser-bridge-memory`
+skill lets an agent record what a card cannot learn — *why* steps are ordered,
+which banner to dismiss first — as per-host **site guides**
+(`~/.browser-bridge/data/guides/<host>.md`), and crystallize a flow that has
+become fixed into a replayable **routine**
+(`~/.browser-bridge/data/routines/<host>/`). Guides and routines are written at
+the human's request, never auto-generated (ADR-0028).
+
+### Is it actually worth anything?
+
+`bridge memory bench` measures that, in two halves that answer different
+questions.
+
+```bash
+# Deterministic: a synthetic page with the same difficulty as the real one,
+# driven through the real learner. Same numbers every run.
+bridge memory bench run
+
+# Live: you run a task in your agent, report one line back. Call and failure
+# counts are read out of the trace — not counted by hand.
+bridge memory bench record --host news.google.com \
+  --task "find todays top story" --ok --card used
+bridge memory bench report
+```
+
+The fixture run reports about two calls saved per task on a page with four
+plausible containers, plus one rejected call the failure list prevents. That is
+not a large number, and it is the honest one: the pseudo-tree already tells an
+agent how to find a *named control*, so what a card adds is knowing *which of a
+page's several readable containers is the one worth reading*. The smallest
+saving in the table is the control-finding task, deliberately — it is there to
+keep the claim from growing past what was measured. The decisions are in [ADR-0018](docs/adr/0018-structural-trace.md) through
+[ADR-0022](docs/adr/0022-optional-model-call-for-compression.md), and what
+building and measuring them changed is in
+[ADR-0023](docs/adr/0023-a-card-carries-no-handles.md),
+[ADR-0024](docs/adr/0024-site-card-as-implemented.md) and
+[ADR-0025](docs/adr/0025-what-the-baseline-taught.md); how recall reaches the CLI
+path and how curated knowledge sits beside the card is in
+[ADR-0027](docs/adr/0027-the-cli-recalls-by-pull.md) through
+[ADR-0029](docs/adr/0029-crystallization-starts-as-cli-scripts.md) — decision records here are
+append-only, so corrections land in a new file rather than in the one they correct.
+[docs/adr/README.md](docs/adr/README.md) has the full index.
+
+---
+
 ## 🤖 Use via MCP
 
-Browser Bridge exposes a [Streamable HTTP MCP server](docs/mcp-setup.md) inside `bridge-core` (3003 by default). Once `bridge service up` (or `bun run dev:core`) is running, add `http://localhost:3003/mcp` to any MCP client that supports Streamable HTTP.
+Browser Bridge exposes a [Streamable HTTP MCP server](docs/mcp-setup.md) inside `bridge-core` (3003 by default) for MCP-only clients such as Claude Desktop or Cursor — agents that can run a shell and load the skill are better served by the CLI above. Once `bridge service up` is running, add `http://localhost:3003/mcp` to any MCP client that supports Streamable HTTP.
 
 ### Start the MCP server
 

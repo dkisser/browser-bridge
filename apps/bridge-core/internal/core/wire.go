@@ -1,6 +1,12 @@
 package core
 
-import "time"
+import (
+	"encoding/json"
+	"net"
+	"net/url"
+	"strings"
+	"time"
+)
 
 // The wire contract, restated on the Go side.
 //
@@ -171,4 +177,220 @@ type Denial struct {
 	Origin     string `json:"origin,omitempty"`
 	Capability string `json:"capability,omitempty"`
 	Detail     string `json:"detail,omitempty"`
+}
+
+// IsLandingCommand reports the commands after which the control plane can say
+// which site a tab is on. navigate, goBack, goForward, refresh and tab:new /
+// tab:switch / wait:navigation all answer with the URL that resulted.
+//
+// This lives in core, beside the rest of the wire contract, for the reason the
+// file's own header gives: it is a fact about the protocol, and the consumers
+// that need it are the router (which resolves a tab's host) and the learner
+// (which splits an attempt when the agent declares it is going somewhere new).
+// A consumer that invented its own list would drift the moment a command was
+// added.
+func IsLandingCommand(command string) bool {
+	switch command {
+	case "navigate", "goBack", "goForward", "refresh", "wait:navigation", "tab:new", "tab:switch":
+		return true
+	default:
+		return false
+	}
+}
+
+// IsHostReportingCommand reports the commands whose *result* names the site a
+// tab is on, without the tab having gone anywhere.
+//
+// Distinct from IsLandingCommand because the two need opposite treatment. A
+// landing ends one attempt and starts another, so it re-arms the card and
+// discards the digest; a report changes nothing, so it may only correct the
+// router's view of where the tab is.
+//
+// They exist because tabHost used to be written by landings alone, and the
+// flow the MCP tools themselves document is tab_list → snapshot. An agent
+// following it reaches a tab it never navigated, so HostForTab returned "",
+// TakeSiteNote bailed at its own host == "" guard and no card was injected —
+// and the learner's snapshot branch never armed either, so nothing was learned
+// from the whole session. The card existed and was never shown, on the most
+// common path there is.
+func IsHostReportingCommand(command string) bool {
+	switch command {
+	case "pageinfo", "tab:list":
+		return true
+	default:
+		return false
+	}
+}
+
+// LandingHost extracts the site a landing command arrived at, from the url in
+// its result body. It returns "" when the result names no site, which is the
+// normal case for chrome:// and about:blank.
+func LandingHost(payload ResponsePayload) string {
+	if len(payload.Data) == 0 {
+		return ""
+	}
+	var out struct {
+		URL   string `json:"url"`
+		URLs  []any  `json:"urls"`
+		Items []struct {
+			URL string `json:"url"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(payload.Data, &out); err != nil {
+		return ""
+	}
+	if out.URL != "" {
+		if h := HostOf(out.URL); h != "" {
+			return h
+		}
+	}
+	// tab:new and tab:switch answer with the tab they landed on.
+	for _, it := range out.Items {
+		if h := HostOf(it.URL); h != "" {
+			return h
+		}
+	}
+	return ""
+}
+
+// LandedTabIDs reports every tab a result names, with the site each is on.
+//
+// tab:list answers with the whole set of open tabs, so it is the one result
+// that can teach the router about tabs it was not addressed to at all — which
+// is the whole point of it, and the reason the documented flow starts there.
+func LandedTabIDs(command string, payload ResponsePayload) map[int]string {
+	if !IsHostReportingCommand(command) || len(payload.Data) == 0 {
+		return nil
+	}
+	hosts := make(map[int]string)
+
+	// Two shapes reach here, and they are unambiguous: decoding a JSON array
+	// into a struct fails and vice versa, so trying both in turn is exact
+	// rather than a guess.
+	//
+	// tab:list answers with a top-level array of tabs. pageinfo answers with
+	// the object it was addressed to, naming no id — so its URL goes under the
+	// sentinel and the caller substitutes the tab the command was addressed to.
+	var listed []struct {
+		ID  *int   `json:"id"`
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(payload.Data, &listed); err == nil {
+		for _, it := range listed {
+			if it.ID != nil && *it.ID >= 0 {
+				if h := HostOf(it.URL); h != "" {
+					hosts[*it.ID] = h
+				}
+			}
+		}
+		return hosts
+	}
+	var single struct {
+		URL   string `json:"url"`
+		Items []struct {
+			ID  *int   `json:"id"`
+			URL string `json:"url"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(payload.Data, &single); err != nil {
+		return nil
+	}
+	if single.URL != "" {
+		hosts[hostReportingAddressee] = HostOf(single.URL)
+	}
+	for _, it := range single.Items {
+		if it.ID != nil && *it.ID >= 0 {
+			if h := HostOf(it.URL); h != "" {
+				hosts[*it.ID] = h
+			}
+		}
+	}
+	return hosts
+}
+
+// hostReportingAddressee is the sentinel host:list/pageinfo stores under when
+// the result names a URL but no tab, so the caller can substitute the tab the
+// command was addressed to. A real tab id can never collide with it — Chrome
+// ids are non-negative, and -1 is not a tab.
+const hostReportingAddressee = -1
+
+// LandedTabID reports which tab a command left the agent on, when that is not
+// the tab the command was addressed to.
+//
+// The tab-opening and tab-switching commands both move the answer, and both
+// say which tab in the result body (background.ts returns {id, url, title}).
+// tab:new is the one command sent without a target tab — it is what opens the
+// next one. tab:switch is sent *to* the current tab and carries its target in
+// params.tabId, which the envelope's top-level tabId does not reflect: the CLI
+// builds `CommandPayload{Command, TabID: g.tab, Params: params}`, so
+// pendingCallFrom sees the global default (0 unless --tab was passed) and
+// nothing else looks at params.
+//
+// Keying either result under the addressed tab put a real tab's host under key
+// 0, which nothing ever asks for, and left the tab that actually exists with no
+// host at all. The cost was concrete: the agent's next snapshot on that tab
+// resolved no host, so the ADR-0019 second injection point — the only one that
+// hands back resolved refs — never fired, and the learner attributed the
+// snapshot to no site. For tab:switch it also collided every switched-to tab
+// on tab 0's single tabState.
+func LandedTabID(command string, payload ResponsePayload, addressed int) int {
+	if command != "tab:new" && command != "tab:switch" {
+		return addressed
+	}
+	if len(payload.Data) == 0 {
+		return addressed
+	}
+	var out struct {
+		ID *int `json:"id"`
+	}
+	if err := json.Unmarshal(payload.Data, &out); err != nil || out.ID == nil || *out.ID < 0 {
+		return addressed
+	}
+	return *out.ID
+}
+
+// HostOf is the host a URL belongs to, lowercased, or "" for anything that is
+// not a site (a bare scheme, a relative path, an empty string).
+//
+// This is the one copy of the rule. It used to be a second one, forked before
+// ADR-0032 and never given the fix: it kept the old `has a dot in it` test
+// while memory.Host learned that localhost, *.localhost and IP literals are
+// sites. The two then disagreed on exactly the hosts ADR-0032 was written
+// about — the learner happily wrote cards/localhost.json through HostFromURL
+// while the router never populated tabHost, so HostForTab returned "" and
+// TakeSiteNote bailed at its own guard. The card existed and was never
+// injected, which is the silence ADR-0032 promised to end.
+//
+// memory imports core, so memory.Host delegates here rather than the other
+// way round: a rule this file's header insists consumers must not each invent
+// has to be the one they all call.
+func HostOf(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return HostName(u.Hostname())
+}
+
+// HostName is HostOf for a host that has already been extracted. It applies
+// the same test, and the same reasoning: a registrable domain always has a
+// dot, so a dotless name is a loopback name, an IP literal, or a token that is
+// not a site at all. A dotless name is still not admitted in general — "about"
+// and stray tokens reach here too, and every rule in the control plane keys
+// off the host, so taking them would mint a card per piece of junk.
+func HostName(h string) string {
+	h = strings.ToLower(strings.TrimSuffix(h, "."))
+	if h == "" {
+		return ""
+	}
+	if strings.Contains(h, ".") {
+		return h
+	}
+	if h == "localhost" || strings.HasSuffix(h, ".localhost") {
+		return h
+	}
+	if net.ParseIP(h) != nil {
+		return h
+	}
+	return ""
 }

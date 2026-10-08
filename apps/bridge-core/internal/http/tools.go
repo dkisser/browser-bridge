@@ -71,9 +71,37 @@ func (s *MCPServer) dispatch(ctx context.Context, req *mcp.CallToolRequest, tool
 	}
 	result = withRecoveryHint(result)
 	if result.Status != "ok" {
+		// A failed call still got recorded by the router; there is no card to
+		// add to an error, and ADR-0003's recovery text already says what to do.
 		return core.ResponsePayload{}, toolError(toolName, commandErrorMessage(result, errFallback))
 	}
+	// Ask for the card *after* the call succeeded, so the hook's view of where
+	// the tab is (recorded on the result) is already up to date. The note rides
+	// on the payload in-process; the executors below decide whether to render it.
+	if s.memory != nil {
+		// The same tab the router keyed the result on. tab:new is addressed to
+		// no tab and lands on one, so asking with spec.tabID here would ask
+		// about tab 0 — a key nothing ever holds a host for — and the landing
+		// would silently inject nothing while the tab that was actually opened
+		// waits a snapshot to learn anything.
+		tab := core.LandedTabID(spec.name, result, spec.tabID)
+		result.SiteNote = s.memory.TakeSiteNote(spec.name, s.router.HostForTab(tab), tab)
+	}
 	return result, nil
+}
+
+// appendSiteNote puts the learned site card after a tool's own output. The card
+// is separated by a blank line and carries its own label so the agent can tell
+// "what this site looked like last time" from "what this call just said" — the
+// first may be out of date, the second cannot be.
+func appendSiteNote(text string, result core.ResponsePayload) string {
+	if result.SiteNote == "" {
+		return text
+	}
+	if text == "" {
+		return result.SiteNote
+	}
+	return text + "\n\n" + result.SiteNote
 }
 
 // runMessageTool is the shared shape of tools whose success output is
@@ -84,9 +112,9 @@ func (s *MCPServer) runMessageTool(ctx context.Context, req *mcp.CallToolRequest
 		return fail, nil, nil
 	}
 	if result.Message != "" {
-		return toolText(result.Message), nil, nil
+		return toolText(appendSiteNote(result.Message, result)), nil, nil
 	}
-	return toolText(okFallback), nil, nil
+	return toolText(appendSiteNote(okFallback, result)), nil, nil
 }
 
 // channelSender is the core.TextSender half of the in-process
@@ -328,19 +356,35 @@ func (s *MCPServer) executeNavigate(ctx context.Context, req *mcp.CallToolReques
 		fmt.Sprintf("Navigated to %s in tab %d", args.URL, args.TabID))
 }
 
+// goBack and goForward wait for the navigation to settle, so they get the same
+// arrangement navigate has: the caller's budget goes to the extension as its
+// in-page timeout, and the transport waits that plus the slack.
+//
+// They did not, and the extension's own fallback for a history move is the
+// 30-second navigation budget — while the transport gave up at the caller's
+// default of 10. So on a slow history navigation the route was removed before
+// the answer arrived, the agent was told "timeout: no response for command
+// goBack" for a navigation that had succeeded, and the router never recorded
+// the landing, leaving tabHost on the site the agent had just left. Before the
+// handlers waited at all this race could not happen; waiting without telling
+// the transport is what created it.
 func (s *MCPServer) executeGoBack(ctx context.Context, req *mcp.CallToolRequest, args tabIDTimeoutArgs) (*mcp.CallToolResult, any, error) {
+	budget := s.commandTimeout(args.TimeoutMS)
 	return s.runMessageTool(ctx, req, "go_back", commandSpec{
-		name:   "goBack",
-		tabID:  args.TabID,
-		params: tabParams{TabID: args.TabID},
+		name:       "goBack",
+		tabID:      args.TabID,
+		params:     waitParams{Timeout: int(budget.Milliseconds()), TabID: args.TabID},
+		waitBudget: budget,
 	}, args.TimeoutMS, "Go back failed", "Went back")
 }
 
 func (s *MCPServer) executeGoForward(ctx context.Context, req *mcp.CallToolRequest, args tabIDTimeoutArgs) (*mcp.CallToolResult, any, error) {
+	budget := s.commandTimeout(args.TimeoutMS)
 	return s.runMessageTool(ctx, req, "go_forward", commandSpec{
-		name:   "goForward",
-		tabID:  args.TabID,
-		params: tabParams{TabID: args.TabID},
+		name:       "goForward",
+		tabID:      args.TabID,
+		params:     waitParams{Timeout: int(budget.Milliseconds()), TabID: args.TabID},
+		waitBudget: budget,
 	}, args.TimeoutMS, "Go forward failed", "Went forward")
 }
 
