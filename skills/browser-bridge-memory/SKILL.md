@@ -16,14 +16,14 @@ All paths below live under `$BB_HOME` (`~/.browser-bridge` by default). The file
 
 **Prefer the MCP tools.** They read the store in-process, so they work while the bridge is already running for other reasons, and they need no shell:
 
-- `memory_list` — every host with a card.
+- `memory_list` — every host with a card. Answers `{"hosts": [...], "unreadable": [...]}`; a non-empty `unreadable` means those card files exist and do not parse, which is not the same as never having been learned.
 - `memory_show(host)` — exactly what an agent is told about the host: the card, its site map resolved against the last *recorded* page, then any site guide for that host. Pass `raw: true` for the structured card instead of the rendering.
 
 Both are read-only. `memory_show` is the pull path — **call it when you land on a host, and always before writing or rehearsing a routine** (ADR-0039). The refs it prints are labelled as resolved offline against a recorded page, not against the browser's current page, so treat them as a place to start looking, never as something to click (ADR-0026). A `no card for <host>` answer is normal — carry on without one.
 
 **The CLI covers what the tools do not**, and is the fallback when no MCP client is configured. The flags are not interchangeable, and the default is the trap:
 
-- `bridge memory list` — the same rows as `memory_list`, as a table.
+- `bridge memory list` — the same rows as `memory_list`, as a table (a plain array — the CLI has nowhere to report a card file that will not parse, so `memory_list` does more).
 - `bridge memory show <host> --resolve` — **the CLI equivalent of `memory_show`**. `--resolve` is not optional here: without it the command renders the card with no resolver, which drops the site map entirely (ADR-0024), so the bare `bridge memory show <host>` gives you the failures and the working sequences and *nothing about where the content lives*.
 - `bridge memory show <host> --raw` — the stored card JSON; the equivalent of `memory_show` with `raw: true`, and the closest thing to what `--json` adds without a rendering.
 - `bridge memory show <host> --json` — the card **and** its rendering **and** the guide's prose. There is no MCP equivalent of this one; `raw: true` deliberately leaves the guide's prose out (ADR-0033).

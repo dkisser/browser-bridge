@@ -3,6 +3,8 @@ package memory
 import (
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -25,22 +27,8 @@ func appendTraceLine(t *testing.T, dir, line string) {
 }
 
 func pageRecord(atMs int64, host, ref string) string {
-	return `{"kind":"snapshot","at":` + itoa(atMs) + `,"env":"e1","cmd":"snapshot","tab":1,"browser":"b1","host":"` + host +
+	return `{"kind":"snapshot","at":` + strconv.FormatInt(atMs, 10) + `,"env":"e1","cmd":"snapshot","tab":1,"browser":"b1","host":"` + host +
 		`","out":"ok","page":{"url":"https://` + host + `/","nodes":[{"role":"article","name":"Body","ref":"` + ref + `","d":1}]}}`
-}
-
-func itoa(n int64) string {
-	if n == 0 {
-		return "0"
-	}
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(buf[i:])
 }
 
 // Two pulls of the same host at the same stamp must agree, and the second must
@@ -72,8 +60,41 @@ func TestLastPageDigestIsStableAcrossRepeatedPulls(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second pull: %v", err)
 	}
-	if second != first || secondAt != firstAt {
-		t.Errorf("the memoised answer differs from the first: %+v/%d vs %+v/%d", second, secondAt, first, firstAt)
+	if second == first {
+		t.Error("the memoised answer is the same pointer, so a caller mutating it corrupts every other pull")
+	}
+	if len(second.Nodes) != len(first.Nodes) || second.Nodes[0].Ref != first.Nodes[0].Ref {
+		t.Errorf("the memoised answer differs from the first: %+v vs %+v", second.Nodes, first.Nodes)
+	}
+	if secondAt != firstAt {
+		t.Errorf("atMs = %d, want %d", secondAt, firstAt)
+	}
+}
+
+// The copy has to be deep, or a caller annotating one node's Attrs map reaches
+// the next pull through the shared slice element.
+func TestLastPageDigestHandsOutIndependentCopies(t *testing.T) {
+	dir := t.TempDir()
+	appendTraceLine(t, dir, pageRecord(1_700_000_000_000, "example.com", "e7"))
+	m, err := New(Options{DataDir: dir, BrowserID: "browser-1"})
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+	t.Cleanup(func() { _ = m.Close() })
+
+	first, _, err := m.LastPageDigest("example.com")
+	if err != nil {
+		t.Fatalf("first pull: %v", err)
+	}
+	first.URL = "mutated"
+	first.Nodes[0].Ref = "mutated"
+
+	second, _, err := m.LastPageDigest("example.com")
+	if err != nil {
+		t.Fatalf("second pull: %v", err)
+	}
+	if second.URL == "mutated" || second.Nodes[0].Ref == "mutated" {
+		t.Errorf("the second pull saw the first one's mutation: %+v", second)
 	}
 }
 
@@ -203,12 +224,12 @@ func TestRenderResolvedOfflineCountsTheCardAndNamesThePage(t *testing.T) {
 	}
 	// The provenance has to reach the map section's own title, not just the
 	// counts — a footer nobody reads is what ADR-0026 rules out.
-	if !contains(got.Text, "the page seen") {
+	if !strings.Contains(got.Text, "the page seen") {
 		t.Errorf("the rendering does not name the page it resolved against:\n%s", got.Text)
 	}
 	// And it must never claim the live injection's phrase, which is true of the
 	// page in hand and false of anything read out of a file.
-	if contains(got.Text, "checked against this page") {
+	if strings.Contains(got.Text, "checked against this page") {
 		t.Errorf("the offline render used the live injection's phrase:\n%s", got.Text)
 	}
 }
@@ -226,18 +247,7 @@ func TestRenderResolvedOfflineWithoutADigest(t *testing.T) {
 	if got.Matched != 0 || got.Total != 1 || got.Missing != 1 {
 		t.Errorf("counts = %d/%d/%d, want 0 of 1 matched", got.Matched, got.Total, got.Missing)
 	}
-	if !contains(got.Text, "Observed to fail here") {
+	if !strings.Contains(got.Text, "Observed to fail here") {
 		t.Errorf("the failures tier did not render without a resolver:\n%s", got.Text)
 	}
-}
-
-func contains(haystack, needle string) bool {
-	return len(haystack) >= len(needle) && (func() bool {
-		for i := 0; i+len(needle) <= len(haystack); i++ {
-			if haystack[i:i+len(needle)] == needle {
-				return true
-			}
-		}
-		return false
-	})()
 }

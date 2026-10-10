@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Build the skills tarball + sha256 sidecar for a release (ADR-0015).
 # The tarball ships every skill as a top-level <name>/ directory — the layout
-# install.sh's download_skills extracts and installs, which walks the
-# subdirectories rather than expecting a single one.
+# install.sh extracts and installs, where install_skills walks the extract
+# root's children. A shared wrapper directory is *not* the shape: install.sh
+# hands install_skills the extract root itself, so a wrapper level would be one
+# directory too many and the loop would find nothing.
 set -euo pipefail
 
 VERSION="${VERSION:-v0.0.0}"
@@ -42,11 +44,12 @@ OUT_DIR="$(cd "$OUT_DIR" && pwd)"
 TAR_PATH="$OUT_DIR/${NAME}.tar.gz"
 SHA_PATH="${TAR_PATH}.sha256"
 
+echo "shipping ${#shipped[@]} skill(s): ${shipped[*]}" >&2
+
 # Names are passed bare from inside the staging dir, so members come out as
-# browser-bridge/… rather than ./browser-bridge/… — install.sh extracts by name
-# and expects the top level to be the skill. (GNU tar's --anchored would say
-# this explicitly; bsdtar on macOS has no such flag, and the bare names already
-# give the same result on both.)
+# browser-bridge/… rather than ./browser-bridge/…. (GNU tar's --anchored would
+# say this explicitly; bsdtar on macOS has no such flag, and the bare names
+# already give the same result on both.)
 ( cd "$STAGE" && tar czf "$TAR_PATH" "${shipped[@]}" )
 shasum -a 256 "$TAR_PATH" | awk -v f="$(basename "$TAR_PATH")" '{print $1"  "f}' > "$SHA_PATH"
 

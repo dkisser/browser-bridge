@@ -168,10 +168,14 @@ func (s *Stream) Append(rec TraceRecord) error {
 // alone would go stale the moment a rotation happened and keep serving a digest
 // from a generation that had just been moved aside.
 type StreamStamp struct {
-	ActiveSize   int64
-	ActiveModMs  int64
+	ActiveSize int64
+	// Nanoseconds, and named for it. A field called *Ms holding UnixNano is a
+	// trap: TraceRecord.AtMs is milliseconds, so a reader comparing the two —
+	// which is the obvious thing to do when both say "millisecond timestamp" —
+	// gets a value 10^6 too large and concludes the cache never invalidates.
+	ActiveModNs  int64
 	RotatedSize  int64
-	RotatedModMs int64
+	RotatedModNs int64
 }
 
 // Stamp reports the current fingerprint. It stats two files and does not read
@@ -184,11 +188,11 @@ func (s *Stream) Stamp() StreamStamp {
 
 	var st StreamStamp
 	if fi, err := os.Stat(path); err == nil {
-		st.ActiveSize, st.ActiveModMs = fi.Size(), fi.ModTime().UnixNano()
+		st.ActiveSize, st.ActiveModNs = fi.Size(), fi.ModTime().UnixNano()
 	}
 	if rotated != "" {
 		if fi, err := os.Stat(rotated); err == nil {
-			st.RotatedSize, st.RotatedModMs = fi.Size(), fi.ModTime().UnixNano()
+			st.RotatedSize, st.RotatedModNs = fi.Size(), fi.ModTime().UnixNano()
 		}
 	}
 	return st

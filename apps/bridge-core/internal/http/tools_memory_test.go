@@ -106,10 +106,11 @@ func TestMemoryListReportsWhatTheStoreHolds(t *testing.T) {
 
 	text := resultText(t, callTool(t, session, "memory_list", map[string]any{}))
 
-	var rows []memoryListRow
-	if err := json.Unmarshal([]byte(text), &rows); err != nil {
-		t.Fatalf("memory_list did not return JSON rows: %v\n%s", err, text)
+	var out memoryListResult
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("memory_list did not return JSON: %v\n%s", err, text)
 	}
+	rows := out.Hosts
 	if len(rows) != 2 {
 		t.Fatalf("rows = %d, want 2: %+v", len(rows), rows)
 	}
@@ -448,11 +449,15 @@ func TestMemoryListDistinguishesABrokenStoreFromAnEmptyOne(t *testing.T) {
 	session := newTestClient(t, srv)
 
 	text := resultText(t, callTool(t, session, "memory_list", map[string]any{}))
-	if strings.Contains(text, "No site cards yet") {
-		t.Errorf("a broken store was reported as an empty one:\n%s", text)
+	var out memoryListResult
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("a broken store produced unparseable output: %v\n%s", err, text)
 	}
-	if !strings.Contains(text, "broken.example") || !strings.Contains(text, "will not parse") {
-		t.Errorf("the broken host was not named:\n%s", text)
+	if len(out.Hosts) != 0 {
+		t.Errorf("hosts = %+v, want none", out.Hosts)
+	}
+	if len(out.Unreadable) != 1 || out.Unreadable[0] != "broken.example" {
+		t.Errorf("unreadable = %+v, want [broken.example]", out.Unreadable)
 	}
 }
 
@@ -469,11 +474,17 @@ func TestMemoryListKeepsGoodRowsAndFlagsTheBrokenOne(t *testing.T) {
 	session := newTestClient(t, srv)
 
 	text := resultText(t, callTool(t, session, "memory_list", map[string]any{}))
-	if !strings.Contains(text, "good.example") {
-		t.Errorf("the readable row was dropped:\n%s", text)
+	var out memoryListResult
+	// The point of the object shape: the caveat has to survive a JSON parser,
+	// which is exactly what appending prose after the closing bracket did not.
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("output does not parse, which is what the caveat used to break: %v\n%s", err, text)
 	}
-	if !strings.Contains(text, "omitted because they will not parse") {
-		t.Errorf("the broken row was not flagged as a caveat:\n%s", text)
+	if len(out.Hosts) != 1 || out.Hosts[0].Host != "good.example" {
+		t.Errorf("the readable row was dropped: %+v", out.Hosts)
+	}
+	if len(out.Unreadable) != 1 || out.Unreadable[0] != "broken.example" {
+		t.Errorf("unreadable = %+v, want [broken.example]", out.Unreadable)
 	}
 }
 
@@ -539,4 +550,70 @@ func (p *partialMemories) ReadCard(host string) (*memory.SiteCard, error) {
 		return nil, errors.New("unexpected EOF")
 	}
 	return p.fakeMemories.ReadCard(host)
+}
+
+// #2: the same rule has to reach raw. Returning before the warning made raw the
+// one place where "the guide would not read" and "there is no guide" produced
+// identical bytes, and an agent told "no guide" skips the file that exists.
+func TestMemoryShowRawAlsoWarnsAboutAnUnreadableGuide(t *testing.T) {
+	srv := memoryTestServer(&fakeRouter{}, &fakeMemories{
+		cards:    map[string]*memory.SiteCard{"example.com": aCard()},
+		digest:   aDigest(),
+		guideErr: errors.New("permission denied"),
+	})
+	session := newTestClient(t, srv)
+
+	text := resultText(t, callTool(t, session, "memory_show", map[string]any{"host": "example.com", "raw": true}))
+	if !strings.Contains(text, "permission denied") {
+		t.Errorf("raw swallowed the guide failure, making it look like no guide exists:\n%s", text)
+	}
+	if strings.Contains(text, `"guidePath"`) {
+		t.Errorf("raw advertised a guidePath it could not read the guide behind:\n%s", text)
+	}
+}
+
+// The trace-read path promised a map it does not render: RenderCard only emits
+// the map tier when it has a Resolver, so "shown unresolved" was false.
+func TestMemoryShowDoesNotPromiseAMapItCannotRender(t *testing.T) {
+	srv := memoryTestServer(&fakeRouter{}, &failingDigestMemories{
+		fakeMemories: fakeMemories{cards: map[string]*memory.SiteCard{"example.com": aCard()}},
+	})
+	session := newTestClient(t, srv)
+
+	text := resultText(t, callTool(t, session, "memory_show", map[string]any{"host": "example.com"}))
+	if strings.Contains(text, "shown unresolved") {
+		t.Errorf("the error branch promised an unresolved map it does not render:\n%s", text)
+	}
+	if !strings.Contains(text, "not shown at all") {
+		t.Errorf("the error branch did not say the map is absent:\n%s", text)
+	}
+}
+
+// failingDigestMemories cannot express a LastPageDigest error with the plain
+// fake, which only has a nil/non-nil digest.
+type failingDigestMemories struct {
+	fakeMemories
+}
+
+func (failingDigestMemories) LastPageDigest(string) (*memory.PageDigest, int64, error) {
+	return nil, 0, errors.New("trace is damaged")
+}
+
+// A card whose host field is stale must still be listed under the key the store
+// found it by, or memory_show would deny the very host memory_list just listed.
+func TestMemoryListUsesTheStoreKeyNotTheCardsOwnHostField(t *testing.T) {
+	srv := memoryTestServer(&fakeRouter{}, &fakeMemories{
+		hosts: []string{"example.com"},
+		cards: map[string]*memory.SiteCard{"example.com": {Host: "", Revision: 7}},
+	})
+	session := newTestClient(t, srv)
+
+	text := resultText(t, callTool(t, session, "memory_list", map[string]any{}))
+	var out memoryListResult
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("parse: %v\n%s", err, text)
+	}
+	if len(out.Hosts) != 1 || out.Hosts[0].Host != "example.com" {
+		t.Errorf("row = %+v, want host example.com", out.Hosts)
+	}
 }

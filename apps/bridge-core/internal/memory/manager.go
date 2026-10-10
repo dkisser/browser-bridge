@@ -23,12 +23,6 @@ import (
 // The rule that governs the whole file: nothing here may fail a command. Every
 // method is best-effort and swallows its own errors, because a learning system
 // that can break the browser it is watching has made itself worse than useless.
-// pageDigestAnswer is one host's cached "most recent page recorded" lookup.
-type pageDigestAnswer struct {
-	digest *PageDigest
-	atMs   int64
-}
-
 type Manager struct {
 	stream *Stream
 	store  *Store
@@ -206,6 +200,12 @@ func rotateOwnedStream(stream *Stream, cursor *Cursor, logf func(string, ...any)
 const defaultIdleAfter = 20 * time.Second
 
 // New builds a Manager over $BB_HOME/data.
+// pageDigestAnswer is one host's cached "most recent page recorded" lookup.
+type pageDigestAnswer struct {
+	digest *PageDigest
+	atMs   int64
+}
+
 func New(opts Options) (*Manager, error) {
 	logf := opts.Logf
 	if logf == nil {

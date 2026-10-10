@@ -481,7 +481,7 @@ func (m *Manager) LastPageDigest(host string) (*PageDigest, int64, error) {
 	}
 	if hit, ok := m.pageCache[host]; ok {
 		m.pageMu.Unlock()
-		return hit.digest, hit.atMs, nil
+		return cloneDigest(hit.digest), hit.atMs, nil
 	}
 	m.pageMu.Unlock()
 
@@ -502,10 +502,36 @@ func (m *Manager) LastPageDigest(host string) (*PageDigest, int64, error) {
 		m.pageCache = map[string]pageDigestAnswer{}
 		m.pageStamp = stamp
 	}
-	m.pageCache[host] = pageDigestAnswer{digest: digest, atMs: atMs}
+	m.pageCache[host] = pageDigestAnswer{digest: cloneDigest(digest), atMs: atMs}
 	m.pageMu.Unlock()
 
-	return digest, atMs, nil
+	// The caller gets its own copy even on a miss. The cached pointer is now
+	// shared by every later hit on this host, and a cache is exactly the kind of
+	// thing a future caller will treat as read-only — it looks like the store's
+	// own state. Sorting Nodes on it, or annotating it to mark where it came
+	// from, would then corrupt every other pull in flight. Same reasoning as
+	// Store.read handing out cloneCard(cached).
+	return cloneDigest(digest), atMs, nil
+}
+
+// cloneDigest deep-copies a page digest. The Nodes slice is the mutable part;
+// the rest is scalars.
+func cloneDigest(d *PageDigest) *PageDigest {
+	if d == nil {
+		return nil
+	}
+	out := *d
+	out.Nodes = append([]NodeSig(nil), d.Nodes...)
+	for i := range out.Nodes {
+		if attrs := d.Nodes[i].Attrs; attrs != nil {
+			m := make(map[string]string, len(attrs))
+			for k, v := range attrs {
+				m[k] = v
+			}
+			out.Nodes[i].Attrs = m
+		}
+	}
+	return &out
 }
 
 // OfflineRender is one resolved-against-a-recorded-page rendering, plus what a
@@ -560,17 +586,22 @@ func RenderResolvedOffline(card *SiteCard, digest *PageDigest, atMs int64) Offli
 			// Deliberately never the empty default: that string means "the page
 			// in hand", which is true of the injection and false of anything read
 			// out of a file.
-			PageNote: "the page seen " + formatMs(atMs),
+			PageNote: "the page seen " + FormatMs(atMs),
 		}),
 	}
 	return out
 }
 
-// formatMs renders a millisecond timestamp for a provenance line. Local time
+// FormatMs renders a millisecond timestamp for a provenance line. Local time
 // because every reader of these lines is a person or an agent looking at the
 // same machine the control plane runs on, and the answer to "how long ago was
 // that" is a wall-clock reading.
-func formatMs(ms int64) string {
+//
+// Exported because the MCP memory tools print timestamps beside this one — a
+// card's revision time and the page its map resolved against — and two
+// formatters that were meant to agree is the same duplication that
+// RenderResolvedOffline was extracted to end.
+func FormatMs(ms int64) string {
 	if ms == 0 {
 		return "-"
 	}

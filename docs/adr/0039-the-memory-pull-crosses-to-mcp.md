@@ -90,6 +90,23 @@ recorded here is only as good as the *equivalences* it claims, and claiming one
 is a promise to keep checking. Both surfaces now have tests that fail if the
 equivalence breaks.
 
+**A second review found the packaging fix had broken the release it was fixing.**
+The tarball now ships every skill, and install.sh's `download_skills` gates the
+tarball's root shape with "exactly one entry, and it must be a directory" — which
+expressed "not a flat SKILL.md" by proxy and stopped being true the moment there
+were two skills. Every release install of skills died BB-E211, and
+`install_skills`' own multi-skill branch, right below that gate, was never
+reached. The gate now checks the shape it was written for: the root must hold
+directories, and any non-directory at the root is the wrapper-less failure it has
+always been. The BATS case that pins that failure is unchanged.
+
+Worth recording how that one got through. The change was verified against the
+real `install_skills` function, fed a real tarball — and it passed, because the
+function is correct. The gate in front of it was never run. Checking the
+component while skipping the thing that guards it is not verification, and it
+looked like verification because the happy path did work; only a second skill
+exercised the branch that mattered.
+
 ## Consequences
 
 - `memory_show` resolves the site map offline against the last recorded page and

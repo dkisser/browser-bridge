@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -39,6 +38,19 @@ type memoryShowArgs struct {
 	Raw  bool   `json:"raw,omitempty"`
 }
 
+// memoryListResult is the shape memory_list answers with. An object rather than
+// the bare array `bridge memory list --json` prints, because this tool has to be
+// able to say "these N card files will not parse" without making its own output
+// unparseable — and the installer-side answer to that is not to append prose
+// after the closing bracket.
+type memoryListResult struct {
+	Hosts []memoryListRow `json:"hosts"`
+	// Unreadable names the card files that exist and do not parse. Always
+	// present, empty when there are none, so a caller can branch on the key
+	// rather than on whether it happens to be there.
+	Unreadable []string `json:"unreadable"`
+}
+
 // memoryListRow is the same row `bridge memory list --json` emits, so an agent
 // that learned one interface is not re-learning the shape on the other.
 type memoryListRow struct {
@@ -57,7 +69,7 @@ func (s *MCPServer) executeMemoryList(_ context.Context, _ *mcp.CallToolRequest,
 	}
 	hosts := reader.ListHosts()
 	rows := make([]memoryListRow, 0, len(hosts))
-	var broken []string
+	unreadable := make([]string, 0, len(hosts))
 	for _, h := range hosts {
 		card, err := reader.ReadCard(h)
 		if err != nil {
@@ -66,44 +78,42 @@ func (s *MCPServer) executeMemoryList(_ context.Context, _ *mcp.CallToolRequest,
 			// and an agent reading "No site cards yet" would drive a site from
 			// scratch that the bridge has in fact been learning. memory_show
 			// reports the same condition with the parse error; this reports it
-			// as the count it is here.
-			broken = append(broken, h)
+			// as the names it is here.
+			unreadable = append(unreadable, h)
 			continue
 		}
 		if card == nil {
 			continue
 		}
 		rows = append(rows, memoryListRow{
-			Host:       card.Host,
+			// The key the card was found under, not card.Host. ListHosts derives
+			// it from the filename, which is the store's own key — a card whose
+			// host field is empty or stale would otherwise produce a row naming
+			// a host that memory_show then reports as never learned, which is the
+			// list-and-show disagreement this tool exists to avoid. (The CLI reads
+			// card.Host and inherits the same defect; it is fixed there too.)
+			Host:       h,
 			Revision:   card.Revision,
-			UpdatedAt:  formatMemoryMs(card.UpdatedAtMs),
+			UpdatedAt:  memory.FormatMs(card.UpdatedAtMs),
 			Map:        len(card.Map),
 			Failures:   len(card.Failures),
 			Procedures: len(card.Procedures),
 		})
 	}
-	if len(rows) == 0 {
-		if len(broken) > 0 {
-			return toolText(fmt.Sprintf(
-				"No readable site cards. %d card file(s) exist but will not parse: %s.\n"+
-					"Ask a human about those, or run `bridge memory rm <host>` on them — this is not the same as having learned nothing.",
-				len(broken), strings.Join(broken, ", "))), nil, nil
-		}
+	if len(rows) == 0 && len(unreadable) == 0 {
 		return toolText("No site cards yet. Drive a site and snapshot it — the learner builds the card from what actually happened."), nil, nil
 	}
-	out, err := json.MarshalIndent(rows, "", "  ")
+
+	// An object, always, not an array with a caveat appended after the closing
+	// bracket: appending prose to JSON makes it unparseable exactly when there is
+	// something to report, so the caller that most needs the data is the one that
+	// cannot get it. `unreadable` is the sibling field that carries the caveat in
+	// a form a parser survives.
+	out, err := json.MarshalIndent(memoryListResult{Hosts: rows, Unreadable: unreadable}, "", "  ")
 	if err != nil {
 		return toolError("memory_list", err.Error()), nil, nil
 	}
-	text := string(out)
-	if len(broken) > 0 {
-		// Below the table rather than above it: the readable rows are the answer,
-		// and the broken ones are a caveat on them. Leading with the caveat
-		// would bury a list the caller did ask for.
-		text += fmt.Sprintf("\n\n(%d card file(s) omitted because they will not parse: %s — `bridge memory show <host>` reports the error in full.)",
-			len(broken), strings.Join(broken, ", "))
-	}
-	return toolText(text), nil, nil
+	return toolText(string(out)), nil, nil
 }
 
 func (s *MCPServer) executeMemoryShow(_ context.Context, _ *mcp.CallToolRequest, args memoryShowArgs) (*mcp.CallToolResult, any, error) {
@@ -146,7 +156,15 @@ func (s *MCPServer) executeMemoryShow(_ context.Context, _ *mcp.CallToolRequest,
 		if guide != "" {
 			guidePath = reader.GuidePath(host)
 		}
-		return toolText(rawCardJSON(host, card, guidePath)), nil, nil
+		raw := rawCardJSON(host, card, guidePath)
+		// The same rule the rendered path follows, and it has to reach this one
+		// too: returning here before the warning made raw the single place where
+		// "the guide would not read" and "there is no guide" produced the same
+		// bytes. An agent told "no guide" skips the file that exists.
+		if guideErr != nil {
+			raw += fmt.Sprintf("\n\nWarning: the guide for %s exists but will not read: %v", host, guideErr)
+		}
+		return toolText(raw), nil, nil
 	}
 
 	var b strings.Builder
@@ -179,7 +197,13 @@ func renderCardOffline(reader MemoryReader, host string, card *memory.SiteCard) 
 
 	digest, atMs, err := reader.LastPageDigest(host)
 	if err != nil {
-		fmt.Fprintf(&b, "The trace could not be read (%v), so the site map is shown unresolved.\n\n%s\n",
+		// Not "shown unresolved": RenderCard only emits the map tier when it
+		// has a Resolver, so there is nothing to show unresolved. Saying so
+		// would repeat, on the error path, exactly the withholding-vs-absence
+		// confusion the digest==nil branch below writes a paragraph to avoid.
+		fmt.Fprintf(&b, "The trace could not be read (%v), so the site map is not shown at all —\n"+
+			"the card below is its own unchecked claim. Try memory_show again; if it keeps\n"+
+			"failing, the trace is damaged and `bridge memory history <host>` will say so.\n\n%s\n",
 			err, memory.RenderCard(card, memory.RenderOptions{MaxTokens: memory.DefaultInjectTokens}))
 		return b.String()
 	}
@@ -196,7 +220,7 @@ func renderCardOffline(reader MemoryReader, host string, card *memory.SiteCard) 
 
 	r := memory.RenderResolvedOffline(card, digest, atMs)
 	fmt.Fprintf(&b, "Resolved offline against the last page the control plane recorded for %s.\n", host)
-	fmt.Fprintf(&b, "  seen %s", formatMemoryMs(atMs))
+	fmt.Fprintf(&b, "  seen %s", memory.FormatMs(atMs))
 	if r.PageURL != "" {
 		fmt.Fprintf(&b, "  %s", r.PageURL)
 	}
@@ -265,11 +289,4 @@ func (s *MCPServer) memoryReader() (MemoryReader, *mcp.CallToolResult) {
 		return nil, toolError("memory", "self-learning is disabled on this control plane — no site cards are being recorded or served")
 	}
 	return s.memories, nil
-}
-
-func formatMemoryMs(ms int64) string {
-	if ms == 0 {
-		return "-"
-	}
-	return time.UnixMilli(ms).Local().Format("2006-01-02 15:04:05")
 }
