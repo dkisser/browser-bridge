@@ -25,6 +25,7 @@ const POLICY_STATE = {
   deniedOrigins: {},
   grants: [],
   takeover: true,
+  permissionMode: 'strict' as const,
   agentTabs: [],
   pairingToken: null,
   recentDenials: [],

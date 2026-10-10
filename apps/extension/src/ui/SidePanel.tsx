@@ -1,3 +1,4 @@
+import type { PermissionMode } from '@browser-bridge/shared';
 import {
   type MouseEvent,
   useCallback,
@@ -183,6 +184,21 @@ export function SidePanel() {
     [applySync, setMessage],
   );
 
+  // Permission mode (ADR-0038). The write goes through the service worker
+  // like every other policy mutation — the panel must not touch
+  // chrome.storage itself — and the displayed value comes back from the
+  // storage listener, not from this click. Not optimistic on purpose: the
+  // switch shows what the policy engine is enforcing, and on a failure the
+  // only thing to report is why.
+  const handlePermissionModeChange = useCallback(
+    (mode: PermissionMode): void => {
+      void requestPolicyOp({ op: 'set_permission_mode', mode }).catch(
+        (error: unknown) => setMessage(toErrorMessage(error)),
+      );
+    },
+    [setMessage],
+  );
+
   const handleOpenSettings = useCallback(
     (event: MouseEvent<HTMLButtonElement>): void => {
       event.preventDefault();
@@ -241,10 +257,12 @@ export function SidePanel() {
       <div className={styles.topCluster}>
         <TakeoverHero
           takeover={takeoverForHero}
+          permissionMode={policy?.permissionMode ?? null}
           browserConnected={browserConnected}
           browserId={browserId}
           paired={policy !== null && policy.pairingToken !== null}
           onTakeoverChange={handleTakeoverChange}
+          onPermissionModeChange={handlePermissionModeChange}
           onOpenSettings={handleOpenSettings}
         />
         {message !== '' && (

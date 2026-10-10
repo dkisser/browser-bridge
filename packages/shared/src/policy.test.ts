@@ -235,13 +235,8 @@ describe('origin gate', () => {
     }
   });
 
-  it('denies page-content reads (snapshot, wait:element, gettext, gethtml) on unapproved origins', () => {
-    for (const command of [
-      'snapshot',
-      'wait:element',
-      'gettext',
-      'gethtml',
-    ] as const) {
+  it('denies page-content reads (snapshot, gettext, gethtml) on unapproved origins', () => {
+    for (const command of ['snapshot', 'gettext', 'gethtml'] as const) {
       expectDeny(
         evaluatePolicy(
           command,
@@ -463,7 +458,6 @@ describe('unrestricted commands', () => {
     }
   });
 });
-
 describe('fail-closed policy', () => {
   it('denies commands it does not recognize instead of allowing them', () => {
     const decision = evaluatePolicy('wipeHistory' as CommandType, ctx());

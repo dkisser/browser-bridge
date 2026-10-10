@@ -2,7 +2,12 @@
 // Single chrome.storage.local key, deep-merged over defaults so older or
 // partial stored objects still yield a complete PolicyState.
 
-import type { Denial, Grant, PolicyDecision } from '@browser-bridge/shared';
+import type {
+  Denial,
+  Grant,
+  PermissionMode,
+  PolicyDecision,
+} from '@browser-bridge/shared';
 import { denialKey } from '@browser-bridge/shared';
 
 export interface PendingDownload {
@@ -38,10 +43,46 @@ export interface PolicyState {
   // the user has a visible signal that grouping is disabled, instead of
   // having to open the service-worker DevTools console.
   agentGroupAvailable: boolean;
+  // The human's Permission mode (ADR-0038): 'strict' | 'standard' | 'relaxed'.
+  // Moves the threshold at which a command must clear the Working scope
+  // before running silent; it never moves the boundary.
+  permissionMode: PermissionMode;
 }
 
 const STORAGE_KEY = 'policyState';
 const MAX_RECENT_DENIALS = 20;
+
+// Default resolution when the stored state carries no mode yet (ADR-0038).
+// An upgrade lands on 'standard' — the mode closest to what the user
+// already had, minus the read prompts: content reads go silent, writes keep
+// asking. A fresh install gets 'strict', which reproduces the pre-ADR-0038
+// behavior exactly (reads and writes both origin-gated), so a first run is
+// never the run where something new is already relaxed. The resolved value
+// is persisted (see persistPermissionModeOnce) so neither default is a
+// moving target once a profile has one.
+const FRESH_INSTALL_PERMISSION_MODE: PermissionMode = 'strict';
+const UPGRADE_PERMISSION_MODE: PermissionMode = 'standard';
+
+function isPermissionMode(value: unknown): value is PermissionMode {
+  return value === 'strict' || value === 'standard' || value === 'relaxed';
+}
+
+// A stored value wins outright. Absent it, `undefined` is a fresh install
+// and an object without the key is a profile that predates the mode — the
+// upgrade case. A key holding an unrecognized value (or a stored value that
+// is not an object at all) is corruption: fail safe to strict rather than
+// widening what runs silent.
+function resolvePermissionMode(stored: unknown): PermissionMode {
+  if (isPlainObject(stored)) {
+    if (isPermissionMode(stored.permissionMode)) {
+      return stored.permissionMode;
+    }
+    return 'permissionMode' in stored
+      ? FRESH_INSTALL_PERMISSION_MODE
+      : UPGRADE_PERMISSION_MODE;
+  }
+  return FRESH_INSTALL_PERMISSION_MODE;
+}
 
 const DEFAULT_STATE: PolicyState = {
   origins: {},
@@ -54,6 +95,7 @@ const DEFAULT_STATE: PolicyState = {
   blockedOrigins: [],
   pendingDownloads: [],
   agentGroupAvailable: true,
+  permissionMode: FRESH_INSTALL_PERMISSION_MODE,
 };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -74,13 +116,53 @@ function mergeDeep<T>(defaults: T, stored: unknown): T {
 // Public form of mergeDeep over the policy-state defaults. Lets the
 // chrome.storage listener use the new value it already received instead
 // of issuing a redundant chrome.storage.local.get + merge.
+//
+// The mode is resolved from the raw stored value rather than taken from the
+// merged result: mergeDeep can only supply the single default in
+// DEFAULT_STATE, and the two cases it has to cover (fresh install → strict,
+// upgrade → standard) are not the same answer.
+//
+// Anything that is not a plain object — `null` above all — is normalized to
+// the defaults rather than spread. mergeDeep returns a non-object stored
+// value unchanged, so spreading one yields an object whose every other field
+// is `undefined` while still looking like a complete PolicyState; the first
+// property access (applyPolicyGate reads `deniedOrigins[origin]`) then throws
+// a TypeError instead of applying the defaults the caller expects. A missing
+// key and a null value both mean "no state yet".
 export function normalizePolicyState(stored: unknown): PolicyState {
-  return mergeDeep(DEFAULT_STATE, stored);
+  const merged = isPlainObject(stored)
+    ? mergeDeep(DEFAULT_STATE, stored)
+    : DEFAULT_STATE;
+  return {
+    ...merged,
+    permissionMode: resolvePermissionMode(stored),
+  };
 }
 
 export async function getPolicyState(): Promise<PolicyState> {
   const result = await chrome.storage.local.get(STORAGE_KEY);
-  return mergeDeep(DEFAULT_STATE, result[STORAGE_KEY]);
+  return normalizePolicyState(result[STORAGE_KEY]);
+}
+
+// Writes the resolved mode back once, so a profile's answer stops depending
+// on whether some later write happens to carry the whole state object.
+//
+// The early read is only a fast path: it skips the write entirely once a
+// mode is stored, which is every startup after the first. The write itself
+// goes through updatePolicyState and takes its value from the state read
+// inside that queue, so a mode another writer stored in the meantime is the
+// one that survives rather than a default computed from a stale read.
+export async function persistPermissionModeOnce(): Promise<void> {
+  const result = await chrome.storage.local.get(STORAGE_KEY);
+  if (
+    isPlainObject(result[STORAGE_KEY]) &&
+    isPermissionMode(result[STORAGE_KEY].permissionMode)
+  ) {
+    return;
+  }
+  await updatePolicyState((state) => ({
+    permissionMode: state.permissionMode,
+  }));
 }
 
 // chrome.storage has no transactions, so read-modify-write cycles (grant

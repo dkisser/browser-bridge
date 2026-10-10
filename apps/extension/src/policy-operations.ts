@@ -1,4 +1,4 @@
-import type { Denial, Grant } from '@browser-bridge/shared';
+import type { Denial, Grant, PermissionMode } from '@browser-bridge/shared';
 import { denialKey } from '@browser-bridge/shared';
 import type { PolicyState } from './policy-state';
 
@@ -43,6 +43,7 @@ export type PolicyOp =
   | { op: 'remove_block'; entry: string }
   | { op: 'remove_download'; id: number }
   | { op: 'set_takeover'; desired: boolean }
+  | { op: 'set_permission_mode'; mode: PermissionMode }
   | { op: 'set_pairing_token'; token: string };
 
 // denyChanges resolves the target denial by stable key rather than array
@@ -211,6 +212,32 @@ export function applySetTakeover(
   };
 }
 
+// The Permission mode (ADR-0038). Human-only by construction: the operation
+// exists on the side-panel → service-worker channel, which is gated on the
+// sender being an extension page, and no MCP tool or command can name it.
+//
+// A no-op patch when the mode is already what is stored keeps the write off
+// storage entirely, so clicking the selected option does not churn the
+// policy state (and with it every chrome.storage.onChanged listener).
+//
+// The mode is re-checked here rather than trusted from the message body: the
+// op arrives as `request.op as PolicyOp`, an unchecked assertion on data that
+// crossed a process boundary, and isPermissionMode is the same guard the read
+// path applies. Both directions fail the same way now — the write rejects,
+// the read resolves an unrecognized value to strict — so an unknown mode can
+// never widen what runs silent, which is exactly what policy.ts's own comment
+// says an omitted field must never do.
+export function applySetPermissionMode(
+  state: PolicyState,
+  mode: PermissionMode,
+): Partial<PolicyState> | null {
+  if (mode !== 'strict' && mode !== 'standard' && mode !== 'relaxed') {
+    throw new Error(`permission mode is not recognized: ${String(mode)}`);
+  }
+  if (state.permissionMode === mode) return null;
+  return { permissionMode: mode };
+}
+
 export function applySetPairingToken(
   _state: PolicyState,
   token: string,
@@ -240,6 +267,8 @@ export function applyPolicyOp(
       return applyRemoveDownload(state, request.id);
     case 'set_takeover':
       return applySetTakeover(state, request.desired);
+    case 'set_permission_mode':
+      return applySetPermissionMode(state, request.mode);
     case 'set_pairing_token':
       return applySetPairingToken(state, request.token);
   }

@@ -7,6 +7,7 @@ const EMPTY_STATE: PolicyState = {
   deniedOrigins: {},
   grants: [],
   takeover: false,
+  permissionMode: 'strict',
   agentTabs: [],
   pairingToken: null,
   recentDenials: [],

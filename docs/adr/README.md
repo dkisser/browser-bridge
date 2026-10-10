@@ -42,6 +42,10 @@ ADR records what changed since. Read the chain, not just the newest file.
 | [0036](./0036-the-ceiling-that-never-fired.md) | The ceiling never fired, and the rotation had two owners | [0032](./0032-the-stream-turns-over.md), [0020](./0020-single-typed-stream.md) |
 | [0037](./0037-a-marker-must-be-doing-selector-work.md) | A selector marker must be doing selector work | [0030](./0030-the-boundary-as-implemented.md), [0025](./0025-what-the-baseline-taught.md) |
 
+## After the self-learning run (0038+)
+
+| [0038](./0038-the-mode-moves-the-threshold-not-the-boundary.md) | The mode moves the threshold, not the boundary | [0007](./0007-working-scope-not-per-command-tiers.md) |
+
 ## The rest
 
 | # | Decision |
