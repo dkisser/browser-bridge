@@ -176,4 +176,18 @@ var toolInputSchemas = map[string]*jsonschema.Schema{
 	"pageinfo":        tabIDTimeoutSchema(),
 	"wait_element":    selectorTabTimeoutSchema(),
 	"wait_navigation": tabIDTimeoutSchema(),
+	// The memory tools (ADR-0039) take no tab and no timeout: they read the
+	// store, not the browser, so there is nothing to address and nothing to
+	// wait on. They are the only tools in this map with no timeout_ms, which
+	// is the signal that they do not drive the browser at all — and so do not
+	// pass through the extension's policy gate (ADR-0006).
+	"memory_list": objectSchema(nil, nil, map[string]*jsonschema.Schema{}),
+	"memory_show": objectSchema(
+		[]string{"host", "raw"},
+		[]string{"host"},
+		map[string]*jsonschema.Schema{
+			"host": {Type: "string", MinLength: intPtr(1)},
+			"raw":  {Type: "boolean"},
+		},
+	),
 }

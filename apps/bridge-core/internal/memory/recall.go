@@ -3,6 +3,7 @@ package memory
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Recall is ADR-0019: the card goes back to the agent in-band, on the result of
@@ -423,4 +424,194 @@ func VerifyCard(card *SiteCard, digest *PageDigest, browserID string) (refs map[
 		refs[e.Pred.String()] = "@" + strings.TrimPrefix(ref, "@")
 	}
 	return refs, missing
+}
+
+// LastDigestFor returns the most recent page digest recorded for host among
+// recs, and when it was seen. The digest rides on the trace record, so both
+// callers reach it without a second store: the CLI reads its own handle of the
+// stream (which works with the service stopped), and the control plane reads
+// the handle it already holds (ADR-0039's memory_show).
+//
+// The records come from the caller rather than being read here, because *which*
+// handle is opened is the caller's decision and not this function's: opening a
+// second one over the live file is what ADR-0036 warns about, and the answer
+// differs between a running daemon and a stopped one.
+func LastDigestFor(recs []TraceRecord, host string) (*PageDigest, int64) {
+	var (
+		best  *PageDigest
+		bestA int64
+	)
+	for _, r := range recs {
+		if r.Page == nil || r.Host != host {
+			continue
+		}
+		// >= so a later record wins ties, which is what "most recent" means when
+		// two snapshots land in the same millisecond.
+		if best == nil || r.AtMs >= bestA {
+			best, bestA = r.Page, r.AtMs
+		}
+	}
+	return best, bestA
+}
+
+// LastPageDigest reports the newest page the control plane recorded for a host,
+// read through the Manager's own stream handle.
+//
+// The scan is incremental. ReadFrom takes a starting line index, so this keeps
+// a cursor and reads only what has been appended since the last call, folding
+// each new record into a per-host "newest so far" map.
+//
+// It was a whole-file ReadFrom(0) first, and then a memo keyed on a stream
+// stamp — which was worse than useless, because the stream grows on every
+// command the router sends, and ADR-0039 puts this on a path the skills mandate
+// on every landing. The stamp therefore moved between essentially every pull,
+// so the memo never hit and every call re-decoded the file (and its retained
+// generation) from byte 0: hundreds of milliseconds and a large transient
+// allocation, bought with a mutex and a clone. A cursor has no invalidation
+// question at all, which is the property the stamp version was reaching for.
+func (m *Manager) LastPageDigest(host string) (*PageDigest, int64, error) {
+	if m == nil || m.stream == nil {
+		return nil, 0, nil
+	}
+
+	// Held across the read, deliberately. The alternative — read outside the
+	// lock, merge inside — needs a second copy of the scan position and gets
+	// the two racers advancing it out of order. The read is a tail now, so
+	// serialising it costs one record per concurrent pull.
+	m.pageMu.Lock()
+	defer m.pageMu.Unlock()
+
+	if m.pageBest == nil {
+		m.pageBest = map[string]pageDigestAnswer{}
+	}
+	if rot := m.stream.Stamp(); rot.RotatedSize != m.pageRot.RotatedSize || rot.RotatedModNs != m.pageRot.RotatedModNs {
+		// A rotation renumbered every index below. Rescan from zero — cheap,
+		// because it is a rotation and the retained generation is one file —
+		// and keep the accumulated best, which folding is idempotent against.
+		m.pageScanLine = 0
+		m.pageRot = rot
+	} else if m.pageScanLine == 0 && rot.ActiveSize > 0 {
+		// First scan after start-up, when there is no rotation to detect.
+		m.pageRot = rot
+	}
+	recs, next, _, err := m.stream.ReadFrom(m.pageScanLine)
+	if err != nil {
+		// The cursor is not advanced on a failure, so the next call re-reads the
+		// same span rather than skipping past records it never saw.
+		return nil, 0, err
+	}
+	m.pageScanLine = next
+	for _, r := range recs {
+		if r.Page == nil {
+			continue
+		}
+		cur, ok := m.pageBest[r.Host]
+		// >= so a later record wins a same-millisecond tie, matching
+		// LastDigestFor: two answers for "most recent" is one bug too many.
+		if ok && r.AtMs < cur.atMs {
+			continue
+		}
+		m.pageBest[r.Host] = pageDigestAnswer{digest: cloneDigest(r.Page), atMs: r.AtMs}
+	}
+
+	hit := m.pageBest[host]
+	// A copy on the way out, because this map is shared state that outlives the
+	// call and a cache is exactly the thing a future caller will treat as
+	// read-only. Sorting Nodes on it would corrupt every other pull in flight.
+	// Same reasoning as Store.read handing out cloneCard(cached).
+	return cloneDigest(hit.digest), hit.atMs, nil
+}
+
+// cloneDigest deep-copies a page digest. The Nodes slice is the mutable part;
+// the rest is scalars.
+func cloneDigest(d *PageDigest) *PageDigest {
+	if d == nil {
+		return nil
+	}
+	out := *d
+	out.Nodes = append([]NodeSig(nil), d.Nodes...)
+	for i := range out.Nodes {
+		if attrs := d.Nodes[i].Attrs; attrs != nil {
+			m := make(map[string]string, len(attrs))
+			for k, v := range attrs {
+				m[k] = v
+			}
+			out.Nodes[i].Attrs = m
+		}
+	}
+	return &out
+}
+
+// OfflineRender is one resolved-against-a-recorded-page rendering, plus what a
+// reader needs in order not to over-read it: how many map entries matched, and
+// how many did not.
+type OfflineRender struct {
+	Text     string
+	Matched  int
+	Total    int
+	Missing  int
+	SeenAtMs int64
+	PageURL  string
+}
+
+// RenderResolvedOffline renders a card with its site map resolved against a
+// recorded page and returns the counts alongside it.
+//
+// This is the half `bridge memory show --resolve` and the MCP `memory_show`
+// were each implementing separately: the same header lines, the same
+// provenance sentence, the same RenderOptions. ADR-0026's requirement — that the
+// provenance be stated where the reader is already looking — is the kind of
+// thing that has to be changed in both places at once, which is exactly what a
+// copy does not do.
+//
+// The counts describe the *card*, not the body below them, and the caller is
+// expected to say so. RenderCard trims to MaxTokens by shedding lines from the
+// end with no marker, so a header that reported only what survived would be
+// wrong in the other direction; the honest claim is about the card, with the
+// cap stated alongside it.
+func RenderResolvedOffline(card *SiteCard, digest *PageDigest, atMs int64) OfflineRender {
+	if card == nil {
+		return OfflineRender{}
+	}
+	if digest == nil {
+		return OfflineRender{
+			Text:    RenderCard(card, RenderOptions{MaxTokens: DefaultInjectTokens}),
+			Total:   len(card.Map),
+			Missing: len(card.Map),
+		}
+	}
+
+	_, missing := VerifyCard(card, digest, "")
+	out := OfflineRender{
+		Total:    len(card.Map),
+		Missing:  missing,
+		Matched:  len(card.Map) - missing,
+		SeenAtMs: atMs,
+		PageURL:  digest.URL,
+		Text: RenderCard(card, RenderOptions{
+			MaxTokens: DefaultInjectTokens,
+			Resolver:  func(p Predicate) (string, bool) { return digest.Resolve(p) },
+			// Deliberately never the empty default: that string means "the page
+			// in hand", which is true of the injection and false of anything read
+			// out of a file.
+			PageNote: "the page seen " + FormatMs(atMs),
+		}),
+	}
+	return out
+}
+
+// FormatMs renders a millisecond timestamp for a provenance line. Local time
+// because every reader of these lines is a person or an agent looking at the
+// same machine the control plane runs on, and the answer to "how long ago was
+// that" is a wall-clock reading.
+//
+// Exported because the MCP memory tools print timestamps beside this one — a
+// card's revision time and the page its map resolved against — and two
+// formatters that were meant to agree is the same duplication that
+// RenderResolvedOffline was extracted to end.
+func FormatMs(ms int64) string {
+	if ms == 0 {
+		return "-"
+	}
+	return time.UnixMilli(ms).Local().Format("2006-01-02 15:04:05")
 }

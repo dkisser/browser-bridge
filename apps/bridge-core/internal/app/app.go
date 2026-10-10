@@ -154,6 +154,7 @@ func Run(ctx context.Context, cfg Config) error {
 		Version:        cfg.Version,
 		Logger:         logger,
 		Memory:         memoryHook(mem),
+		Memories:       memoryReader(mem, st.DataDir()),
 	})
 
 	// Start order matches index.ts: browser, inbound, MCP.
@@ -224,6 +225,49 @@ func memoryHook(m *memory.Manager) core.MemoryHook {
 		return nil
 	}
 	return m
+}
+
+// memoryReader adapts the same Manager to the read half the memory tools call
+// (ADR-0039). One manager, two faces, for the reason core.MemoryHook keeps no
+// read methods: the router needs a hook it can call on every command's two
+// paths, while memory_show is an explicit pull the agent asked for.
+//
+// The guide functions are package-level over a data directory rather than
+// Manager methods, so the directory is passed in — it is the same st.DataDir()
+// memory.New was given, and *not* Store.Dir(), which is the cards subdirectory
+// and would put guides under data/cards/guides. A nil *memory.Manager becomes a
+// nil interface here on purpose, as above: a typed nil would pass the != nil
+// checks and panic on use.
+func memoryReader(m *memory.Manager, dataDir string) http.MemoryReader {
+	if m == nil {
+		return nil
+	}
+	return &managerReader{m: m, dir: dataDir}
+}
+
+// managerReader is the adapter. It holds no state beyond what it already has,
+// so it is safe for the concurrent calls the MCP server makes.
+type managerReader struct {
+	m   *memory.Manager
+	dir string
+}
+
+func (r *managerReader) ListHosts() []string { return r.m.Store().Hosts() }
+
+func (r *managerReader) ReadCard(host string) (*memory.SiteCard, error) {
+	return r.m.Store().Read(host)
+}
+
+func (r *managerReader) ReadGuide(host string) (string, error) {
+	return memory.ReadGuide(r.dir, host)
+}
+
+func (r *managerReader) GuidePath(host string) string {
+	return memory.GuidePath(r.dir, host)
+}
+
+func (r *managerReader) LastPageDigest(host string) (*memory.PageDigest, int64, error) {
+	return r.m.LastPageDigest(host)
 }
 
 // authorizer picks the auth provider the way index.ts does: no BRIDGE_API_KEYS

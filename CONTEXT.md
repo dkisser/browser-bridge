@@ -95,7 +95,7 @@ Durable, derived knowledge the control plane carries between sessions about how 
 _Avoid_: self-learning, self-evolution, experience base, training data
 
 **Site card**:
-The Memory for one host: what its pages are laid out like, which calls work there, and which ones have been observed to fail. Injected back to the agent as a labelled reference when it lands on a host it has a card for, and rewritten when the host stops matching. A card is *advice about where to look first*, never a replacement for looking: the agent keeps its own list of what to try, and the card's shortlist goes in front of it. A card that is stale must cost calls, not correctness.
+The Memory for one host: what its pages are laid out like, which calls work there, and which ones have been observed to fail. Injected back to the agent as a labelled reference when it lands on a host it has a card for, and rewritten when the host stops matching. The agent can also pull one on demand — `memory_show` over MCP, `bridge memory show <host>` over the CLI — which is the only way to get one before any landing has happened. A pull resolves the map against the last *recorded* page and is labelled as such, because those refs address nothing in the browser now (ADR-0039). A card is *advice about where to look first*, never a replacement for looking: the agent keeps its own list of what to try, and the card's shortlist goes in front of it. A card that is stale must cost calls, not correctness.
 _Avoid_: site profile, site model, recipe file, playbook
 
 **Baseline**:

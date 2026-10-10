@@ -83,5 +83,26 @@ tab-scoped tool below requires `tab_id: number` — use the ids reported by
 | `pageinfo` | Get title, URL, and active status of a specific tab | `tab_id: number`, `timeout_ms?: number` |
 | `wait_element` | Wait for an element to appear | `selector: string`, `tab_id: number`, `timeout_ms?: number` |
 | `wait_navigation` | Wait for page navigation to complete | `tab_id: number`, `timeout_ms?: number` |
+| `memory_list` | List every host with a learned site card (read-only; does not touch the browser) | — |
+| `memory_show` | Show what was learned about one host: the site card resolved against the last page recorded, then any human-written site guide | `host: string`, `raw?: boolean` |
 
-Each browser-control tool accepts an optional `timeout_ms` argument.
+Every browser-control tool above accepts an optional `timeout_ms` argument. The
+two `memory_*` tools below take neither `tab_id` nor `timeout_ms`: they read the
+store rather than the browser, so they never reach the extension's policy gate.
+
+`memory_list` answers with `{"hosts": [...], "unreadable": [...], "truncated"?:
+{"dropped": N}}` — an object rather than a bare array, because it has to be able
+to name the card files that exist and do not parse without making its own output
+unparseable. `unreadable` is always present and empty when there is nothing to
+report; `truncated` is absent unless the listing hit its 50-row cap.
+
+`memory_show` is the pull path — call it when you land on a known host, and
+always before writing or rehearsing a routine, where no landing has happened yet
+and so nothing has been injected. The refs it prints were resolved offline
+against a *recorded* page, not the page in the browser now; the entry count it
+prints describes the card and notes that the rendering is token-capped, so the
+lines shown may be fewer than the count. A `no card for <host>` answer is normal.
+
+The CLI equivalents are `bridge memory list` and `bridge memory show <host>
+--resolve` — the flag is not optional, because without it the CLI renders the
+card with no resolver and drops the site map entirely.

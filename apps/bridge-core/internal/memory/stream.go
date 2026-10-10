@@ -158,6 +158,62 @@ func (s *Stream) Append(rec TraceRecord) error {
 	return nil
 }
 
+// StreamStamp is a cheap fingerprint of exactly the bytes ReadFrom would read:
+// the active file and the one retained generation. Two stamps being equal means
+// a full re-read cannot produce a different answer, which is what makes it a
+// cache key (ADR-0039).
+//
+// Rotation is covered because it does not change the active file's size — it
+// renames it and creates a fresh one — so a stamp built from the active file
+// alone would go stale the moment a rotation happened and keep serving a digest
+// from a generation that had just been moved aside.
+//
+// The rotated half is also the only filesystem-derived signal that a rotation
+// happened, which is what makes it the right basis for invalidating a scan
+// cursor: ReadFrom's line indices are global across the retained generation and
+// the active file, so a rotation renumbers every index a reader was holding. A
+// counter on the Stream handle would not do — the handle that rotates and the
+// handle that reads are the same in production but need not be, and ADR-0036
+// already established that a second Manager over the live directory is a real
+// situation rather than a hypothetical one.
+type StreamStamp struct {
+	ActiveSize int64
+	// Nanoseconds, and named for it. A field called *Ms holding UnixNano is a
+	// trap: TraceRecord.AtMs is milliseconds, so a reader comparing the two —
+	// which is the obvious thing to do when both say "millisecond timestamp" —
+	// gets a value 10^6 too large and concludes the cache never invalidates.
+	ActiveModNs  int64
+	RotatedSize  int64
+	RotatedModNs int64
+}
+
+// Stamp reports the current fingerprint. It stats two files and does not read
+// them, which is the entire point: the alternative is the full decode that
+// Stamp exists to avoid.
+//
+// The retained generation is stat'ed by *path*, not by the handle's rotated
+// field. The handle that rotates and the handle that reads need not be the same
+// — ADR-0036 already established that a second Manager over the live directory
+// is a real situation — and a handle that never rotated has an empty rotated
+// field, so it would report no generation and a reader holding a cursor would
+// never learn that its indices had been renumbered. Rotate always renames to
+// this fixed name, so the path is knowable without having rotated.
+func (s *Stream) Stamp() StreamStamp {
+	s.mu.Lock()
+	path := s.path
+	s.mu.Unlock()
+
+	var st StreamStamp
+	if fi, err := os.Stat(path); err == nil {
+		st.ActiveSize, st.ActiveModNs = fi.Size(), fi.ModTime().UnixNano()
+	}
+	rotatedPath := filepath.Join(filepath.Dir(path), rotatedStreamName)
+	if fi, err := os.Stat(rotatedPath); err == nil {
+		st.RotatedSize, st.RotatedModNs = fi.Size(), fi.ModTime().UnixNano()
+	}
+	return st
+}
+
 // ReadFrom returns every record from line index `from` (0-based) to the end of
 // the file, and the index one past the last line it could account for.
 //

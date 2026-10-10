@@ -44,7 +44,10 @@ ADR records what changed since. Read the chain, not just the newest file.
 
 ## After the self-learning run (0038+)
 
+| # | Decision | Amends |
+|---|----------|--------|
 | [0038](./0038-the-mode-moves-the-threshold-not-the-boundary.md) | The mode moves the threshold, not the boundary | [0007](./0007-working-scope-not-per-command-tiers.md) |
+| [0039](./0039-the-memory-pull-crosses-to-mcp.md) | The memory pull crosses to MCP, as a mandated step and not a choice | 0019, 0024, [0027](./0027-the-cli-recalls-by-pull.md) |
 
 ## The rest
 

@@ -6,7 +6,6 @@ import (
 	"os"
 	"sort"
 	"text/tabwriter"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -82,10 +81,14 @@ func newMemoryListCommand(g *globals) *cobra.Command {
 					if !ok {
 						continue
 					}
+					// The key from the directory listing, not card.Host — the
+					// same reason the MCP memory_list uses it (ADR-0039): a card
+					// whose host field is stale would otherwise be listed under
+					// a name that `memory show` then denies.
 					rows = append(rows, row{
-						Host:       card.Host,
+						Host:       h,
 						Revision:   card.Revision,
-						UpdatedAt:  formatMs(card.UpdatedAtMs),
+						UpdatedAt:  memory.FormatMs(card.UpdatedAtMs),
 						Map:        len(card.Map),
 						Failures:   len(card.Failures),
 						Procedures: len(card.Procedures),
@@ -104,8 +107,8 @@ func newMemoryListCommand(g *globals) *cobra.Command {
 				if !ok {
 					continue
 				}
-				fmt.Fprintf(w, "%s\t%d\t%s\t%d\t%d\t%d\n", card.Host, card.Revision,
-					formatMs(card.UpdatedAtMs), len(card.Map), len(card.Failures), len(card.Procedures))
+				fmt.Fprintf(w, "%s\t%d\t%s\t%d\t%d\t%d\n", h, card.Revision,
+					memory.FormatMs(card.UpdatedAtMs), len(card.Map), len(card.Failures), len(card.Procedures))
 			}
 			return w.Flush()
 		},
@@ -290,26 +293,32 @@ func showResolved(cmd *cobra.Command, host string, card *memory.SiteCard) error 
 		return ErrReported
 	}
 
-	_, missing := memory.VerifyCard(card, digest, "")
-	note := "the page seen " + formatMs(atMs)
+	// The rendering and the counts come from memory.RenderResolvedOffline, the
+	// same call the MCP memory_show tool makes (ADR-0039). The provenance is
+	// stated here in the header and again inside the map section's own title by
+	// the PageNote that helper passes, which is what stops an offline render
+	// from being mistaken for the live injection — a claim that only survives
+	// while there is one copy of it to change.
+	r := memory.RenderResolvedOffline(card, digest, atMs)
 	fmt.Fprintf(out, "Resolved offline against the last page the control plane recorded for %s.\n", host)
-	fmt.Fprintf(out, "  seen %s", formatMs(atMs))
-	if digest.URL != "" {
-		fmt.Fprintf(out, "  %s", digest.URL)
+	fmt.Fprintf(out, "  seen %s", memory.FormatMs(atMs))
+	if r.PageURL != "" {
+		fmt.Fprintf(out, "  %s", r.PageURL)
 	}
-	if len(card.Map) > 0 {
-		fmt.Fprintf(out, "\n  %d of %d map entries matched it; %d did not.\n", len(card.Map)-missing, len(card.Map), missing)
+	if r.Total > 0 {
+		// About the card, not about the lines below: RenderCard trims to
+		// MaxTokens by shedding from the end with no marker, so a count
+		// claiming "N of M" of what was *shown* would be wrong the moment the
+		// cap bites.
+		fmt.Fprintf(out, "\n  %d of %d map entries matched that page; %d did not. The rendering is capped at ~%d tokens, so it may show fewer.\n",
+			r.Matched, r.Total, r.Missing, memory.DefaultInjectTokens)
 	}
 	fmt.Fprintf(out, "  These refs are not valid for whatever is in your browser now.\n\n")
 
 	// Both halves, because that is what an agent receives across a landing and
 	// the snapshot after it — reassembled here from a stored digest instead of a
-	// live one. Same options the injection uses, plus the provenance note.
-	fmt.Fprintln(out, memory.RenderCard(card, memory.RenderOptions{
-		MaxTokens: memory.DefaultInjectTokens,
-		Resolver:  func(p memory.Predicate) (string, bool) { return digest.Resolve(p) },
-		PageNote:  note,
-	}))
+	// live one.
+	fmt.Fprintln(out, r.Text)
 	return nil
 }
 
@@ -332,21 +341,11 @@ func lastPageFor(dir string, host string) (*memory.PageDigest, int64, error) {
 	if err != nil {
 		return nil, 0, err
 	}
-	var (
-		best  *memory.PageDigest
-		bestA int64
-	)
-	for _, r := range recs {
-		if r.Page == nil || r.Host != host {
-			continue
-		}
-		// >= so a later record wins ties, which is what "most recent" means when
-		// two snapshots land in the same millisecond.
-		if best == nil || r.AtMs >= bestA {
-			best, bestA = r.Page, r.AtMs
-		}
-	}
-	return best, bestA, nil
+	// The scan itself is memory.LastDigestFor, shared with the MCP memory_show
+	// tool (ADR-0039); only the handle is this command's own, because a CLI
+	// must work with the service stopped.
+	digest, atMs := memory.LastDigestFor(recs, host)
+	return digest, atMs, nil
 }
 
 func newMemoryLearnCommand(g *globals) *cobra.Command {
@@ -387,7 +386,7 @@ func newMemoryLearnCommand(g *globals) *cobra.Command {
 					if !ok {
 						continue
 					}
-					rows = append(rows, row{card.Host, card.Revision, len(card.Map), len(card.Failures), len(card.Procedures)})
+					rows = append(rows, row{h, card.Revision, len(card.Map), len(card.Failures), len(card.Procedures)})
 				}
 				return printJSONRows(cmd, g, rows)
 			}
@@ -402,7 +401,7 @@ func newMemoryLearnCommand(g *globals) *cobra.Command {
 					continue
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "  %s  rev %d  map %d  failures %d  steps %d\n",
-					card.Host, card.Revision, len(card.Map), len(card.Failures), len(card.Procedures))
+					h, card.Revision, len(card.Map), len(card.Failures), len(card.Procedures))
 			}
 			return nil
 		},
@@ -454,12 +453,12 @@ func newMemoryHistoryCommand(g *globals) *cobra.Command {
 				}
 				rows := make([]row, 0, len(revs)+len(stale))
 				for _, r := range revs {
-					rows = append(rows, row{host, r.Revision, formatMs(r.AtMs), r.Reason, r.Summary, false, r.Evidence})
+					rows = append(rows, row{host, r.Revision, memory.FormatMs(r.AtMs), r.Reason, r.Summary, false, r.Evidence})
 				}
 				// Staleness is an observation, not a change, and the two are
 				// marked apart so a reader does not count one as the other.
 				for _, r := range stale {
-					rows = append(rows, row{host, r.Revision, formatMs(r.AtMs), "stale", r.Summary, true, nil})
+					rows = append(rows, row{host, r.Revision, memory.FormatMs(r.AtMs), "stale", r.Summary, true, nil})
 				}
 				sort.SliceStable(rows, func(i, j int) bool { return rows[i].Revision > rows[j].Revision })
 				return printJSONRows(cmd, g, rows)
@@ -470,7 +469,7 @@ func newMemoryHistoryCommand(g *globals) *cobra.Command {
 			}
 			for _, r := range revs {
 				fmt.Fprintf(cmd.OutOrStdout(), "rev %-4d %s  %-8s %s\n",
-					r.Revision, formatMs(r.AtMs), r.Reason, r.Summary)
+					r.Revision, memory.FormatMs(r.AtMs), r.Reason, r.Summary)
 				if len(r.Evidence) > 0 {
 					sort.Strings(r.Evidence)
 					fmt.Fprintf(cmd.OutOrStdout(), "        evidence: %v\n", r.Evidence)
@@ -483,7 +482,7 @@ func newMemoryHistoryCommand(g *globals) *cobra.Command {
 			// automatic update, and this says which one is in doubt.
 			for _, r := range stale {
 				fmt.Fprintf(cmd.OutOrStdout(), "rev %-4d %s  %-8s %s\n",
-					r.Revision, formatMs(r.AtMs), "STALE", r.Summary)
+					r.Revision, memory.FormatMs(r.AtMs), "STALE", r.Summary)
 			}
 			return nil
 		},
@@ -570,11 +569,4 @@ func printJSONRows(cmd *cobra.Command, g *globals, rows any) error {
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), string(data))
 	return nil
-}
-
-func formatMs(ms int64) string {
-	if ms == 0 {
-		return "-"
-	}
-	return time.UnixMilli(ms).Local().Format("2006-01-02 15:04:05")
 }

@@ -40,8 +40,8 @@ func TestToolsListMatchesTheContract(t *testing.T) {
 	if uerr := json.Unmarshal(data, &fixture); uerr != nil {
 		t.Fatalf("parse fixture: %v", uerr)
 	}
-	if len(fixture) != 22 {
-		t.Fatalf("fixture has %d tools, want 22", len(fixture))
+	if len(fixture) != 24 {
+		t.Fatalf("fixture has %d tools, want 24", len(fixture))
 	}
 
 	srv := newTestServer(&fakeRouter{}, nil)
@@ -108,7 +108,7 @@ func TestToolsListMatchesTheContract(t *testing.T) {
 	}
 }
 
-// docs/mcp-setup.md carries a hand-maintained table of the same 22 tools the
+// docs/mcp-setup.md carries a hand-maintained table of the same tools the
 // golden fixture pins, and it drifted: `snapshot` was missing entirely and
 // `list_browsers` listed no parameters. The fixture is the contract, so the
 // doc being behind it means the first thing a new user reads disagrees with
