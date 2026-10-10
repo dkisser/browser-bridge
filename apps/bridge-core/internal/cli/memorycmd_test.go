@@ -105,7 +105,7 @@ func TestShowResolveResolvesAgainstTheLastRecordedPage(t *testing.T) {
 
 	for _, want := range []string{
 		"Resolved offline against the last page",
-		"2 of 3 map entries matched it; 1 did not.",
+		"2 of 3 map entries matched that page; 1 did not.",
 		formatMs(1_700_000_200_000),           // the newest snapshot, not the older
 		"https://mail.example.com/u/0/#inbox", // and its url
 		"→ @e1",                               // resolved from that page

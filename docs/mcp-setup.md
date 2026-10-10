@@ -86,13 +86,17 @@ tab-scoped tool below requires `tab_id: number` — use the ids reported by
 | `memory_list` | List every host with a learned site card (read-only; does not touch the browser) | — |
 | `memory_show` | Show what was learned about one host: the site card resolved against the last page recorded, then any human-written site guide | `host: string`, `raw?: boolean` |
 
-Each browser-control tool accepts an optional `timeout_ms` argument.
+Every browser-control tool above accepts an optional `timeout_ms` argument. The
+two `memory_*` tools below take neither `tab_id` nor `timeout_ms`: they read the
+store rather than the browser, so they never reach the extension's policy gate.
 
-The two `memory_*` tools are the only ones that take neither `tab_id` nor
-`timeout_ms`: they read the store rather than the browser, so they never reach
-the extension's policy gate. `memory_show` is the pull path — call it when you
-land on a known host and always before writing or rehearsing a routine, where no
-landing has happened yet and so nothing has been injected. The refs it prints
-were resolved offline against a *recorded* page, not the page in the browser
-now. The CLI equivalents are `bridge memory list` and `bridge memory show
-<host>`.
+`memory_show` is the pull path — call it when you land on a known host, and
+always before writing or rehearsing a routine, where no landing has happened yet
+and so nothing has been injected. The refs it prints were resolved offline
+against a *recorded* page, not the page in the browser now; the entry count it
+prints describes the card and notes that the rendering is token-capped, so the
+lines shown may be fewer than the count. A `no card for <host>` answer is normal.
+
+The CLI equivalents are `bridge memory list` and `bridge memory show <host>
+--resolve` — the flag is not optional, because without it the CLI renders the
+card with no resolver and drops the site map entirely.

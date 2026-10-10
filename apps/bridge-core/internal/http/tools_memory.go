@@ -57,12 +57,20 @@ func (s *MCPServer) executeMemoryList(_ context.Context, _ *mcp.CallToolRequest,
 	}
 	hosts := reader.ListHosts()
 	rows := make([]memoryListRow, 0, len(hosts))
+	var broken []string
 	for _, h := range hosts {
 		card, err := reader.ReadCard(h)
-		if err != nil || card == nil {
-			// A card that will not parse is a fact about the store, not a row.
-			// memory_show is where that is reported in full, with its path; here
-			// it would only mean one fewer line in a list of hosts.
+		if err != nil {
+			// Collected, not skipped. Dropping it silently made an empty result
+			// mean two things at once — nothing learned, and everything broken —
+			// and an agent reading "No site cards yet" would drive a site from
+			// scratch that the bridge has in fact been learning. memory_show
+			// reports the same condition with the parse error; this reports it
+			// as the count it is here.
+			broken = append(broken, h)
+			continue
+		}
+		if card == nil {
 			continue
 		}
 		rows = append(rows, memoryListRow{
@@ -75,13 +83,27 @@ func (s *MCPServer) executeMemoryList(_ context.Context, _ *mcp.CallToolRequest,
 		})
 	}
 	if len(rows) == 0 {
+		if len(broken) > 0 {
+			return toolText(fmt.Sprintf(
+				"No readable site cards. %d card file(s) exist but will not parse: %s.\n"+
+					"Ask a human about those, or run `bridge memory rm <host>` on them — this is not the same as having learned nothing.",
+				len(broken), strings.Join(broken, ", "))), nil, nil
+		}
 		return toolText("No site cards yet. Drive a site and snapshot it — the learner builds the card from what actually happened."), nil, nil
 	}
 	out, err := json.MarshalIndent(rows, "", "  ")
 	if err != nil {
 		return toolError("memory_list", err.Error()), nil, nil
 	}
-	return toolText(string(out)), nil, nil
+	text := string(out)
+	if len(broken) > 0 {
+		// Below the table rather than above it: the readable rows are the answer,
+		// and the broken ones are a caveat on them. Leading with the caveat
+		// would bury a list the caller did ask for.
+		text += fmt.Sprintf("\n\n(%d card file(s) omitted because they will not parse: %s — `bridge memory show <host>` reports the error in full.)",
+			len(broken), strings.Join(broken, ", "))
+	}
+	return toolText(text), nil, nil
 }
 
 func (s *MCPServer) executeMemoryShow(_ context.Context, _ *mcp.CallToolRequest, args memoryShowArgs) (*mcp.CallToolResult, any, error) {
@@ -89,7 +111,16 @@ func (s *MCPServer) executeMemoryShow(_ context.Context, _ *mcp.CallToolRequest,
 	if unavailable != nil {
 		return unavailable, nil, nil
 	}
-	host := strings.TrimSpace(args.Host)
+	// Normalised the way `bridge memory show` normalises, and it has to be the
+	// *same* way: this tool is documented as that command's MCP equivalent, and
+	// a caller holding a URL from pageinfo would otherwise be told a host the
+	// bridge has a card for has never been learned. An empty result here is
+	// indistinguishable from a miss, which is the worst shape a wrong answer can
+	// take (memory.Host: "one rule, one place").
+	host := memory.Host(strings.TrimSpace(args.Host))
+	if host == "" {
+		return toolError("memory_show", fmt.Sprintf("%q is not a host name", args.Host)), nil, nil
+	}
 
 	card, err := reader.ReadCard(host)
 	if err != nil {
@@ -102,10 +133,13 @@ func (s *MCPServer) executeMemoryShow(_ context.Context, _ *mcp.CallToolRequest,
 	// they are written at a human's request while cards are earned — so it is
 	// read before the card is judged missing, and printed on its own when the
 	// card is absent (ADR-0033).
-	guide, gerr := reader.ReadGuide(host)
-	if gerr != nil {
-		return toolError("memory_show", fmt.Sprintf("the guide for %s exists but will not read: %v", host, gerr)), nil, nil
-	}
+	//
+	// A guide that will not read is a warning and not a failure, and the CLI
+	// said so first: the card is what this tool exists for and it has already
+	// been read, so throwing it away over a file the human wrote would make the
+	// two documented-equivalent interfaces disagree about whether a learned host
+	// still has a card.
+	guide, guideErr := reader.ReadGuide(host)
 
 	if args.Raw {
 		guidePath := ""
@@ -117,8 +151,8 @@ func (s *MCPServer) executeMemoryShow(_ context.Context, _ *mcp.CallToolRequest,
 
 	var b strings.Builder
 	if card == nil {
-		fmt.Fprintf(&b, "%s\nNo card for %s — the bridge has not learned this host yet. Carry on without one;\n",
-			memoryHeader(host), host)
+		fmt.Fprintf(&b, "Pulled from the store for %s — these notes were not checked against the page in your browser.\n", host)
+		fmt.Fprintf(&b, "No card for %s — the bridge has not learned this host yet. Carry on without one;\n", host)
 		fmt.Fprintf(&b, "driving the site and snapshotting it is what builds it.\n")
 	} else {
 		fmt.Fprint(&b, renderCardOffline(reader, host, card))
@@ -126,58 +160,81 @@ func (s *MCPServer) executeMemoryShow(_ context.Context, _ *mcp.CallToolRequest,
 	if guide != "" {
 		fmt.Fprintf(&b, "\n[site guide] %s\n%s\n", reader.GuidePath(host), guide)
 	}
+	if guideErr != nil {
+		fmt.Fprintf(&b, "\nWarning: the guide for %s exists but will not read: %v\n", host, guideErr)
+	}
 	return toolText(strings.TrimRight(b.String(), "\n")), nil, nil
 }
 
 // renderCardOffline renders a card with its site map resolved against the last
 // page the control plane recorded, and says where that page came from.
 //
-// The provenance is stated in the header *and* carried into the map section's
-// own title via PageNote, because that is what keeps this rendering honest:
-// a card's refs only mean anything against the page they were resolved from,
-// and the page in the browser now is not that page (ADR-0026). One statement
-// is a footer nobody reads; the section title is the line a reader is already
-// looking at when they decide whether to trust an @eN.
+// The rendering itself is memory.RenderResolvedOffline, shared with the CLI's
+// `--resolve`, because ADR-0026's requirement — that the provenance be stated
+// where the reader is already looking — is only maintainable if there is one
+// copy of it to change.
 func renderCardOffline(reader MemoryReader, host string, card *memory.SiteCard) string {
 	var b strings.Builder
+	b.WriteString(pulledFromStore(host))
+
 	digest, atMs, err := reader.LastPageDigest(host)
 	if err != nil {
-		return fmt.Sprintf("%s\nThe trace could not be read (%v), so the site map is shown unresolved.\n\n%s\n",
-			memoryHeader(host), err, memory.RenderCard(card, memory.RenderOptions{MaxTokens: memory.DefaultInjectTokens}))
+		fmt.Fprintf(&b, "The trace could not be read (%v), so the site map is shown unresolved.\n\n%s\n",
+			err, memory.RenderCard(card, memory.RenderOptions{MaxTokens: memory.DefaultInjectTokens}))
+		return b.String()
 	}
 	if digest == nil {
 		// Not a failure of the store: there is a card, it just has nothing to
 		// resolve against, and RenderCard then drops the map section entirely
 		// (ADR-0024's empty-section rule). Saying so is the difference between
 		// "this site has no remembered landmarks" and "the map was withheld".
-		return fmt.Sprintf("%s\nNo page has been recorded for %s yet, so the site map cannot be resolved —\n"+
+		fmt.Fprintf(&b, "No page has been recorded for %s yet, so the site map cannot be resolved —\n"+
 			"what is below is the card's own claim, checked against nothing. Visit the site and\n"+
-			"snapshot it, then pull again; the digest is kept in the trace.\n\n%s\n",
-			memoryHeader(host), host,
-			memory.RenderCard(card, memory.RenderOptions{MaxTokens: memory.DefaultInjectTokens}))
+			"snapshot it, then pull again; the digest is kept in the trace.\n\n", host)
+		return b.String() + cardBody(memory.RenderResolvedOffline(card, nil, 0).Text)
 	}
 
-	_, missing := memory.VerifyCard(card, digest, "")
-	fmt.Fprintf(&b, "%s\nResolved offline against the last page the control plane recorded for %s.\n", memoryHeader(host), host)
+	r := memory.RenderResolvedOffline(card, digest, atMs)
+	fmt.Fprintf(&b, "Resolved offline against the last page the control plane recorded for %s.\n", host)
 	fmt.Fprintf(&b, "  seen %s", formatMemoryMs(atMs))
-	if digest.URL != "" {
-		fmt.Fprintf(&b, "  %s", digest.URL)
+	if r.PageURL != "" {
+		fmt.Fprintf(&b, "  %s", r.PageURL)
 	}
-	if len(card.Map) > 0 {
-		fmt.Fprintf(&b, "\n  %d of %d map entries matched it; %d did not.", len(card.Map)-missing, len(card.Map), missing)
+	if r.Total > 0 {
+		// About the card, not about the lines below: RenderCard trims to
+		// MaxTokens by shedding from the end with no marker, so a count
+		// claiming "N of M" of what was *shown* would be wrong the moment the
+		// cap bites. Naming the cap keeps the claim and the body in agreement.
+		fmt.Fprintf(&b, "\n  %d of %d map entries matched that page; %d did not. The rendering is capped at ~%d tokens, so it may show fewer.",
+			r.Matched, r.Total, r.Missing, memory.DefaultInjectTokens)
 	}
 	fmt.Fprintf(&b, "\n  These refs are not valid for whatever is in your browser now.\n\n")
+	return b.String() + cardBody(r.Text)
+}
 
-	b.WriteString(memory.RenderCard(card, memory.RenderOptions{
-		MaxTokens: memory.DefaultInjectTokens,
-		Resolver:  func(p memory.Predicate) (string, bool) { return digest.Resolve(p) },
-		// Deliberately never the empty default: that string means "the page in
-		// hand", which is true of the injection and false of anything read out
-		// of a file.
-		PageNote: "the page seen " + formatMemoryMs(atMs),
-	}))
-	b.WriteString("\n")
-	return b.String()
+// cardBody renders the card, or says plainly that there is nothing in it. A
+// card with no entries is a real state — the learner can write one, and the
+// file is hand-editable — and rendering it as a header followed by no content
+// leaves the reader unable to tell it from a card whose every line was trimmed.
+func cardBody(rendered string) string {
+	if rendered == "" {
+		return "This card has no entries — nothing was learned about this host that survived review.\n"
+	}
+	return rendered + "\n"
+}
+
+// pulledFromStore opens a pull's output.
+//
+// Deliberately *not* a bracketed label. memory.InjectionLabel is the marker the
+// live injection uses, RenderCard emits it inside every rendering it produces,
+// and a second bracketed label above it would put two of them in one payload —
+// the reader would then have to tell "learned site patterns" (a claim about a
+// site, resolved against whatever page the control plane last saw) from whatever
+// this line was claiming, which is exactly the confusion ADR-0026 exists to
+// prevent. So this is prose, saying the one thing that differs: where it came
+// from, and that no page is in hand.
+func pulledFromStore(host string) string {
+	return fmt.Sprintf("Pulled from the store for %s — these notes were not checked against the page in your browser.\n", host)
 }
 
 // rawCardJSON is the machine view, shaped like `bridge memory show <host>
@@ -197,15 +254,6 @@ func rawCardJSON(host string, card *memory.SiteCard, guidePath string) string {
 		return fmt.Sprintf(`{"host": %q, "error": %q}`, host, err.Error())
 	}
 	return string(out)
-}
-
-// memoryHeader opens every memory_show rendering, so the agent can tell a
-// recalled claim from whatever the tool said. It is deliberately not
-// memory.InjectionLabel: that label marks the push path, which is resolved
-// against the page in hand, and reusing it here would make an offline pull
-// indistinguishable from the live thing (ADR-0026).
-func memoryHeader(host string) string {
-	return fmt.Sprintf("[learned site memory for %s — pulled from the store, not from this page]", host)
 }
 
 // memoryReader returns the store or the tool error explaining its absence.

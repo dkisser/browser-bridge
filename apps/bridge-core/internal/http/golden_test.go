@@ -108,7 +108,7 @@ func TestToolsListMatchesTheContract(t *testing.T) {
 	}
 }
 
-// docs/mcp-setup.md carries a hand-maintained table of the same 22 tools the
+// docs/mcp-setup.md carries a hand-maintained table of the same tools the
 // golden fixture pins, and it drifted: `snapshot` was missing entirely and
 // `list_browsers` listed no parameters. The fixture is the contract, so the
 // doc being behind it means the first thing a new user reads disagrees with

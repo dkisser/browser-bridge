@@ -77,14 +77,14 @@ Every browser command exists in both interfaces; examples in this skill use the 
 
 `@eN` refs from a snapshot work as `selector` in both interfaces.
 
-### Site memory (read-only; no `tab_id`, no `timeout_ms`)
+### Memory tools (store only; no `tab_id`, no `timeout_ms`)
 
 | MCP tool | CLI equivalent | Notes |
 |---|---|---|
 | `memory_list` | `bridge memory list` | every host with a learned card |
 | `memory_show(host, raw?)` | `bridge memory show <host> --resolve [--raw]` | card + site guide; `raw` gives the structured card. `--resolve` is required on the CLI — without it the map is dropped |
 
-These two read the store rather than the browser, so they never reach the browser at all and take no `tab_id`. `memory_show` is the pull path — see "Site memory" below.
+These two read the store rather than the browser, so they never reach the browser at all and take no `tab_id`. The mandated recall step is in **Site memory** below.
 
 ## Working with tabs
 

@@ -3,6 +3,7 @@ package memory
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Recall is ADR-0019: the card goes back to the agent in-band, on the result of
@@ -461,14 +462,117 @@ func LastDigestFor(recs []TraceRecord, host string) (*PageDigest, int64) {
 // is no tail to seek to. ReadFrom is safe to run against the appends the router
 // makes concurrently (see its own comment), so this needs no lock the daemon
 // is not already taking.
+//
+// The answer is memoised against Stream.Stamp, because the callers changed
+// character when ADR-0039 put this on a path the skills mandate on every
+// landing: a decode of every record ever written, per pull, to keep one host's
+// last page. A stamp change drops the whole cache, so the memo can only ever
+// skip work it would have repeated.
 func (m *Manager) LastPageDigest(host string) (*PageDigest, int64, error) {
 	if m == nil || m.stream == nil {
 		return nil, 0, nil
 	}
+
+	stamp := m.stream.Stamp()
+	m.pageMu.Lock()
+	if m.pageCache == nil || m.pageStamp != stamp {
+		m.pageCache = map[string]pageDigestAnswer{}
+		m.pageStamp = stamp
+	}
+	if hit, ok := m.pageCache[host]; ok {
+		m.pageMu.Unlock()
+		return hit.digest, hit.atMs, nil
+	}
+	m.pageMu.Unlock()
+
 	recs, _, _, err := m.stream.ReadFrom(0)
 	if err != nil {
+		// A read failure is not cached: the caller is told, and a later pull
+		// must be free to succeed rather than replaying the failure forever.
 		return nil, 0, err
 	}
 	digest, atMs := LastDigestFor(recs, host)
+
+	m.pageMu.Lock()
+	// Re-check: another caller may have repopulated while this one was reading,
+	// and both results are correct — but writing ours last would keep whichever
+	// arrived later, which is fine, whereas skipping the write would leave a
+	// cache that never converges on anything.
+	if m.pageStamp != stamp {
+		m.pageCache = map[string]pageDigestAnswer{}
+		m.pageStamp = stamp
+	}
+	m.pageCache[host] = pageDigestAnswer{digest: digest, atMs: atMs}
+	m.pageMu.Unlock()
+
 	return digest, atMs, nil
+}
+
+// OfflineRender is one resolved-against-a-recorded-page rendering, plus what a
+// reader needs in order not to over-read it: how many map entries matched, and
+// how many did not.
+type OfflineRender struct {
+	Text     string
+	Matched  int
+	Total    int
+	Missing  int
+	SeenAtMs int64
+	PageURL  string
+}
+
+// RenderResolvedOffline renders a card with its site map resolved against a
+// recorded page and returns the counts alongside it.
+//
+// This is the half `bridge memory show --resolve` and the MCP `memory_show`
+// were each implementing separately: the same header lines, the same
+// provenance sentence, the same RenderOptions. ADR-0026's requirement — that the
+// provenance be stated where the reader is already looking — is the kind of
+// thing that has to be changed in both places at once, which is exactly what a
+// copy does not do.
+//
+// The counts describe the *card*, not the body below them, and the caller is
+// expected to say so. RenderCard trims to MaxTokens by shedding lines from the
+// end with no marker, so a header that reported only what survived would be
+// wrong in the other direction; the honest claim is about the card, with the
+// cap stated alongside it.
+func RenderResolvedOffline(card *SiteCard, digest *PageDigest, atMs int64) OfflineRender {
+	if card == nil {
+		return OfflineRender{}
+	}
+	if digest == nil {
+		return OfflineRender{
+			Text:    RenderCard(card, RenderOptions{MaxTokens: DefaultInjectTokens}),
+			Total:   len(card.Map),
+			Missing: len(card.Map),
+		}
+	}
+
+	_, missing := VerifyCard(card, digest, "")
+	out := OfflineRender{
+		Total:    len(card.Map),
+		Missing:  missing,
+		Matched:  len(card.Map) - missing,
+		SeenAtMs: atMs,
+		PageURL:  digest.URL,
+		Text: RenderCard(card, RenderOptions{
+			MaxTokens: DefaultInjectTokens,
+			Resolver:  func(p Predicate) (string, bool) { return digest.Resolve(p) },
+			// Deliberately never the empty default: that string means "the page
+			// in hand", which is true of the injection and false of anything read
+			// out of a file.
+			PageNote: "the page seen " + formatMs(atMs),
+		}),
+	}
+	return out
+}
+
+// formatMs renders a millisecond timestamp for a provenance line. Local time
+// because every reader of these lines is a person or an agent looking at the
+// same machine the control plane runs on, and the answer to "how long ago was
+// that" is a wall-clock reading.
+func formatMs(ms int64) string {
+	if ms == 0 {
+		return "-"
+	}
+	return time.UnixMilli(ms).Local().Format("2006-01-02 15:04:05")
 }

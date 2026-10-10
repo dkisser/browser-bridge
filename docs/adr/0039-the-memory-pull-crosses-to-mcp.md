@@ -58,6 +58,38 @@ something traded away for convenience now has. What is preserved is the smaller
 claim: no tool result shape changed, and no `CommandType` was added, so nothing
 in `packages/shared` or the extension moved.
 
+**What a review pass found, and what it says about the shape of the decision.**
+Ten findings, all real, and they cluster into one thing: the pull had been
+written as if it were the only place these questions get asked, and three of
+them had already been answered elsewhere in the codebase.
+
+- The tool trimmed the host with `strings.TrimSpace` while the CLI it is
+  documented as equivalent to runs `memory.Host` — so an agent holding a URL
+  from `pageinfo` was told a host the bridge had a card for had never been
+  learned. **One rule, one place** is what `memory.Host`'s own comment says, and
+  the tool was a second copy of it that had not been forked yet.
+- An unreadable guide destroyed a card that had read fine, where `printGuide`
+  had already decided the opposite and written down why: the card is what the
+  command exists for.
+- `memory_list` reported a store full of unparseable cards as "No site cards
+  yet", which is the empty/broken collapse `Store.Read`'s doc comment calls a
+  bug.
+- The offline rendering was copied from `cli.showResolved` after this change had
+  already extracted the small half of that copy. The provenance ADR-0026
+  requires stated twice is exactly the kind of thing that has to change in both
+  places at once, which is what a copy does not do. It is now
+  `memory.RenderResolvedOffline`, shared.
+- The pull's own header was a bracketed label of its own, one line above
+  `[learned site patterns]` — which `RenderCard` emits into every rendering it
+  produces. Two labels in one payload is a worse answer than one label and a
+  sentence, and the comment claiming the distinction was the thing the second
+  label undermined.
+
+The first and last are the same failure wearing different clothes: a decision
+recorded here is only as good as the *equivalences* it claims, and claiming one
+is a promise to keep checking. Both surfaces now have tests that fail if the
+equivalence breaks.
+
 ## Consequences
 
 - `memory_show` resolves the site map offline against the last recorded page and

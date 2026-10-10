@@ -290,26 +290,32 @@ func showResolved(cmd *cobra.Command, host string, card *memory.SiteCard) error 
 		return ErrReported
 	}
 
-	_, missing := memory.VerifyCard(card, digest, "")
-	note := "the page seen " + formatMs(atMs)
+	// The rendering and the counts come from memory.RenderResolvedOffline, the
+	// same call the MCP memory_show tool makes (ADR-0039). The provenance is
+	// stated here in the header and again inside the map section's own title by
+	// the PageNote that helper passes, which is what stops an offline render
+	// from being mistaken for the live injection — a claim that only survives
+	// while there is one copy of it to change.
+	r := memory.RenderResolvedOffline(card, digest, atMs)
 	fmt.Fprintf(out, "Resolved offline against the last page the control plane recorded for %s.\n", host)
 	fmt.Fprintf(out, "  seen %s", formatMs(atMs))
-	if digest.URL != "" {
-		fmt.Fprintf(out, "  %s", digest.URL)
+	if r.PageURL != "" {
+		fmt.Fprintf(out, "  %s", r.PageURL)
 	}
-	if len(card.Map) > 0 {
-		fmt.Fprintf(out, "\n  %d of %d map entries matched it; %d did not.\n", len(card.Map)-missing, len(card.Map), missing)
+	if r.Total > 0 {
+		// About the card, not about the lines below: RenderCard trims to
+		// MaxTokens by shedding from the end with no marker, so a count
+		// claiming "N of M" of what was *shown* would be wrong the moment the
+		// cap bites.
+		fmt.Fprintf(out, "\n  %d of %d map entries matched that page; %d did not. The rendering is capped at ~%d tokens, so it may show fewer.\n",
+			r.Matched, r.Total, r.Missing, memory.DefaultInjectTokens)
 	}
 	fmt.Fprintf(out, "  These refs are not valid for whatever is in your browser now.\n\n")
 
 	// Both halves, because that is what an agent receives across a landing and
 	// the snapshot after it — reassembled here from a stored digest instead of a
-	// live one. Same options the injection uses, plus the provenance note.
-	fmt.Fprintln(out, memory.RenderCard(card, memory.RenderOptions{
-		MaxTokens: memory.DefaultInjectTokens,
-		Resolver:  func(p memory.Predicate) (string, bool) { return digest.Resolve(p) },
-		PageNote:  note,
-	}))
+	// live one.
+	fmt.Fprintln(out, r.Text)
 	return nil
 }
 

@@ -142,7 +142,7 @@ func TestMemoryShowResolvesTheMapOfflineAndSaysSo(t *testing.T) {
 
 	text := resultText(t, callTool(t, session, "memory_show", map[string]any{"host": "example.com"}))
 
-	if !strings.Contains(text, "1 of 2 map entries matched it; 1 did not.") {
+	if !strings.Contains(text, "1 of 2 map entries matched that page; 1 did not.") {
 		t.Errorf("staleness count missing or wrong:\n%s", text)
 	}
 	if !strings.Contains(text, "https://example.com/news") {
@@ -362,4 +362,181 @@ func TestMemoryToolsAreRegistered(t *testing.T) {
 			t.Errorf("%s is not in tools/list", name)
 		}
 	}
+}
+
+// #1: the tool is documented as the MCP equivalent of `bridge memory show`, so
+// it has to normalise the host the way that command does. An agent holding a
+// URL from pageinfo is the ordinary case, and an empty answer there reads as
+// "never learned" while a card sits on disk.
+//
+// The bar is agreement with memory.Host, not perfection: a bare
+// "example.com:8443" keeps its port there too, because url.Parse reads
+// "example.com:" as a scheme. That is a pre-existing property of the
+// normaliser both sides share, and changing it here would make the two
+// interfaces disagree about the same host — which is the thing #1 is about.
+func TestMemoryShowNormalisesTheHostLikeTheCLI(t *testing.T) {
+	srv := memoryTestServer(&fakeRouter{}, &fakeMemories{
+		cards:  map[string]*memory.SiteCard{"example.com": aCard()},
+		digest: aDigest(),
+		atMs:   1_700_000_200_000,
+	})
+	session := newTestClient(t, srv)
+
+	for _, host := range []string{
+		"example.com",
+		"EXAMPLE.com",
+		"https://example.com/news",
+		"https://example.com:8443/news",
+		"  example.com  ",
+		"example.com/news",
+	} {
+		text := resultText(t, callTool(t, session, "memory_show", map[string]any{"host": host}))
+		if strings.Contains(text, "No card for") {
+			t.Errorf("host %q missed a card that example.com has:\n%s", host, text)
+		}
+		if !strings.Contains(text, "Resolved offline") {
+			t.Errorf("host %q did not resolve to the example.com card:\n%s", host, text)
+		}
+	}
+}
+
+// The degenerate case of the same thing: whitespace satisfies minLength:1, and
+// "" is what normalises to, which safeFileName maps onto a "_" file.
+func TestMemoryShowRejectsAHostThatNormalisesToNothing(t *testing.T) {
+	srv := memoryTestServer(&fakeRouter{}, &fakeMemories{})
+	session := newTestClient(t, srv)
+
+	result := callTool(t, session, "memory_show", map[string]any{"host": "   "})
+	if !result.IsError {
+		t.Errorf("blank host was not rejected: %s", resultText(t, result))
+	}
+	if !strings.Contains(resultText(t, result), "not a host name") {
+		t.Errorf("blank host error is unclear: %s", resultText(t, result))
+	}
+}
+
+// #3: a guide the human wrote failing to read must not cost the card, which is
+// what this tool exists for. The CLI's printGuard — printGuide — said so first.
+func TestMemoryShowKeepsTheCardWhenTheGuideWillNotRead(t *testing.T) {
+	srv := memoryTestServer(&fakeRouter{}, &fakeMemories{
+		cards:    map[string]*memory.SiteCard{"example.com": aCard()},
+		digest:   aDigest(),
+		guideErr: errors.New("permission denied"),
+	})
+	session := newTestClient(t, srv)
+
+	result := callTool(t, session, "memory_show", map[string]any{"host": "example.com"})
+	if result.IsError {
+		t.Fatalf("an unreadable guide became a total failure: %s", resultText(t, result))
+	}
+	text := resultText(t, result)
+	if !strings.Contains(text, "Observed to fail here") {
+		t.Errorf("the card was dropped along with the guide:\n%s", text)
+	}
+	if !strings.Contains(text, "Warning:") || !strings.Contains(text, "permission denied") {
+		t.Errorf("the guide failure was swallowed rather than warned about:\n%s", text)
+	}
+}
+
+// #4: a store whose only card will not parse is not an empty store. Saying
+// "No site cards yet" would send an agent to re-learn a site that is on disk.
+func TestMemoryListDistinguishesABrokenStoreFromAnEmptyOne(t *testing.T) {
+	srv := memoryTestServer(&fakeRouter{}, &fakeMemories{
+		hosts:   []string{"broken.example"},
+		readErr: errors.New("unexpected EOF"),
+	})
+	session := newTestClient(t, srv)
+
+	text := resultText(t, callTool(t, session, "memory_list", map[string]any{}))
+	if strings.Contains(text, "No site cards yet") {
+		t.Errorf("a broken store was reported as an empty one:\n%s", text)
+	}
+	if !strings.Contains(text, "broken.example") || !strings.Contains(text, "will not parse") {
+		t.Errorf("the broken host was not named:\n%s", text)
+	}
+}
+
+// The same, with good rows alongside: the readable ones are the answer, the
+// broken one is a caveat on them.
+func TestMemoryListKeepsGoodRowsAndFlagsTheBrokenOne(t *testing.T) {
+	r := &partialMemories{fakeMemories: fakeMemories{
+		hosts:  []string{"good.example", "broken.example"},
+		cards:  map[string]*memory.SiteCard{"good.example": {Host: "good.example", Revision: 2}},
+		digest: aDigest(),
+	}}
+	r.broken = map[string]bool{"broken.example": true}
+	srv := memoryTestServer(&fakeRouter{}, r)
+	session := newTestClient(t, srv)
+
+	text := resultText(t, callTool(t, session, "memory_list", map[string]any{}))
+	if !strings.Contains(text, "good.example") {
+		t.Errorf("the readable row was dropped:\n%s", text)
+	}
+	if !strings.Contains(text, "omitted because they will not parse") {
+		t.Errorf("the broken row was not flagged as a caveat:\n%s", text)
+	}
+}
+
+// #5: an empty card is a real state, and rendering it as a header followed by
+// nothing makes it indistinguishable from a card the budget loop emptied.
+func TestMemoryShowSaysWhenACardHasNothingInIt(t *testing.T) {
+	srv := memoryTestServer(&fakeRouter{}, &fakeMemories{
+		cards:  map[string]*memory.SiteCard{"empty.example": {Host: "empty.example", Revision: 3}},
+		digest: aDigest(),
+	})
+	session := newTestClient(t, srv)
+
+	text := resultText(t, callTool(t, session, "memory_show", map[string]any{"host": "empty.example"}))
+	if !strings.Contains(text, "no entries") {
+		t.Errorf("an empty card rendered as nothing at all:\n%s", text)
+	}
+}
+
+// #2: RenderCard emits [learned site patterns] itself. A second bracketed label
+// above it would put two of them in one payload and make the reader pick.
+func TestMemoryShowDoesNotImpersonateTheInjectionLabel(t *testing.T) {
+	srv := memoryTestServer(&fakeRouter{}, &fakeMemories{
+		cards:  map[string]*memory.SiteCard{"example.com": aCard()},
+		digest: aDigest(),
+		atMs:   1_700_000_200_000,
+	})
+	session := newTestClient(t, srv)
+
+	text := resultText(t, callTool(t, session, "memory_show", map[string]any{"host": "example.com"}))
+	if n := strings.Count(text, "["+memory.InjectionLabel+"]"); n != 1 {
+		t.Errorf("the injection label appears %d times, want exactly 1 (RenderCard's own):\n%s", n, text)
+	}
+	if strings.Contains(text, "[learned site memory") {
+		t.Errorf("the pull added a second bracketed label:\n%s", text)
+	}
+}
+
+// #6: the count describes the card, and says the cap applies, because
+// RenderCard trims without marking what it dropped.
+func TestMemoryShowStatesThatTheCapMayShowFewerEntries(t *testing.T) {
+	srv := memoryTestServer(&fakeRouter{}, &fakeMemories{
+		cards:  map[string]*memory.SiteCard{"example.com": aCard()},
+		digest: aDigest(),
+		atMs:   1_700_000_200_000,
+	})
+	session := newTestClient(t, srv)
+
+	text := resultText(t, callTool(t, session, "memory_show", map[string]any{"host": "example.com"}))
+	if !strings.Contains(text, "capped at") {
+		t.Errorf("the count did not say the rendering is capped, so it promises lines that may be trimmed:\n%s", text)
+	}
+}
+
+// partialMemories fails ReadCard for a named subset, which is the one case
+// memory_list has to distinguish and fakeMemories cannot express.
+type partialMemories struct {
+	fakeMemories
+	broken map[string]bool
+}
+
+func (p *partialMemories) ReadCard(host string) (*memory.SiteCard, error) {
+	if p.broken[host] {
+		return nil, errors.New("unexpected EOF")
+	}
+	return p.fakeMemories.ReadCard(host)
 }

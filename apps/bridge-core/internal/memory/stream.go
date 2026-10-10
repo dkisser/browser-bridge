@@ -158,6 +158,42 @@ func (s *Stream) Append(rec TraceRecord) error {
 	return nil
 }
 
+// StreamStamp is a cheap fingerprint of exactly the bytes ReadFrom would read:
+// the active file and the one retained generation. Two stamps being equal means
+// a full re-read cannot produce a different answer, which is what makes it a
+// cache key (ADR-0039).
+//
+// Rotation is covered because it does not change the active file's size — it
+// renames it and creates a fresh one — so a stamp built from the active file
+// alone would go stale the moment a rotation happened and keep serving a digest
+// from a generation that had just been moved aside.
+type StreamStamp struct {
+	ActiveSize   int64
+	ActiveModMs  int64
+	RotatedSize  int64
+	RotatedModMs int64
+}
+
+// Stamp reports the current fingerprint. It stats two files and does not read
+// them, which is the entire point: the alternative is the full decode that
+// Stamp exists to avoid.
+func (s *Stream) Stamp() StreamStamp {
+	s.mu.Lock()
+	path, rotated := s.path, s.rotated
+	s.mu.Unlock()
+
+	var st StreamStamp
+	if fi, err := os.Stat(path); err == nil {
+		st.ActiveSize, st.ActiveModMs = fi.Size(), fi.ModTime().UnixNano()
+	}
+	if rotated != "" {
+		if fi, err := os.Stat(rotated); err == nil {
+			st.RotatedSize, st.RotatedModMs = fi.Size(), fi.ModTime().UnixNano()
+		}
+	}
+	return st
+}
+
 // ReadFrom returns every record from line index `from` (0-based) to the end of
 // the file, and the index one past the last line it could account for.
 //

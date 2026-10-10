@@ -23,6 +23,12 @@ import (
 // The rule that governs the whole file: nothing here may fail a command. Every
 // method is best-effort and swallows its own errors, because a learning system
 // that can break the browser it is watching has made itself worse than useless.
+// pageDigestAnswer is one host's cached "most recent page recorded" lookup.
+type pageDigestAnswer struct {
+	digest *PageDigest
+	atMs   int64
+}
+
 type Manager struct {
 	stream *Stream
 	store  *Store
@@ -46,6 +52,16 @@ type Manager struct {
 	// idleAfter is how long the learner waits for the stream to go quiet before
 	// starting a pass, so a burst of activity is learned as one batch.
 	idleAfter time.Duration
+
+	// pageCache memoises LastPageDigest against the stream's stamp. The pull
+	// path is on a path the skills mandate on every landing (ADR-0039), and
+	// decoding the whole trace to keep one host's last digest is a cost the
+	// CLI could afford only because a person was looking. The entries are
+	// dropped wholesale when the stamp moves, so a new record or a rotation
+	// cannot leave a stale digest being served.
+	pageMu    sync.Mutex
+	pageStamp StreamStamp
+	pageCache map[string]pageDigestAnswer
 
 	mu   sync.Mutex
 	tabs map[int]*tabState
@@ -246,6 +262,7 @@ func New(opts Options) (*Manager, error) {
 		dataDir:    opts.DataDir,
 		signal:     make(chan struct{}, 1),
 		idleAfter:  idle,
+		pageCache:  map[string]pageDigestAnswer{},
 		tabs:       make(map[int]*tabState),
 		inflight:   make(map[string]inflightCmd),
 		browserID:  opts.BrowserID,
