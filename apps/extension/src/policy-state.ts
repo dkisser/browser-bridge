@@ -116,9 +116,20 @@ function mergeDeep<T>(defaults: T, stored: unknown): T {
 // merged result: mergeDeep can only supply the single default in
 // DEFAULT_STATE, and the two cases it has to cover (fresh install → strict,
 // upgrade → standard) are not the same answer.
+//
+// Anything that is not a plain object — `null` above all — is normalized to
+// the defaults rather than spread. mergeDeep returns a non-object stored
+// value unchanged, so spreading one yields an object whose every other field
+// is `undefined` while still looking like a complete PolicyState; the first
+// property access (applyPolicyGate reads `deniedOrigins[origin]`) then throws
+// a TypeError instead of applying the defaults the caller expects. A missing
+// key and a null value both mean "no state yet".
 export function normalizePolicyState(stored: unknown): PolicyState {
+  const merged = isPlainObject(stored)
+    ? mergeDeep(DEFAULT_STATE, stored)
+    : DEFAULT_STATE;
   return {
-    ...mergeDeep(DEFAULT_STATE, stored),
+    ...merged,
     permissionMode: resolvePermissionMode(stored),
   };
 }

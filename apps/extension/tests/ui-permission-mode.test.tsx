@@ -36,14 +36,23 @@ describe('PermissionModeControl — structural render', () => {
 
   it('states what the selected mode changes, so the boundary stays visible', () => {
     expect(render('strict')).toContain(
-      'Reading and writing both ask for origin approval.',
+      'Reading and writing both ask before reaching a new origin.',
     );
     expect(render('standard')).toContain(
-      'Reads run within your approved origins; writes still ask.',
+      'Reading new origins stops asking; writing still asks.',
     );
     expect(render('relaxed')).toContain(
-      'Reads and writes run within your approved origins.',
+      'Reading and writing new origins stop asking.',
     );
+  });
+
+  // The copy must not imply the approved origins still bound the agent below
+  // strict: origin approval is not consulted for reads in standard/relaxed, so
+  // "within your approved origins" would be false, not merely imprecise.
+  it('never claims the agent stays within the approved origins', () => {
+    for (const mode of ['strict', 'standard', 'relaxed'] as const) {
+      expect(render(mode)).not.toContain('approved origins');
+    }
   });
 
   it('renders nothing as selected while the policy read is in flight', () => {

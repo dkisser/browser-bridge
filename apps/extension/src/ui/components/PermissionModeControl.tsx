@@ -8,17 +8,17 @@ const MODES: { id: PermissionMode; label: string; hint: string }[] = [
   {
     id: 'strict',
     label: 'Strict',
-    hint: 'Reading and writing both ask for origin approval.',
+    hint: 'Reading and writing both ask before reaching a new origin.',
   },
   {
     id: 'standard',
     label: 'Standard',
-    hint: 'Reads run within your approved origins; writes still ask.',
+    hint: 'Reading new origins stops asking; writing still asks.',
   },
   {
     id: 'relaxed',
     label: 'Relaxed',
-    hint: 'Reads and writes run within your approved origins.',
+    hint: 'Reading and writing new origins stop asking.',
   },
 ];
 
@@ -43,6 +43,14 @@ interface PermissionModeControlProps {
 // Deny, the blocklist, protected origins, unknown commands, sensitive actions
 // and Takeover are unaffected by which option is selected — that boundary is
 // why the copy below names what the mode does rather than what it permits.
+//
+// The hints describe the mode in terms of *asking*, never in terms of the
+// approved origins. An earlier wording ("reads and writes run within your
+// approved origins") was false: below standard the origin approval check is
+// not consulted at all, so it is not a scope that happens to stop being
+// enforced — it is a check that does not run. Saying "within your approved
+// origins" would have told the user their origin approvals still bounded the
+// agent, which is the one belief that makes relaxed dangerous.
 //
 // Native radio inputs, hidden and styled through their sibling track, the
 // same idiom GlassSwitch uses for the Takeover toggle: the group is then one

@@ -107,8 +107,15 @@ const PAGE_CONTEXT_COMMANDS_ARR = [
 // Browser state and passive waits. Never gated in any mode: they reveal
 // nothing the human has not already put on screen, and holding them would
 // mean the agent cannot even read the tab list while a gate is pending.
-// wait:element is a passive wait on an element, not a page read: it returns a
-// boolean, never content, so it does not carry content out of the origin.
+//
+// wait:element is here by decision (ADR-0038), and the argument for it is
+// narrower than "it returns a boolean, never content" — that claim does not
+// hold, because the selector is agent-chosen and found/not-found discloses
+// content one bit at a time. What it actually gets is that it is a *passive
+// wait*, needed to drive the reads that do ask: gating it would mean a read
+// command had to be approved twice before it could even see the page. The
+// cost is that an approved-origin gate no longer applies to an existence
+// probe, so it is called out in the CHANGELOG rather than left implicit.
 const OBSERVER_COMMANDS_ARR = [
   'tab:list',
   'pageinfo',

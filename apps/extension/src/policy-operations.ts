@@ -219,10 +219,21 @@ export function applySetTakeover(
 // A no-op patch when the mode is already what is stored keeps the write off
 // storage entirely, so clicking the selected option does not churn the
 // policy state (and with it every chrome.storage.onChanged listener).
+//
+// The mode is re-checked here rather than trusted from the message body: the
+// op arrives as `request.op as PolicyOp`, an unchecked assertion on data that
+// crossed a process boundary, and isPermissionMode is the same guard the read
+// path already applies. Without it a malformed value persists, and the read
+// path then resolves it to the permissive upgrade default — an unknown mode
+// silently widening what runs silent is exactly what policy.ts's own comment
+// says an omitted field must never do.
 export function applySetPermissionMode(
   state: PolicyState,
   mode: PermissionMode,
 ): Partial<PolicyState> | null {
+  if (mode !== 'strict' && mode !== 'standard' && mode !== 'relaxed') {
+    throw new Error(`permission mode is not recognized: ${String(mode)}`);
+  }
   if (state.permissionMode === mode) return null;
   return { permissionMode: mode };
 }
