@@ -28,6 +28,7 @@ import {
   decideWithState,
   getPolicyState,
   type PolicyState,
+  persistPermissionModeOnce,
   recordDenial,
   updateBadge,
   updatePolicyState,
@@ -414,6 +415,12 @@ async function applyPolicyGate(
   const { decision, state } = await decideWithState((fresh) => {
     const ctx: PolicyContext = {
       takeover: fresh.takeover,
+      // ADR-0038: the extension always passes a concrete mode. The shared
+      // policy core treats an omitted field as 'strict', which is the
+      // fail-safe direction but not what this profile chose — a second
+      // fallback here would only ever be a silent disagreement with the
+      // value the user set in the State bar.
+      permissionMode: fresh.permissionMode,
       origin,
       blocklistHit: blocklistHit(origin, fresh.blockedOrigins),
       grants: fresh.grants,
@@ -1000,6 +1007,9 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 async function initialize(): Promise<void> {
   await clearSessionScoped();
+  // ADR-0038: resolve the fresh-install/upgrade default once and pin it,
+  // before the first command can be evaluated against it.
+  await persistPermissionModeOnce();
   await updateBadge();
   await connectOffscreen();
 }

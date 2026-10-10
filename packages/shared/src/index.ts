@@ -21,6 +21,7 @@ export type {
   DenyReason,
   Grant,
   GrantCapability,
+  PermissionMode,
   PolicyContext,
   PolicyDecision,
 } from './policy';

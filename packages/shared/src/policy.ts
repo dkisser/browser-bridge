@@ -1,5 +1,15 @@
 import type { CommandType } from './types';
 
+// The human's three-way supervision switch (ADR-0038). It moves the threshold
+// at which commands must clear the Working scope; it never moves the boundary
+// — deny, the blocklist, protected origins, unknown commands and Takeover hold
+// in every mode.
+export type PermissionMode = 'strict' | 'standard' | 'relaxed';
+
+// Fail-safe default: a caller that does not pass a mode gets today's behavior
+// (reads and writes both gated), so omitting it can only hold more back.
+const DEFAULT_PERMISSION_MODE: PermissionMode = 'strict';
+
 export type DenyReason =
   | 'human_assist_active'
   | 'origin_not_approved'
@@ -38,6 +48,10 @@ export type PolicyDecision =
 
 export interface PolicyContext {
   takeover: boolean;
+  // Omitted means 'strict' — the mode that gates both reads and writes. The
+  // extension always passes a concrete mode; the default exists so an omitted
+  // field can never quietly widen what runs silent.
+  permissionMode?: PermissionMode;
   // Origin of the target URL (navigate/tab:new) or of the tab the command
   // would act on. null means a protected or non-http(s) context — such
   // commands are hard-denied with 'origin_blocked', no approval path.
@@ -60,14 +74,12 @@ export interface PolicyContext {
   now?: number;
 }
 
-// Command classification. `as const` arrays + the exhaustiveness check below
-// make adding a CommandType without classifying it a compile error, and the
-// fallthrough in evaluatePolicy denies anything unclassified (fail closed,
-// ADR-0007: new commands default to deny).
+// Browser-level reads; these need no origin lookup before evaluation. Derived
+// into isReadOnlyCommand below.
 const READONLY_COMMANDS_ARR = ['tab:list', 'pageinfo'] as const;
 
 // Commands that act on or read page content; denied outright in protected
-// contexts and on blocklist hits, before any other rule.
+// contexts and on blocklist hits, before any other rule, in every mode.
 const PAGE_CONTEXT_COMMANDS_ARR = [
   'navigate',
   'tab:new',
@@ -86,44 +98,61 @@ const PAGE_CONTEXT_COMMANDS_ARR = [
   'screenshot',
 ] as const;
 
-// Commands that additionally require an approved origin to run. snapshot and
-// wait:element read page content like gettext/gethtml, so they are gated the
-// same way — otherwise tab:list (read-only) + snapshot would silently read
-// any unapproved http(s) origin.
-const ORIGIN_GATE_COMMANDS_ARR = [
+// Safety levels (ADR-0038). The Permission mode decides which of these must
+// clear the Working scope before running silent; it does not decide whether
+// they are safe. The four arrays are exhaustive over CommandType and the
+// check below makes a new command uncompilable until it is classified — a
+// command nobody thought about must not inherit a level by accident.
+
+// Browser state and passive waits. Never gated in any mode: they reveal
+// nothing the human has not already put on screen, and holding them would
+// mean the agent cannot even read the tab list while a gate is pending.
+// wait:element is a passive wait on an element, not a page read: it returns a
+// boolean, never content, so it does not carry content out of the origin.
+const OBSERVER_COMMANDS_ARR = [
+  'tab:list',
+  'pageinfo',
+  'tab:switch',
+  'wait:element',
+  'wait:navigation',
+  'goBack',
+  'goForward',
+  'refresh',
+] as const;
+
+// Reaching a new origin or carrying page content out of one. `tab:new` with a
+// url classifies here rather than as observer: renaming `navigate` must not
+// walk around the gate. (A url-less `tab:new` is an observer in effect — see
+// the blankNewTab branch, which allows it before this classification is read.)
+const READ_COMMANDS_ARR = [
   'navigate',
   'tab:new',
+  'snapshot',
+  'gettext',
+  'gethtml',
+] as const;
+
+// Acting on page elements. Changes what the page holds but is confined to it.
+const WRITE_COMMANDS_ARR = [
   'click',
   'type',
   'select',
   'scroll',
   'hover',
-  'gettext',
-  'gethtml',
-  'snapshot',
-  'wait:element',
 ] as const;
 
-// Commands allowed on any http(s) origin once takeover and the protected /
-// blocklist checks above pass: navigation-shape actions on a tab the agent
-// already holds. Everything else — including commands this policy version
-// does not recognize — is denied.
-const UNRESTRICTED_COMMANDS_ARR = [
-  'goBack',
-  'goForward',
-  'refresh',
-  'wait:navigation',
-  'tab:switch',
-] as const;
+// Safe or dangerous by context rather than by label (ADR-0007's evidence):
+// whose tab, whose origin, whether the keystroke submits. These keep their own
+// binding rules in every mode, and `type` reaches this level through its
+// submit / sensitive-field flags rather than by sitting in this array.
+const SENSITIVE_COMMANDS_ARR = ['screenshot', 'tab:close'] as const;
 
-type ClassifiedCommand =
-  | (typeof READONLY_COMMANDS_ARR)[number]
-  | (typeof PAGE_CONTEXT_COMMANDS_ARR)[number]
-  | (typeof UNRESTRICTED_COMMANDS_ARR)[number]
-  // Handled by dedicated branches in evaluatePolicy.
-  | 'screenshot'
-  | 'tab:close';
-type AllCommandsClassified = [CommandType] extends [ClassifiedCommand]
+type SafetyLevelCommand =
+  | (typeof OBSERVER_COMMANDS_ARR)[number]
+  | (typeof READ_COMMANDS_ARR)[number]
+  | (typeof WRITE_COMMANDS_ARR)[number]
+  | (typeof SENSITIVE_COMMANDS_ARR)[number];
+type AllCommandsClassified = [CommandType] extends [SafetyLevelCommand]
   ? true
   : never;
 const _allCommandsClassified: AllCommandsClassified = true;
@@ -131,8 +160,30 @@ void _allCommandsClassified;
 
 const READONLY_COMMANDS = new Set<CommandType>(READONLY_COMMANDS_ARR);
 const PAGE_CONTEXT_COMMANDS = new Set<CommandType>(PAGE_CONTEXT_COMMANDS_ARR);
-const ORIGIN_GATE_COMMANDS = new Set<CommandType>(ORIGIN_GATE_COMMANDS_ARR);
-const UNRESTRICTED_COMMANDS = new Set<CommandType>(UNRESTRICTED_COMMANDS_ARR);
+const OBSERVER_COMMANDS = new Set<CommandType>(OBSERVER_COMMANDS_ARR);
+const READ_COMMANDS = new Set<CommandType>(READ_COMMANDS_ARR);
+const WRITE_COMMANDS = new Set<CommandType>(WRITE_COMMANDS_ARR);
+
+// An explicit human denial is a boundary, not a threshold, so it holds in
+// every mode. wait:element is in this rail despite being an observer: a denied
+// origin must not become reachable just because the mode stopped asking.
+const DENIED_ORIGIN_RAIL = new Set<CommandType>([
+  ...READ_COMMANDS_ARR,
+  ...WRITE_COMMANDS_ARR,
+  'wait:element',
+]);
+
+// Which levels the current mode holds for an origin approval. Reads and writes
+// move independently; observer never gates and sensitive never does here (its
+// branches ask on their own terms).
+function originApprovalGated(
+  command: CommandType,
+  mode: PermissionMode,
+): boolean {
+  if (READ_COMMANDS.has(command)) return mode === 'strict';
+  if (WRITE_COMMANDS.has(command)) return mode !== 'relaxed';
+  return false;
+}
 
 /**
  * Reports a command that needs no origin lookup before it can be evaluated —
@@ -253,16 +304,24 @@ export function evaluatePolicy(
   }
 
   const now = ctx.now ?? Date.now();
+  const mode = ctx.permissionMode ?? DEFAULT_PERMISSION_MODE;
 
-  // Gated commands other than `type`: approved origins pass, unapproved ones
-  // need a one-shot origin grant. `type` is excluded — its origin gate is
+  // An explicit denial outlives the mode: the switch moves which commands ask,
+  // not which origins the human has closed off.
+  if (ctx.originState === 'denied' && DENIED_ORIGIN_RAIL.has(command)) {
+    return denial(command, 'origin_denied', ctx);
+  }
+
+  // Read and write commands other than `type`: approved origins pass,
+  // unapproved ones need a one-shot origin grant — but only when the current
+  // mode holds this safety level. `type` is excluded — its origin gate is
   // folded into its own branch so an origin grant cannot short-circuit the
   // submit / sensitive-field checks.
-  if (ORIGIN_GATE_COMMANDS.has(command) && command !== 'type') {
-    if (ctx.originState === 'denied') {
-      return denial(command, 'origin_denied', ctx);
-    }
-    if (ctx.originState !== 'approved') {
+  if (
+    command !== 'type' &&
+    (READ_COMMANDS.has(command) || WRITE_COMMANDS.has(command))
+  ) {
+    if (originApprovalGated(command, mode) && ctx.originState !== 'approved') {
       const grant = findGrant(ctx, now, 'origin');
       if (grant) return { allow: true, consume: [grant] };
       return denial(command, 'origin_not_approved', ctx, 'origin');
@@ -272,10 +331,7 @@ export function evaluatePolicy(
 
   if (command === 'type') {
     const consume: Grant[] = [];
-    if (ctx.originState === 'denied') {
-      return denial(command, 'origin_denied', ctx);
-    }
-    if (ctx.originState !== 'approved') {
+    if (originApprovalGated(command, mode) && ctx.originState !== 'approved') {
       const originGrant = findGrant(ctx, now, 'origin');
       if (!originGrant) {
         return denial(command, 'origin_not_approved', ctx, 'origin');
@@ -341,14 +397,15 @@ export function evaluatePolicy(
     );
   }
 
-  // Fail closed: anything that reached this point is not recognized by the
-  // policy (a command from a newer client, or malformed wire data) — deny it
-  // rather than letting it through by default. Navigation-shape commands on
-  // an already-held tab pass once takeover and the protected checks above
-  // are cleared.
-  if (UNRESTRICTED_COMMANDS.has(command)) {
+  // Observer commands are allowed on any http(s) origin once takeover and the
+  // protected / blocklist checks above are cleared, in every mode.
+  if (OBSERVER_COMMANDS.has(command)) {
     return { allow: true };
   }
+
+  // Fail closed: anything that reached this point is not recognized by the
+  // policy (a command from a newer client, or malformed wire data) — deny it
+  // rather than letting it through by default.
   return denial(
     command,
     'unknown_command',

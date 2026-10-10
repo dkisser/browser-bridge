@@ -54,8 +54,16 @@ _Avoid_: confirmation prompt, human-in-the-loop, manual gate
 A mode switch, not a per-action question: while Takeover is active, every agent command is rejected with a machine-readable reason and the human operates the browser directly; when the human releases it, the agent resumes. Approval governs one action; Takeover governs the whole session.
 _Avoid_: handoff, human assist, pause mode, manual mode
 
+**Permission mode**:
+The human's three-way supervision switch — `strict`, `standard`, `relaxed` — setting which Safety levels must clear the Working scope before running silent: strict gates read and write, standard gates write only, relaxed gates neither; sensitive asks in all three. Human-only, set from the State bar next to Takeover and persisted across restarts; new installs default to strict, upgrades to standard. (ADR-0038.)
+_Avoid_: ask mode, guard mode, yolo mode
+
+**Safety level**:
+The four-class command taxonomy the Permission mode thresholds: *observer* (browser-state reads and passive navigation — never asks in any mode), *read* (reaching a new origin or carrying page content out), *write* (acting on page elements), *sensitive* (durable or privacy-bound consequences — governed by its own binding rules, never by the mode). A `tab:new` carrying a URL is *read*, being `navigate` under another name.
+_Avoid_: risk tier, permission tier, trust level
+
 **Working scope**:
-The boundary of what the agent may touch without asking: the tabs it opened itself plus the origins a human approved. Commands inside the scope run silent; anything that would cross it triggers Approval.
+The boundary of what the agent may touch without asking: the tabs it opened itself plus the origins a human approved. What a crossing costs is the Permission mode's call — strict and standard hold gated commands for Approval, relaxed waves them through — while deny and the blocklist hold in every mode.
 _Avoid_: allowlist, permission set, trust zone
 
 **Agent tab group**:

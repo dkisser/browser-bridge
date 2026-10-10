@@ -1,7 +1,9 @@
+import type { PermissionMode } from '@browser-bridge/shared';
 import { type KeyboardEvent, type MouseEvent, useState } from 'react';
 import { confirmPairingCode } from '../bridge-api';
 import { GearIcon, RefreshIcon } from '../icons';
 import { GlassSwitch } from './GlassSwitch';
+import { PermissionModeControl } from './PermissionModeControl';
 import styles from './TakeoverHero.module.css';
 
 interface TakeoverHeroProps {
@@ -10,19 +12,24 @@ interface TakeoverHeroProps {
   // "Loading…" state until the policy read resolves and SidePanel
   // supplies a real boolean.
   takeover: boolean | null;
+  // Same null-means-unloaded contract for the Permission mode (ADR-0038).
+  permissionMode: PermissionMode | null;
   browserConnected: boolean;
   browserId: string | null;
   paired: boolean;
   onTakeoverChange: (desired: boolean) => void;
+  onPermissionModeChange: (mode: PermissionMode) => void;
   onOpenSettings: (event: MouseEvent<HTMLButtonElement>) => void;
 }
 
 export function TakeoverHero({
   takeover,
+  permissionMode,
   browserConnected,
   browserId,
   paired,
   onTakeoverChange,
+  onPermissionModeChange,
   onOpenSettings,
 }: TakeoverHeroProps) {
   const [pairCode, setPairCode] = useState('');
@@ -88,6 +95,11 @@ export function TakeoverHero({
           engaged
         />
       </div>
+
+      <PermissionModeControl
+        mode={permissionMode}
+        onChange={onPermissionModeChange}
+      />
 
       <div className={styles.connectionRow}>
         <span className={styles.dotWrap} aria-hidden="true">

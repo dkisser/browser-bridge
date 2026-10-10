@@ -1,0 +1,103 @@
+/* Permission mode control (ADR-0038).
+ *
+ * Sits in the State bar hero, below the Takeover row. Uses the same visionOS
+ * segmented pill idiom as SegmentedNav (glass track + sliding thumb tokens)
+ * at hero-card scale, so the two controls read as one system rather than a
+ * tab bar and a safety control that happen to share a border radius. */
+
+.control {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin-top: var(--space-md);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--hairline-soft);
+}
+
+.eyebrow {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.track {
+  display: flex;
+  gap: var(--space-xs);
+  padding: var(--space-xs);
+  border-radius: var(--radius-control);
+  background: var(--segmented-track);
+  -webkit-backdrop-filter: var(--glass-canvas-blur);
+  backdrop-filter: var(--glass-canvas-blur);
+  border: 1px solid var(--hairline-soft);
+}
+
+.option {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px var(--space-sm);
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: var(--radius-chip);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
+}
+
+.optionLabel {
+  pointer-events: none;
+}
+
+/* The radio input itself is visually hidden but still focusable and still
+   the control the browser drives — GlassSwitch hides its checkbox the same
+   way. The label is the hit target, so pointer-events are off on the text
+   to keep a single click landing on one input. */
+.input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.option:hover {
+  color: var(--text);
+}
+
+.option:has(.input:disabled) {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.option[data-active="true"] {
+  background: var(--segmented-thumb);
+  box-shadow: var(--segmented-thumb-shadow);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.option:has(.input:focus-visible) {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+.hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 14px;
+  color: var(--text-muted);
+}
