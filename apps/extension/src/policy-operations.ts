@@ -223,9 +223,9 @@ export function applySetTakeover(
 // The mode is re-checked here rather than trusted from the message body: the
 // op arrives as `request.op as PolicyOp`, an unchecked assertion on data that
 // crossed a process boundary, and isPermissionMode is the same guard the read
-// path already applies. Without it a malformed value persists, and the read
-// path then resolves it to the permissive upgrade default — an unknown mode
-// silently widening what runs silent is exactly what policy.ts's own comment
+// path applies. Both directions fail the same way now — the write rejects,
+// the read resolves an unrecognized value to strict — so an unknown mode can
+// never widen what runs silent, which is exactly what policy.ts's own comment
 // says an omitted field must never do.
 export function applySetPermissionMode(
   state: PolicyState,
