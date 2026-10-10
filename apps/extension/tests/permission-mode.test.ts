@@ -56,13 +56,16 @@ describe('Permission mode defaults (ADR-0038)', () => {
 
   it('an unrecognized stored value is not trusted', () => {
     // A future value written by a newer extension must not be handed to the
-    // policy core as if it were one of the three this build knows.
+    // policy core as if it were one of the three this build knows — and the
+    // fallback is strict, not the permissive upgrade default: corruption
+    // fails safe instead of widening what runs silent.
     expect(
       normalizePolicyState({ permissionMode: 'yolo' }).permissionMode,
-    ).toBe('standard');
+    ).toBe('strict');
     expect(normalizePolicyState({ permissionMode: 7 }).permissionMode).toBe(
-      'standard',
+      'strict',
     );
+    expect(normalizePolicyState(null).permissionMode).toBe('strict');
   });
 
   it('the resolved mode is pinned once, and stays put afterwards', async () => {

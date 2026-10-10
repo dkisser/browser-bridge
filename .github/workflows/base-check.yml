@@ -35,7 +35,7 @@ jobs:
       - name: Install golangci-lint
         uses: golangci/golangci-lint-action@v7
         with:
-          version: v2.13.2
+          version: v2.14.0
           # go.mod lives under apps/bridge-core; without this the action
           # runs in the repo root where there is no module and the linter
           # exits with "pattern ./...: directory prefix . does not contain

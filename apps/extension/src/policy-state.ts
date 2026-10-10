@@ -67,16 +67,21 @@ function isPermissionMode(value: unknown): value is PermissionMode {
   return value === 'strict' || value === 'standard' || value === 'relaxed';
 }
 
-// A stored value wins outright. Absent the value, the two cases are
-// distinguished by whether ANY policy state was persisted: `undefined` is a
-// fresh install, an object is a profile that predates the mode.
+// A stored value wins outright. Absent it, `undefined` is a fresh install
+// and an object without the key is a profile that predates the mode — the
+// upgrade case. A key holding an unrecognized value (or a stored value that
+// is not an object at all) is corruption: fail safe to strict rather than
+// widening what runs silent.
 function resolvePermissionMode(stored: unknown): PermissionMode {
-  if (isPlainObject(stored) && isPermissionMode(stored.permissionMode)) {
-    return stored.permissionMode;
+  if (isPlainObject(stored)) {
+    if (isPermissionMode(stored.permissionMode)) {
+      return stored.permissionMode;
+    }
+    return 'permissionMode' in stored
+      ? FRESH_INSTALL_PERMISSION_MODE
+      : UPGRADE_PERMISSION_MODE;
   }
-  return stored === undefined
-    ? FRESH_INSTALL_PERMISSION_MODE
-    : UPGRADE_PERMISSION_MODE;
+  return FRESH_INSTALL_PERMISSION_MODE;
 }
 
 const DEFAULT_STATE: PolicyState = {
