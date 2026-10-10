@@ -18,7 +18,7 @@ Use it for anything that requires a live browser: search and navigation, forms, 
 
 **The browser-bridge MCP server is the primary interface** (`http://localhost:3003/mcp`), and this skill is written for it: typed tools with structured arguments — plus one extra the CLI cannot receive in-band: learned site cards are injected automatically into `navigate` and the following `snapshot` on known hosts (see "Site memory" below).
 
-**The `bridge` CLI carries the same commands in stateless form** — one command per job, `--json` for structured output — and it owns what no MCP tool exposes: service management (`bridge service up` / `down` / `restart` / `status` / `logs [name]` / `enable` / `disable` / `update [version]` / `doctor` / `version`) and explicit memory pulls (`bridge memory show <host>`; the MCP path gets cards by injection instead).
+**The `bridge` CLI carries the same commands in stateless form** — one command per job, `--json` for structured output — and it owns what no MCP tool exposes: service management (`bridge service up` / `down` / `restart` / `status` / `logs [name]` / `enable` / `disable` / `update [version]` / `doctor` / `version`) and the memory *writes* (`bridge memory rm <host>`, `bridge memory learn`). Memory reads are on both sides: `memory_list` / `memory_show` on MCP, `bridge memory list` / `bridge memory show <host>` on the CLI.
 
 Both interfaces drive the same browser; the tables below map every MCP tool to its CLI equivalent.
 
@@ -77,6 +77,15 @@ Every browser command exists in both interfaces; examples in this skill use the 
 
 `@eN` refs from a snapshot work as `selector` in both interfaces.
 
+### Site memory (read-only; no `tab_id`, no `timeout_ms`)
+
+| MCP tool | CLI equivalent | Notes |
+|---|---|---|
+| `memory_list` | `bridge memory list` | every host with a learned card |
+| `memory_show(host, raw?)` | `bridge memory show <host> --resolve [--raw]` | card + site guide; `raw` gives the structured card. `--resolve` is required on the CLI — without it the map is dropped |
+
+These two read the store rather than the browser, so they never reach the browser at all and take no `tab_id`. `memory_show` is the pull path — see "Site memory" below.
+
 ## Working with tabs
 
 Create a fresh tab per workflow with `tab_new` (CLI: `tab:new`) and pass its `tab_id` to every page-level call; close it with `tab_close` when done. This keeps the user's active tab untouched and lets you run several tab workflows in parallel.
@@ -89,9 +98,10 @@ Tabs opened via `tab_new` are automatically grouped per window into the 'browser
 
 The control plane learns how each site works from what agents actually do and keeps a per-host *site card*: which containers hold the content, which selector shapes have failed there, which sequences have worked.
 
-- **MCP path**: the card is injected automatically into the `navigate` result and the first `snapshot` after landing, labelled `learned site patterns`. Nothing to do. The guide's prose is not injected, but the landing tells you when one exists — a `[site guide]` line carrying the file's path. Read that file when the task needs the why; skip it when the card suffices.
-- **CLI path**: pull it explicitly right after landing on a host: `bridge memory show <host> --json`. A `no card for <host>` answer is normal — continue without it. When a curated **site guide** exists for the host, the same command prints it after the card, labelled `[site guide]` — layout, gotchas, and why steps are ordered, written by the human (or a previous agent at the human's request). A successful `navigate`/`tab:new` also prints the guide's path as a one-line pointer, so skipping the pull still leaves the door visible.
-- **Before writing a routine** (a saved multi-step script for a host — see the `browser-bridge-memory` skill): always pull the card *first*, at coding time, so selectors and layout come from memory instead of guesses. At coding time no `navigate` has happened yet, so nothing will be injected — this pull is the only way to get it.
+- **MCP path**: the card is injected automatically into the `navigate` result and the first `snapshot` after landing, labelled `learned site patterns`. The injection is a convenience, not the recall — it only fires on a landing, and advice gets ignored under pressure. Pull it explicitly with `memory_show(host)` when you land, and read the result before you explore. The guide's prose is not injected, but the landing tells you when one exists — a `[site guide]` line carrying the file's path; `memory_show` prints the guide itself after the card.
+- **CLI path**: pull it explicitly right after landing on a host: `bridge memory show <host> --resolve`. The `--resolve` matters — without it the command renders the card with no resolver and drops the site map entirely, which is the part that says where the content lives. A `no card for <host>` answer is normal — continue without it. When a curated **site guide** exists for the host, the same command prints it after the card, labelled `[site guide]` — layout, gotchas, and why steps are ordered, written by the human (or a previous agent at the human's request). A successful `navigate`/`tab:new` also prints the guide's path as a one-line pointer, so skipping the pull still leaves the door visible.
+- **Before writing a routine** (a saved multi-step script for a host — see the `browser-bridge-memory` skill): always pull the card *first* with `memory_show(host)` (CLI: `bridge memory show <host> --json` for the card's structure and the guide together), at coding time, so selectors and layout come from memory instead of guesses. At coding time no `navigate` has happened yet, so nothing will be injected — this pull is the only way to get it.
+- Either way the refs are resolved against a page that is not the one in front of you. Treat them as where to start looking, not as things to click.
 
 A card is advice about where to look first, never ground truth: sites change, and a wrong card costs a call, not correctness. Confirm against a live `snapshot` before acting. The same holds for a guide — if it contradicts the live page, the page wins; report the mismatch instead of following the artifact.
 

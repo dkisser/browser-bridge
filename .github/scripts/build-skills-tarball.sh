@@ -1,28 +1,53 @@
 #!/usr/bin/env bash
 # Build the skills tarball + sha256 sidecar for a release (ADR-0015).
-# The tarball ships the usage skill as a single top-level browser-bridge/
-# directory — the layout install.sh's download_skills extracts and installs.
+# The tarball ships every skill as a top-level <name>/ directory — the layout
+# install.sh's download_skills extracts and installs, which walks the
+# subdirectories rather than expecting a single one.
 set -euo pipefail
 
 VERSION="${VERSION:-v0.0.0}"
 NAME="browser-bridge-skills-${VERSION}"
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-SKILLS_SRC="${SKILLS_SRC:-$root/skills/browser-bridge}"
+SKILLS_SRC="${SKILLS_SRC:-$root/skills}"
 
 [[ -d "$SKILLS_SRC" ]] || { echo "Skill source is not a directory: $SKILLS_SRC" >&2; exit 1; }
-[[ -f "$SKILLS_SRC/SKILL.md" ]] || { echo "Skill source missing SKILL.md: $SKILLS_SRC" >&2; exit 1; }
 
+# Every immediate subdirectory holding a SKILL.md is a shippable skill. The
+# SKILL.md test is what keeps a stray directory (a notes file, a shared
+# reference) out of the tarball: the installer would create a skill-shaped
+# directory for it and agents would find an entry point with no frontmatter.
+#
+# This used to name one directory, skills/browser-bridge, which meant
+# browser-bridge-memory was never released: it existed in the repo and was
+# editable, and no user ever received it.
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
-cp -R "$SKILLS_SRC" "$STAGE/browser-bridge"
+
+shipped=()
+for skill_dir in "$SKILLS_SRC"/*/; do
+  skill="$(basename "$skill_dir")"
+  [[ -f "$skill_dir/SKILL.md" ]] || continue
+  cp -R "$skill_dir" "$STAGE/$skill"
+  shipped+=("$skill")
+done
+
+if [[ ${#shipped[@]} -eq 0 ]]; then
+  echo "No skills found under $SKILLS_SRC (expected subdirectories with a SKILL.md)" >&2
+  exit 1
+fi
 
 OUT_DIR="${OUT_DIR:-.}"
 OUT_DIR="$(cd "$OUT_DIR" && pwd)"
 TAR_PATH="$OUT_DIR/${NAME}.tar.gz"
 SHA_PATH="${TAR_PATH}.sha256"
 
-( cd "$STAGE" && tar czf "$TAR_PATH" browser-bridge )
+# Names are passed bare from inside the staging dir, so members come out as
+# browser-bridge/… rather than ./browser-bridge/… — install.sh extracts by name
+# and expects the top level to be the skill. (GNU tar's --anchored would say
+# this explicitly; bsdtar on macOS has no such flag, and the bare names already
+# give the same result on both.)
+( cd "$STAGE" && tar czf "$TAR_PATH" "${shipped[@]}" )
 shasum -a 256 "$TAR_PATH" | awk -v f="$(basename "$TAR_PATH")" '{print $1"  "f}' > "$SHA_PATH"
 
 echo "$TAR_PATH"

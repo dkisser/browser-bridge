@@ -83,5 +83,16 @@ tab-scoped tool below requires `tab_id: number` — use the ids reported by
 | `pageinfo` | Get title, URL, and active status of a specific tab | `tab_id: number`, `timeout_ms?: number` |
 | `wait_element` | Wait for an element to appear | `selector: string`, `tab_id: number`, `timeout_ms?: number` |
 | `wait_navigation` | Wait for page navigation to complete | `tab_id: number`, `timeout_ms?: number` |
+| `memory_list` | List every host with a learned site card (read-only; does not touch the browser) | — |
+| `memory_show` | Show what was learned about one host: the site card resolved against the last page recorded, then any human-written site guide | `host: string`, `raw?: boolean` |
 
 Each browser-control tool accepts an optional `timeout_ms` argument.
+
+The two `memory_*` tools are the only ones that take neither `tab_id` nor
+`timeout_ms`: they read the store rather than the browser, so they never reach
+the extension's policy gate. `memory_show` is the pull path — call it when you
+land on a known host and always before writing or rehearsing a routine, where no
+landing has happened yet and so nothing has been injected. The refs it prints
+were resolved offline against a *recorded* page, not the page in the browser
+now. The CLI equivalents are `bridge memory list` and `bridge memory show
+<host>`.

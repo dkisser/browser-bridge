@@ -258,6 +258,31 @@ func (s *MCPServer) registerTools(mcpServer *mcp.Server) {
 		Description: "Wait for navigation to complete in the selected browser. " + tabIDGuidance,
 		InputSchema: toolInputSchemas["wait_navigation"],
 	}, s.executeWaitNavigation)
+	// The memory tools read the store, not the browser: no tab_id, no
+	// timeout_ms, and no dispatch (which would spend the landing's site card).
+	// Their descriptions carry the discovery guidance ADR-0003 says belongs
+	// here — these are the tools an agent has to remember to reach for, so the
+	// moment to say when is the description.
+	mcp.AddTool(mcpServer, &mcp.Tool{
+		Name:        "memory_list",
+		Description: "List every host Browser Bridge has a learned site card for. Read-only, and it does not touch the browser. Call memory_show with a host from this list to see what was learned.",
+		InputSchema: toolInputSchemas["memory_list"],
+	}, s.executeMemoryList)
+	mcp.AddTool(mcpServer, &mcp.Tool{
+		Name: "memory_show",
+		Description: "Show what Browser Bridge has learned about one host: the site card (which selectors " +
+			"failed there, which call sequences worked, and the landmark map resolved against the last " +
+			"page recorded) followed by any human-written site guide for that host. " +
+			"Call this when you land on a host, and always before writing or rehearsing a routine for it — " +
+			"at coding time nothing has been injected yet, because injection only happens on a landing. " +
+			"The refs it prints were resolved offline against a recorded page, NOT the page in the browser " +
+			"now, so treat them as a place to start looking rather than something to click. " +
+			"\"no card for <host>\" is a normal answer, not a failure — carry on without one. " +
+			"Pass raw=true for the structured card instead of the rendering. " +
+			"Read-only: cards are machine-owned and guides are written at a human's request, so neither is " +
+			"editable from here.",
+		InputSchema: toolInputSchemas["memory_show"],
+	}, s.executeMemoryShow)
 }
 
 // --- Argument shapes (json tags match the zod property names) ---

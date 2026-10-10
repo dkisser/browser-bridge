@@ -18,6 +18,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"browser-bridge/internal/core"
+	"browser-bridge/internal/memory"
 )
 
 // ServerName is the FastMCP server name in src/mcp/server.ts.
@@ -45,6 +46,38 @@ type BrowserLister interface {
 	ListBrowsers() []core.BrowserConnection
 }
 
+// MemoryReader is the read half of the learning store, which core.MemoryHook is
+// not: that interface is recording-and-presentation only, because ADR-0019 kept
+// every read off the tools/list contract on the grounds that a tool an agent has
+// to remember to call is a tool it will not call (ADR-0003's "advice is
+// ignorable under pressure"). ADR-0039 amends that — not by reversing the
+// reasoning, which still holds for a tool left to the agent's discretion, but by
+// pairing the tool with a mandated skill step, which is the channel ADR-0027
+// already established for the CLI pull.
+//
+// Reads live here rather than on MemoryHook so the two obligations stay
+// separable: the router needs a hook it can call on every command's two paths,
+// and nothing there should be able to reach into the store's files.
+type MemoryReader interface {
+	// ListHosts reports the hosts the store holds a card for.
+	ListHosts() []string
+	// ReadCard returns the card for a host, or (nil, nil) when there is none.
+	// A nil card is a value, not a failure — most hosts have no card yet, and
+	// the skill tells the agent to carry on when told so.
+	ReadCard(host string) (*memory.SiteCard, error)
+	// ReadGuide returns the human-curated guide for a host, or "" when none
+	// exists. Like a missing card, a missing guide is the normal state.
+	ReadGuide(host string) (string, error)
+	// GuidePath is where that guide lives, so the answer can carry the pointer
+	// the landing paths announce (ADR-0034).
+	GuidePath(host string) string
+	// LastPageDigest returns the newest page recorded for a host and when it
+	// was seen, so a pull can resolve a card's site map offline. A nil digest
+	// means there is nothing to resolve against, which is reported rather than
+	// papered over (ADR-0026).
+	LastPageDigest(host string) (*memory.PageDigest, int64, error)
+}
+
 type MCPOptions struct {
 	Port           int
 	Hostname       string
@@ -58,6 +91,12 @@ type MCPOptions struct {
 	// CLI traffic is covered too — but it is the adapter that renders the text
 	// an agent reads, so it is the adapter that appends the card.
 	Memory core.MemoryHook
+	// Memories is the store's read half, which memory_show and memory_list
+	// call (ADR-0039). Separate from Memory on purpose: the hook is what the
+	// router hands every command, and the reader is only ever asked for a
+	// card. Both are nil when self-learning is disabled, and the tools say so
+	// rather than failing.
+	Memories MemoryReader
 }
 
 // MCPServer is the Go port of src/mcp/server.ts. Where the TS server dials
@@ -74,6 +113,7 @@ type MCPServer struct {
 	version        string
 	logger         *log.Logger
 	memory         core.MemoryHook
+	memories       MemoryReader
 
 	httpServer *nethttp.Server
 	tracker    *Tracker
@@ -98,6 +138,7 @@ func NewMCP(opts MCPOptions) *MCPServer {
 		version:        semverVersion(opts.Version),
 		logger:         opts.Logger,
 		memory:         opts.Memory,
+		memories:       opts.Memories,
 	}
 }
 

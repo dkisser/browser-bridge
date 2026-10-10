@@ -424,3 +424,51 @@ func VerifyCard(card *SiteCard, digest *PageDigest, browserID string) (refs map[
 	}
 	return refs, missing
 }
+
+// LastDigestFor returns the most recent page digest recorded for host among
+// recs, and when it was seen. The digest rides on the trace record, so both
+// callers reach it without a second store: the CLI reads its own handle of the
+// stream (which works with the service stopped), and the control plane reads
+// the handle it already holds (ADR-0039's memory_show).
+//
+// The records come from the caller rather than being read here, because *which*
+// handle is opened is the caller's decision and not this function's: opening a
+// second one over the live file is what ADR-0036 warns about, and the answer
+// differs between a running daemon and a stopped one.
+func LastDigestFor(recs []TraceRecord, host string) (*PageDigest, int64) {
+	var (
+		best  *PageDigest
+		bestA int64
+	)
+	for _, r := range recs {
+		if r.Page == nil || r.Host != host {
+			continue
+		}
+		// >= so a later record wins ties, which is what "most recent" means when
+		// two snapshots land in the same millisecond.
+		if best == nil || r.AtMs >= bestA {
+			best, bestA = r.Page, r.AtMs
+		}
+	}
+	return best, bestA
+}
+
+// LastPageDigest reports the newest page the control plane recorded for a host,
+// read through the Manager's own stream handle.
+//
+// One read of the whole stream, not a scan back from the end: the file is
+// append-only and the rotation is a rename rather than a truncation, so there
+// is no tail to seek to. ReadFrom is safe to run against the appends the router
+// makes concurrently (see its own comment), so this needs no lock the daemon
+// is not already taking.
+func (m *Manager) LastPageDigest(host string) (*PageDigest, int64, error) {
+	if m == nil || m.stream == nil {
+		return nil, 0, nil
+	}
+	recs, _, _, err := m.stream.ReadFrom(0)
+	if err != nil {
+		return nil, 0, err
+	}
+	digest, atMs := LastDigestFor(recs, host)
+	return digest, atMs, nil
+}

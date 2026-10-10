@@ -40,8 +40,8 @@ func TestToolsListMatchesTheContract(t *testing.T) {
 	if uerr := json.Unmarshal(data, &fixture); uerr != nil {
 		t.Fatalf("parse fixture: %v", uerr)
 	}
-	if len(fixture) != 22 {
-		t.Fatalf("fixture has %d tools, want 22", len(fixture))
+	if len(fixture) != 24 {
+		t.Fatalf("fixture has %d tools, want 24", len(fixture))
 	}
 
 	srv := newTestServer(&fakeRouter{}, nil)

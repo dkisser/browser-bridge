@@ -332,21 +332,11 @@ func lastPageFor(dir string, host string) (*memory.PageDigest, int64, error) {
 	if err != nil {
 		return nil, 0, err
 	}
-	var (
-		best  *memory.PageDigest
-		bestA int64
-	)
-	for _, r := range recs {
-		if r.Page == nil || r.Host != host {
-			continue
-		}
-		// >= so a later record wins ties, which is what "most recent" means when
-		// two snapshots land in the same millisecond.
-		if best == nil || r.AtMs >= bestA {
-			best, bestA = r.Page, r.AtMs
-		}
-	}
-	return best, bestA, nil
+	// The scan itself is memory.LastDigestFor, shared with the MCP memory_show
+	// tool (ADR-0039); only the handle is this command's own, because a CLI
+	// must work with the service stopped.
+	digest, atMs := memory.LastDigestFor(recs, host)
+	return digest, atMs, nil
 }
 
 func newMemoryLearnCommand(g *globals) *cobra.Command {
