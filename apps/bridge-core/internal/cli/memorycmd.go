@@ -6,7 +6,6 @@ import (
 	"os"
 	"sort"
 	"text/tabwriter"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -82,10 +81,14 @@ func newMemoryListCommand(g *globals) *cobra.Command {
 					if !ok {
 						continue
 					}
+					// The key from the directory listing, not card.Host — the
+					// same reason the MCP memory_list uses it (ADR-0039): a card
+					// whose host field is stale would otherwise be listed under
+					// a name that `memory show` then denies.
 					rows = append(rows, row{
-						Host:       card.Host,
+						Host:       h,
 						Revision:   card.Revision,
-						UpdatedAt:  formatMs(card.UpdatedAtMs),
+						UpdatedAt:  memory.FormatMs(card.UpdatedAtMs),
 						Map:        len(card.Map),
 						Failures:   len(card.Failures),
 						Procedures: len(card.Procedures),
@@ -104,8 +107,8 @@ func newMemoryListCommand(g *globals) *cobra.Command {
 				if !ok {
 					continue
 				}
-				fmt.Fprintf(w, "%s\t%d\t%s\t%d\t%d\t%d\n", card.Host, card.Revision,
-					formatMs(card.UpdatedAtMs), len(card.Map), len(card.Failures), len(card.Procedures))
+				fmt.Fprintf(w, "%s\t%d\t%s\t%d\t%d\t%d\n", h, card.Revision,
+					memory.FormatMs(card.UpdatedAtMs), len(card.Map), len(card.Failures), len(card.Procedures))
 			}
 			return w.Flush()
 		},
@@ -298,7 +301,7 @@ func showResolved(cmd *cobra.Command, host string, card *memory.SiteCard) error 
 	// while there is one copy of it to change.
 	r := memory.RenderResolvedOffline(card, digest, atMs)
 	fmt.Fprintf(out, "Resolved offline against the last page the control plane recorded for %s.\n", host)
-	fmt.Fprintf(out, "  seen %s", formatMs(atMs))
+	fmt.Fprintf(out, "  seen %s", memory.FormatMs(atMs))
 	if r.PageURL != "" {
 		fmt.Fprintf(out, "  %s", r.PageURL)
 	}
@@ -383,7 +386,7 @@ func newMemoryLearnCommand(g *globals) *cobra.Command {
 					if !ok {
 						continue
 					}
-					rows = append(rows, row{card.Host, card.Revision, len(card.Map), len(card.Failures), len(card.Procedures)})
+					rows = append(rows, row{h, card.Revision, len(card.Map), len(card.Failures), len(card.Procedures)})
 				}
 				return printJSONRows(cmd, g, rows)
 			}
@@ -398,7 +401,7 @@ func newMemoryLearnCommand(g *globals) *cobra.Command {
 					continue
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "  %s  rev %d  map %d  failures %d  steps %d\n",
-					card.Host, card.Revision, len(card.Map), len(card.Failures), len(card.Procedures))
+					h, card.Revision, len(card.Map), len(card.Failures), len(card.Procedures))
 			}
 			return nil
 		},
@@ -450,12 +453,12 @@ func newMemoryHistoryCommand(g *globals) *cobra.Command {
 				}
 				rows := make([]row, 0, len(revs)+len(stale))
 				for _, r := range revs {
-					rows = append(rows, row{host, r.Revision, formatMs(r.AtMs), r.Reason, r.Summary, false, r.Evidence})
+					rows = append(rows, row{host, r.Revision, memory.FormatMs(r.AtMs), r.Reason, r.Summary, false, r.Evidence})
 				}
 				// Staleness is an observation, not a change, and the two are
 				// marked apart so a reader does not count one as the other.
 				for _, r := range stale {
-					rows = append(rows, row{host, r.Revision, formatMs(r.AtMs), "stale", r.Summary, true, nil})
+					rows = append(rows, row{host, r.Revision, memory.FormatMs(r.AtMs), "stale", r.Summary, true, nil})
 				}
 				sort.SliceStable(rows, func(i, j int) bool { return rows[i].Revision > rows[j].Revision })
 				return printJSONRows(cmd, g, rows)
@@ -466,7 +469,7 @@ func newMemoryHistoryCommand(g *globals) *cobra.Command {
 			}
 			for _, r := range revs {
 				fmt.Fprintf(cmd.OutOrStdout(), "rev %-4d %s  %-8s %s\n",
-					r.Revision, formatMs(r.AtMs), r.Reason, r.Summary)
+					r.Revision, memory.FormatMs(r.AtMs), r.Reason, r.Summary)
 				if len(r.Evidence) > 0 {
 					sort.Strings(r.Evidence)
 					fmt.Fprintf(cmd.OutOrStdout(), "        evidence: %v\n", r.Evidence)
@@ -479,7 +482,7 @@ func newMemoryHistoryCommand(g *globals) *cobra.Command {
 			// automatic update, and this says which one is in doubt.
 			for _, r := range stale {
 				fmt.Fprintf(cmd.OutOrStdout(), "rev %-4d %s  %-8s %s\n",
-					r.Revision, formatMs(r.AtMs), "STALE", r.Summary)
+					r.Revision, memory.FormatMs(r.AtMs), "STALE", r.Summary)
 			}
 			return nil
 		},
@@ -566,11 +569,4 @@ func printJSONRows(cmd *cobra.Command, g *globals, rows any) error {
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), string(data))
 	return nil
-}
-
-func formatMs(ms int64) string {
-	if ms == 0 {
-		return "-"
-	}
-	return time.UnixMilli(ms).Local().Format("2006-01-02 15:04:05")
 }

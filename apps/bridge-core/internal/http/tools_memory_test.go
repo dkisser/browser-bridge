@@ -3,6 +3,7 @@ package http
 import (
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -615,5 +616,97 @@ func TestMemoryListUsesTheStoreKeyNotTheCardsOwnHostField(t *testing.T) {
 	}
 	if len(out.Hosts) != 1 || out.Hosts[0].Host != "example.com" {
 		t.Errorf("row = %+v, want host example.com", out.Hosts)
+	}
+}
+
+// raw exists to be parsed, so the guide warning has to live inside the JSON.
+// Appending it as prose — the first version of this — breaks the payload on
+// exactly the case where there is something to report.
+func TestMemoryShowRawStaysParseableWhenTheGuideFails(t *testing.T) {
+	srv := memoryTestServer(&fakeRouter{}, &fakeMemories{
+		cards:    map[string]*memory.SiteCard{"example.com": aCard()},
+		digest:   aDigest(),
+		guideErr: errors.New("permission denied"),
+	})
+	session := newTestClient(t, srv)
+
+	text := resultText(t, callTool(t, session, "memory_show", map[string]any{"host": "example.com", "raw": true}))
+	var out struct {
+		Host       string           `json:"host"`
+		Card       *memory.SiteCard `json:"card"`
+		GuidePath  string           `json:"guidePath"`
+		GuideError string           `json:"guideError"`
+	}
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("raw output does not parse, which is what the warning used to break: %v\n%s", err, text)
+	}
+	if out.GuideError == "" {
+		t.Errorf("the guide failure is missing from the payload:\n%s", text)
+	}
+	if out.GuidePath != "" {
+		t.Errorf("guidePath %q was advertised for a guide that would not read", out.GuidePath)
+	}
+}
+
+// ADR-0028's rule is that a guide can be poisoned and the page wins. The MCP
+// path is the mandated recall, so the sentence has to be there.
+func TestMemoryShowStatesThatThePageWinsOverTheGuide(t *testing.T) {
+	srv := memoryTestServer(&fakeRouter{}, &fakeMemories{
+		cards:  map[string]*memory.SiteCard{"example.com": aCard()},
+		guides: map[string]string{"example.com": "dismiss the banner first"},
+		digest: aDigest(),
+		atMs:   1_700_000_200_000,
+	})
+	session := newTestClient(t, srv)
+
+	text := resultText(t, callTool(t, session, "memory_show", map[string]any{"host": "example.com"}))
+	if !strings.Contains(text, "the page wins") {
+		t.Errorf("the guide section dropped the anti-poisoning rule the CLI prints:\n%s", text)
+	}
+	if !strings.Contains(text, "human-curated") {
+		t.Errorf("the guide section dropped the human-curated label the CLI prints:\n%s", text)
+	}
+}
+
+// Everything else in this package is budgeted; the listing was not, and it
+// grows with the number of hosts a long-running daemon has ever visited.
+func TestMemoryListIsCapped(t *testing.T) {
+	cards := map[string]*memory.SiteCard{}
+	hosts := make([]string, 0, maxMemoryListRows+10)
+	for i := 0; i < maxMemoryListRows+10; i++ {
+		h := "host" + strings.Repeat("x", i%5) + strconv.Itoa(i) + ".example"
+		hosts = append(hosts, h)
+		cards[h] = &memory.SiteCard{Host: h, Revision: 1}
+	}
+	srv := memoryTestServer(&fakeRouter{}, &fakeMemories{hosts: hosts, cards: cards})
+	session := newTestClient(t, srv)
+
+	text := resultText(t, callTool(t, session, "memory_list", map[string]any{}))
+	var out memoryListResult
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("parse: %v\n%s", err, text)
+	}
+	if len(out.Hosts) != maxMemoryListRows {
+		t.Errorf("hosts = %d, want the cap %d", len(out.Hosts), maxMemoryListRows)
+	}
+	if out.Truncated == nil || out.Truncated.Dropped != 10 {
+		t.Errorf("truncated = %+v, want 10 dropped", out.Truncated)
+	}
+}
+
+// The disabled-learning error is prefixed "Tool '<name>' execution failed", so
+// the name has to be a real tool.
+func TestDisabledLearningErrorNamesTheToolThatWasCalled(t *testing.T) {
+	srv := memoryTestServer(&fakeRouter{}, nil)
+	session := newTestClient(t, srv)
+
+	for name, args := range map[string]map[string]any{
+		"memory_list": {},
+		"memory_show": {"host": "example.com"},
+	} {
+		text := resultText(t, callTool(t, session, name, args))
+		if !strings.Contains(text, "Tool '"+name+"' execution failed") {
+			t.Errorf("%s reported under the wrong tool name: %s", name, text)
+		}
 	}
 }

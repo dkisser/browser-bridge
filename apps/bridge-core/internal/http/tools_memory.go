@@ -49,7 +49,24 @@ type memoryListResult struct {
 	// present, empty when there are none, so a caller can branch on the key
 	// rather than on whether it happens to be there.
 	Unreadable []string `json:"unreadable"`
+	// Truncated is nil unless the list was capped, so a caller can tell "that
+	// is all of them" from "that is a prefix" without counting.
+	Truncated *memoryListTruncated `json:"truncated,omitempty"`
 }
+
+// memoryListTruncated says how many rows the cap dropped.
+type memoryListTruncated struct {
+	Dropped int `json:"dropped"`
+}
+
+// maxMemoryListRows caps the listing. Every other read in this package has a
+// budget — the card trims to DefaultInjectTokens, the guide truncates at
+// MaxGuideBytes — because all of them ride into an agent's context on a path
+// the skill mandates. A store accumulates one card per host a daemon has ever
+// visited, so an uncapped list is the one read here that can grow without
+// bound, and it grows in exactly the direction of crowding out the browser
+// state the agent asked for it to help with.
+const maxMemoryListRows = 50
 
 // memoryListRow is the same row `bridge memory list --json` emits, so an agent
 // that learned one interface is not re-learning the shape on the other.
@@ -63,13 +80,14 @@ type memoryListRow struct {
 }
 
 func (s *MCPServer) executeMemoryList(_ context.Context, _ *mcp.CallToolRequest, _ memoryListArgs) (*mcp.CallToolResult, any, error) {
-	reader, unavailable := s.memoryReader()
+	reader, unavailable := s.memoryReader("memory_list")
 	if unavailable != nil {
 		return unavailable, nil, nil
 	}
 	hosts := reader.ListHosts()
 	rows := make([]memoryListRow, 0, len(hosts))
 	unreadable := make([]string, 0, len(hosts))
+	var truncated *memoryListTruncated
 	for _, h := range hosts {
 		card, err := reader.ReadCard(h)
 		if err != nil {
@@ -109,7 +127,18 @@ func (s *MCPServer) executeMemoryList(_ context.Context, _ *mcp.CallToolRequest,
 	// something to report, so the caller that most needs the data is the one that
 	// cannot get it. `unreadable` is the sibling field that carries the caveat in
 	// a form a parser survives.
-	out, err := json.MarshalIndent(memoryListResult{Hosts: rows, Unreadable: unreadable}, "", "  ")
+	// Every other read in this package is budgeted — the card trims to
+	// DefaultInjectTokens, the guide truncates at MaxGuideBytes, and the guide
+	// is kept out of the injection for the same reason (ADR-0033). An
+	// uncapped list of every host a long-running daemon has ever visited is the
+	// one read here that can outgrow the browser state the agent called it for.
+	if len(rows) > maxMemoryListRows {
+		dropped := len(rows) - maxMemoryListRows
+		rows = rows[:maxMemoryListRows]
+		truncated = &memoryListTruncated{Dropped: dropped}
+	}
+
+	out, err := json.MarshalIndent(memoryListResult{Hosts: rows, Unreadable: unreadable, Truncated: truncated}, "", "  ")
 	if err != nil {
 		return toolError("memory_list", err.Error()), nil, nil
 	}
@@ -117,7 +146,7 @@ func (s *MCPServer) executeMemoryList(_ context.Context, _ *mcp.CallToolRequest,
 }
 
 func (s *MCPServer) executeMemoryShow(_ context.Context, _ *mcp.CallToolRequest, args memoryShowArgs) (*mcp.CallToolResult, any, error) {
-	reader, unavailable := s.memoryReader()
+	reader, unavailable := s.memoryReader("memory_show")
 	if unavailable != nil {
 		return unavailable, nil, nil
 	}
@@ -156,27 +185,32 @@ func (s *MCPServer) executeMemoryShow(_ context.Context, _ *mcp.CallToolRequest,
 		if guide != "" {
 			guidePath = reader.GuidePath(host)
 		}
-		raw := rawCardJSON(host, card, guidePath)
-		// The same rule the rendered path follows, and it has to reach this one
-		// too: returning here before the warning made raw the single place where
-		// "the guide would not read" and "there is no guide" produced the same
-		// bytes. An agent told "no guide" skips the file that exists.
-		if guideErr != nil {
-			raw += fmt.Sprintf("\n\nWarning: the guide for %s exists but will not read: %v", host, guideErr)
-		}
-		return toolText(raw), nil, nil
+		// The guide failure travels *inside* the JSON. Appending it as prose —
+		// which is what this did first — makes the payload unparseable on
+		// exactly the case where there is something to report, and raw exists
+		// to be parsed: the skill sends agents here to reason over card
+		// entries. A field is the only shape that carries a caveat and stays
+		// parseable at the same time.
+		return toolText(rawCardJSON(host, card, guidePath, guideErr)), nil, nil
 	}
 
 	var b strings.Builder
 	if card == nil {
-		fmt.Fprintf(&b, "Pulled from the store for %s — these notes were not checked against the page in your browser.\n", host)
+		b.WriteString(pulledFromStore(host))
 		fmt.Fprintf(&b, "No card for %s — the bridge has not learned this host yet. Carry on without one;\n", host)
 		fmt.Fprintf(&b, "driving the site and snapshotting it is what builds it.\n")
 	} else {
 		fmt.Fprint(&b, renderCardOffline(reader, host, card))
 	}
 	if guide != "" {
-		fmt.Fprintf(&b, "\n[site guide] %s\n%s\n", reader.GuidePath(host), guide)
+		// The same header the CLI's printGuide writes, including the
+		// "page wins" clause. ADR-0028's whole argument is that a guide can be
+		// poisoned by page content and the live page has to win; on this path —
+		// the one ADR-0039 makes the mandated recall — that sentence is the
+		// only place the rule is stated, and a surface documented as
+		// equivalent to `bridge memory show` must not carry less of it.
+		fmt.Fprintf(&b, "\n[site guide] %s — %s (human-curated; where it disagrees with the live page, the page wins)\n%s\n",
+			host, reader.GuidePath(host), guide)
 	}
 	if guideErr != nil {
 		fmt.Fprintf(&b, "\nWarning: the guide for %s exists but will not read: %v\n", host, guideErr)
@@ -266,13 +300,21 @@ func pulledFromStore(host string) string {
 // travels and its prose does not: raw exists to be piped, and a guide is
 // unbounded human prose (MaxGuideBytes of it), which is the same reason it
 // stays out of the landing injection (ADR-0033).
-func rawCardJSON(host string, card *memory.SiteCard, guidePath string) string {
+func rawCardJSON(host string, card *memory.SiteCard, guidePath string, guideErr error) string {
 	type payload struct {
 		Host      string           `json:"host"`
 		Card      *memory.SiteCard `json:"card"`
 		GuidePath string           `json:"guidePath,omitempty"`
+		// GuideError is set when the guide file exists and will not read, which
+		// is not the same as there being no guide — a field rather than
+		// trailing prose, so the payload stays parseable (ADR-0033 keeps the
+		// prose out of raw; this keeps the *warning* out of the JSON body).
+		GuideError string `json:"guideError,omitempty"`
 	}
 	p := payload{Host: host, Card: card, GuidePath: guidePath}
+	if guideErr != nil {
+		p.GuideError = guideErr.Error()
+	}
 	out, err := json.MarshalIndent(p, "", "  ")
 	if err != nil {
 		return fmt.Sprintf(`{"host": %q, "error": %q}`, host, err.Error())
@@ -284,9 +326,12 @@ func rawCardJSON(host string, card *memory.SiteCard, guidePath string) string {
 // Self-learning is optional (app.go comes up without it when the store will not
 // open), and a tool that failed with "no such method" would be a worse answer
 // than one that says the feature is off.
-func (s *MCPServer) memoryReader() (MemoryReader, *mcp.CallToolResult) {
+func (s *MCPServer) memoryReader(toolName string) (MemoryReader, *mcp.CallToolResult) {
 	if s.memories == nil {
-		return nil, toolError("memory", "self-learning is disabled on this control plane — no site cards are being recorded or served")
+		// Named for the tool that was called, not for this package. The error
+		// text is "Tool '<name>' execution failed", and a client keying off
+		// that name should never see one that is not in tools/list.
+		return nil, toolError(toolName, "self-learning is disabled on this control plane — no site cards are being recorded or served")
 	}
 	return s.memories, nil
 }

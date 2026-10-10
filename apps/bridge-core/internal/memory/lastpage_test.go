@@ -16,12 +16,17 @@ import (
 
 func appendTraceLine(t *testing.T, dir, line string) {
 	t.Helper()
+	appendTraceRaw(t, dir, line+"\n")
+}
+
+func appendTraceRaw(t *testing.T, dir, text string) {
+	t.Helper()
 	f, err := os.OpenFile(filepath.Join(dir, streamFileName), os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o600)
 	if err != nil {
 		t.Fatalf("open stream: %v", err)
 	}
 	defer func() { _ = f.Close() }()
-	if _, err := f.WriteString(line + "\n"); err != nil {
+	if _, err := f.WriteString(text); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 }
@@ -249,5 +254,114 @@ func TestRenderResolvedOfflineWithoutADigest(t *testing.T) {
 	}
 	if !strings.Contains(got.Text, "Observed to fail here") {
 		t.Errorf("the failures tier did not render without a resolver:\n%s", got.Text)
+	}
+}
+
+// The whole point of the cursor: a pull costs the new records, not the file.
+// With a stamp- or whole-file-keyed memo this regressed into "never hits", so
+// the property is pinned directly — a pull after an unrelated append must still
+// see the older digest, which it cannot if the memo was thrown away and the
+// answer recomputed from a truncated view.
+func TestLastPageDigestSurvivesUnrelatedAppendsWithoutRescanning(t *testing.T) {
+	dir := t.TempDir()
+	appendTraceLine(t, dir, pageRecord(1_700_000_000_000, "example.com", "e7"))
+	m, err := New(Options{DataDir: dir, BrowserID: "browser-1"})
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+	t.Cleanup(func() { _ = m.Close() })
+
+	if d, _, perr := m.LastPageDigest("example.com"); perr != nil || d == nil {
+		t.Fatalf("first pull: %v/%v", d, err)
+	}
+
+	// Three appends for another host, none for ours.
+	for i := 0; i < 3; i++ {
+		appendTraceLine(t, dir, pageRecord(1_700_000_100_000+int64(i), "other.example", "e9"))
+	}
+
+	d, atMs, err := m.LastPageDigest("example.com")
+	if err != nil {
+		t.Fatalf("second pull: %v", err)
+	}
+	if d == nil || d.Nodes[0].Ref != "e7" || atMs != 1_700_000_000_000 {
+		t.Errorf("a pull after unrelated appends lost the digest: %+v at %d", d, atMs)
+	}
+}
+
+// A newer page for the same host must win, which is what the incremental fold
+// has to get right: it merges rather than replaces.
+func TestLastPageDigestTakesTheNewestAcrossIncrementalScans(t *testing.T) {
+	dir := t.TempDir()
+	appendTraceLine(t, dir, pageRecord(1_700_000_000_000, "example.com", "e7"))
+	m, err := New(Options{DataDir: dir, BrowserID: "browser-1"})
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+	t.Cleanup(func() { _ = m.Close() })
+
+	if _, _, perr := m.LastPageDigest("example.com"); perr != nil {
+		t.Fatalf("first pull: %v", err)
+	}
+	appendTraceLine(t, dir, pageRecord(1_700_000_200_000, "example.com", "e11"))
+
+	d, atMs, err := m.LastPageDigest("example.com")
+	if err != nil {
+		t.Fatalf("second pull: %v", err)
+	}
+	if d == nil || d.Nodes[0].Ref != "e11" || atMs != 1_700_000_200_000 {
+		t.Errorf("the fold kept the older page: %+v at %d", d, atMs)
+	}
+}
+
+// A rotation renumbers ReadFrom's indices, so a cursor taken before one points
+// at a different record afterwards. Without the generation check the scan
+// resumes mid-file and silently skips whatever landed in between.
+func TestLastPageDigestRescansAfterARotation(t *testing.T) {
+	dir := t.TempDir()
+	s, err := OpenStream(dir)
+	if err != nil {
+		t.Fatalf("open stream: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	m, err := New(Options{DataDir: dir, BrowserID: "browser-1"})
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+	t.Cleanup(func() { _ = m.Close() })
+
+	appendTraceLine(t, dir, pageRecord(1_700_000_000_000, "example.com", "e7"))
+	if d, _, perr := m.LastPageDigest("example.com"); perr != nil || d == nil {
+		t.Fatalf("precondition: %v/%v", d, err)
+	}
+
+	// Trip the 16 MiB ceiling for real: a mocked rotation would not move the
+	// files the cursor is anchored to, and moving those files is the thing
+	// under test.
+	var bulk strings.Builder
+	for bulk.Len() < streamRotateBytes+1024 {
+		bulk.WriteString(pageRecord(1_700_000_050_000, "bulk.example", "e5"))
+		bulk.WriteByte('\n')
+	}
+	appendTraceRaw(t, dir, bulk.String())
+
+	// The guard refuses while any record is unread *and* not bookkeeping, so
+	// the whole file has to look consumed. 1<<40 is past any line count this
+	// produces, which is the same statement as "everything is learned".
+	rotated, err := s.Rotate(1 << 40)
+	if err != nil {
+		t.Fatalf("rotate: %v", err)
+	}
+	if !rotated {
+		t.Fatal("rotate declined on a stream over the ceiling with everything consumed")
+	}
+
+	appendTraceLine(t, dir, pageRecord(1_700_000_300_000, "after.example", "e21"))
+	d, atMs, err := m.LastPageDigest("after.example")
+	if err != nil {
+		t.Fatalf("post-rotation pull: %v", err)
+	}
+	if d == nil || atMs != 1_700_000_300_000 {
+		t.Errorf("a record written after the rotation was missed: %+v at %d", d, atMs)
 	}
 }

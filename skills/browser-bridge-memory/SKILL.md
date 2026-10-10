@@ -16,7 +16,7 @@ All paths below live under `$BB_HOME` (`~/.browser-bridge` by default). The file
 
 **Prefer the MCP tools.** They read the store in-process, so they work while the bridge is already running for other reasons, and they need no shell:
 
-- `memory_list` — every host with a card. Answers `{"hosts": [...], "unreadable": [...]}`; a non-empty `unreadable` means those card files exist and do not parse, which is not the same as never having been learned.
+- `memory_list` — every host with a card. Answers `{"hosts": [...], "unreadable": [...], "truncated"?: {"dropped": N}}`; a non-empty `unreadable` means those card files exist and do not parse, which is not the same as never having been learned.
 - `memory_show(host)` — exactly what an agent is told about the host: the card, its site map resolved against the last *recorded* page, then any site guide for that host. Pass `raw: true` for the structured card instead of the rendering.
 
 Both are read-only. `memory_show` is the pull path — **call it when you land on a host, and always before writing or rehearsing a routine** (ADR-0039). The refs it prints are labelled as resolved offline against a recorded page, not against the browser's current page, so treat them as a place to start looking, never as something to click (ADR-0026). A `no card for <host>` answer is normal — carry on without one.

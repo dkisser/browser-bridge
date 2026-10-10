@@ -47,15 +47,21 @@ type Manager struct {
 	// starting a pass, so a burst of activity is learned as one batch.
 	idleAfter time.Duration
 
-	// pageCache memoises LastPageDigest against the stream's stamp. The pull
-	// path is on a path the skills mandate on every landing (ADR-0039), and
-	// decoding the whole trace to keep one host's last digest is a cost the
-	// CLI could afford only because a person was looking. The entries are
-	// dropped wholesale when the stamp moves, so a new record or a rotation
-	// cannot leave a stale digest being served.
-	pageMu    sync.Mutex
-	pageStamp StreamStamp
-	pageCache map[string]pageDigestAnswer
+	// pageScan backs LastPageDigest's incremental scan. The pull path is on a
+	// path the skills mandate on every landing (ADR-0039), so re-decoding the
+	// whole trace per pull is not affordable; pageScanLine is where the last
+	// scan stopped and pageBest is the per-host "newest page so far" it built.
+	//
+	// pageRot is the retained generation's fingerprint when pageScanLine was
+	// taken. ReadFrom's indices are global across the retained generation and
+	// the active file, so a rotation renumbers everything a cursor was holding;
+	// without this the scan would resume at an index that now means a different
+	// record and skip whatever landed in between. Derived from the filesystem
+	// rather than a counter on this handle — see StreamStamp.
+	pageMu       sync.Mutex
+	pageScanLine int64
+	pageRot      StreamStamp
+	pageBest     map[string]pageDigestAnswer
 
 	mu   sync.Mutex
 	tabs map[int]*tabState
@@ -262,7 +268,7 @@ func New(opts Options) (*Manager, error) {
 		dataDir:    opts.DataDir,
 		signal:     make(chan struct{}, 1),
 		idleAfter:  idle,
-		pageCache:  map[string]pageDigestAnswer{},
+		pageBest:   map[string]pageDigestAnswer{},
 		tabs:       make(map[int]*tabState),
 		inflight:   make(map[string]inflightCmd),
 		browserID:  opts.BrowserID,

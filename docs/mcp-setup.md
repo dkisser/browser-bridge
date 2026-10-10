@@ -90,10 +90,11 @@ Every browser-control tool above accepts an optional `timeout_ms` argument. The
 two `memory_*` tools below take neither `tab_id` nor `timeout_ms`: they read the
 store rather than the browser, so they never reach the extension's policy gate.
 
-`memory_list` answers with `{"hosts": [...], "unreadable": [...]}` — an object
-rather than a bare array, because it has to be able to name the card files that
-exist and do not parse without making its own output unparseable. `unreadable`
-is always present and empty when there is nothing to report.
+`memory_list` answers with `{"hosts": [...], "unreadable": [...], "truncated"?:
+{"dropped": N}}` — an object rather than a bare array, because it has to be able
+to name the card files that exist and do not parse without making its own output
+unparseable. `unreadable` is always present and empty when there is nothing to
+report; `truncated` is absent unless the listing hit its 50-row cap.
 
 `memory_show` is the pull path — call it when you land on a known host, and
 always before writing or rehearsing a routine, where no landing has happened yet

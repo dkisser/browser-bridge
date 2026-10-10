@@ -457,61 +457,69 @@ func LastDigestFor(recs []TraceRecord, host string) (*PageDigest, int64) {
 // LastPageDigest reports the newest page the control plane recorded for a host,
 // read through the Manager's own stream handle.
 //
-// One read of the whole stream, not a scan back from the end: the file is
-// append-only and the rotation is a rename rather than a truncation, so there
-// is no tail to seek to. ReadFrom is safe to run against the appends the router
-// makes concurrently (see its own comment), so this needs no lock the daemon
-// is not already taking.
+// The scan is incremental. ReadFrom takes a starting line index, so this keeps
+// a cursor and reads only what has been appended since the last call, folding
+// each new record into a per-host "newest so far" map.
 //
-// The answer is memoised against Stream.Stamp, because the callers changed
-// character when ADR-0039 put this on a path the skills mandate on every
-// landing: a decode of every record ever written, per pull, to keep one host's
-// last page. A stamp change drops the whole cache, so the memo can only ever
-// skip work it would have repeated.
+// It was a whole-file ReadFrom(0) first, and then a memo keyed on a stream
+// stamp — which was worse than useless, because the stream grows on every
+// command the router sends, and ADR-0039 puts this on a path the skills mandate
+// on every landing. The stamp therefore moved between essentially every pull,
+// so the memo never hit and every call re-decoded the file (and its retained
+// generation) from byte 0: hundreds of milliseconds and a large transient
+// allocation, bought with a mutex and a clone. A cursor has no invalidation
+// question at all, which is the property the stamp version was reaching for.
 func (m *Manager) LastPageDigest(host string) (*PageDigest, int64, error) {
 	if m == nil || m.stream == nil {
 		return nil, 0, nil
 	}
 
-	stamp := m.stream.Stamp()
+	// Held across the read, deliberately. The alternative — read outside the
+	// lock, merge inside — needs a second copy of the scan position and gets
+	// the two racers advancing it out of order. The read is a tail now, so
+	// serialising it costs one record per concurrent pull.
 	m.pageMu.Lock()
-	if m.pageCache == nil || m.pageStamp != stamp {
-		m.pageCache = map[string]pageDigestAnswer{}
-		m.pageStamp = stamp
-	}
-	if hit, ok := m.pageCache[host]; ok {
-		m.pageMu.Unlock()
-		return cloneDigest(hit.digest), hit.atMs, nil
-	}
-	m.pageMu.Unlock()
+	defer m.pageMu.Unlock()
 
-	recs, _, _, err := m.stream.ReadFrom(0)
+	if m.pageBest == nil {
+		m.pageBest = map[string]pageDigestAnswer{}
+	}
+	if rot := m.stream.Stamp(); rot.RotatedSize != m.pageRot.RotatedSize || rot.RotatedModNs != m.pageRot.RotatedModNs {
+		// A rotation renumbered every index below. Rescan from zero — cheap,
+		// because it is a rotation and the retained generation is one file —
+		// and keep the accumulated best, which folding is idempotent against.
+		m.pageScanLine = 0
+		m.pageRot = rot
+	} else if m.pageScanLine == 0 && rot.ActiveSize > 0 {
+		// First scan after start-up, when there is no rotation to detect.
+		m.pageRot = rot
+	}
+	recs, next, _, err := m.stream.ReadFrom(m.pageScanLine)
 	if err != nil {
-		// A read failure is not cached: the caller is told, and a later pull
-		// must be free to succeed rather than replaying the failure forever.
+		// The cursor is not advanced on a failure, so the next call re-reads the
+		// same span rather than skipping past records it never saw.
 		return nil, 0, err
 	}
-	digest, atMs := LastDigestFor(recs, host)
-
-	m.pageMu.Lock()
-	// Re-check: another caller may have repopulated while this one was reading,
-	// and both results are correct — but writing ours last would keep whichever
-	// arrived later, which is fine, whereas skipping the write would leave a
-	// cache that never converges on anything.
-	if m.pageStamp != stamp {
-		m.pageCache = map[string]pageDigestAnswer{}
-		m.pageStamp = stamp
+	m.pageScanLine = next
+	for _, r := range recs {
+		if r.Page == nil {
+			continue
+		}
+		cur, ok := m.pageBest[r.Host]
+		// >= so a later record wins a same-millisecond tie, matching
+		// LastDigestFor: two answers for "most recent" is one bug too many.
+		if ok && r.AtMs < cur.atMs {
+			continue
+		}
+		m.pageBest[r.Host] = pageDigestAnswer{digest: cloneDigest(r.Page), atMs: r.AtMs}
 	}
-	m.pageCache[host] = pageDigestAnswer{digest: cloneDigest(digest), atMs: atMs}
-	m.pageMu.Unlock()
 
-	// The caller gets its own copy even on a miss. The cached pointer is now
-	// shared by every later hit on this host, and a cache is exactly the kind of
-	// thing a future caller will treat as read-only — it looks like the store's
-	// own state. Sorting Nodes on it, or annotating it to mark where it came
-	// from, would then corrupt every other pull in flight. Same reasoning as
-	// Store.read handing out cloneCard(cached).
-	return cloneDigest(digest), atMs, nil
+	hit := m.pageBest[host]
+	// A copy on the way out, because this map is shared state that outlives the
+	// call and a cache is exactly the thing a future caller will treat as
+	// read-only. Sorting Nodes on it would corrupt every other pull in flight.
+	// Same reasoning as Store.read handing out cloneCard(cached).
+	return cloneDigest(hit.digest), hit.atMs, nil
 }
 
 // cloneDigest deep-copies a page digest. The Nodes slice is the mutable part;

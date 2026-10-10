@@ -59,7 +59,7 @@ claim: no tool result shape changed, and no `CommandType` was added, so nothing
 in `packages/shared` or the extension moved.
 
 **What a review pass found, and what it says about the shape of the decision.**
-Ten findings, all real, and they cluster into one thing: the pull had been
+Five findings from the first review pass, all real, and they cluster into one thing: the pull had been
 written as if it were the only place these questions get asked, and three of
 them had already been answered elsewhere in the codebase.
 
@@ -100,7 +100,38 @@ reached. The gate now checks the shape it was written for: the root must hold
 directories, and any non-directory at the root is the wrapper-less failure it has
 always been. The BATS case that pins that failure is unchanged.
 
-Worth recording how that one got through. The change was verified against the
+**A third pass found the performance fix was worse than the problem.** The
+digest lookup was memoised against a stream stamp, on the reasoning that a
+stamp change drops the cache and the memo "can only ever skip work it would
+have repeated". But the stream grows on every command the router sends, and the
+skills mandate a pull on every landing, so the stamp moved between essentially
+every call: the memo never hit, and every pull re-decoded the whole file and its
+retained generation from byte 0 — hundreds of milliseconds and a large transient
+allocation, bought with a mutex, two stat calls and a deep copy.
+
+It is now a cursor. `ReadFrom` already takes a starting line index, so the scan
+keeps its position and folds only the new records into a per-host "newest so
+far". There is no invalidation question at all, which is what the stamp version
+was reaching for and could not have.
+
+That required a second thing the stamp version got for free by being wrong about:
+`ReadFrom`'s line indices are global across the retained generation and the
+active file, so a rotation renumbers every index a cursor is holding. The signal
+has to survive a rotation performed through a *different* handle — ADR-0036
+already established that a second Manager over the live directory is a real
+situation — so it is derived from the filesystem (the retained generation's size
+and mtime, stat'ed by path rather than from the handle's own rotated field, which
+only the handle that rotated would have set). The rotation test writes 16 MiB and
+rotates for real, and it caught this: the first version of it passed by skipping
+the rotation entirely.
+
+**And the CLI fix the second pass claimed to have made.** A comment in
+`memory_list` said the CLI "reads card.Host and inherits the same defect; it is
+fixed there too." It was not fixed there — the edit had not applied, and the
+comment asserted a change that did not exist. That is the same shape as every
+other finding in this section: a claim written down and not checked.
+
+Worth recording how the packaging one got through. The change was verified against the
 real `install_skills` function, fed a real tarball — and it passed, because the
 function is correct. The gate in front of it was never run. Checking the
 component while skipping the thing that guards it is not verification, and it
