@@ -14,27 +14,27 @@ Browser Bridge lets any Agent control a real Chrome browser. The browser keeps t
 
 Use it for anything that requires a live browser: search and navigation, forms, clicking, reading or scraping page content, screenshots, tab management, site-specific workflows ("open Gmail and mark GitHub notifications as read"). Do not use it for pure coding tasks with no browser involved.
 
-## Access: CLI first, MCP as an optional adapter
+## Access: MCP first, CLI as an optional adapter
 
-**The `bridge` CLI is the primary interface**, and this skill is written for it: one command per job, `--json` for structured output, stateless calls. The CLI also owns service management, which no other interface exposes: `bridge service up` / `down` / `restart` / `status` / `logs [name]` / `enable` / `disable` / `update [version]` / `doctor` / `version`.
+**The browser-bridge MCP server is the primary interface** (`http://localhost:3003/mcp`), and this skill is written for it: typed tools with structured arguments — plus one extra the CLI cannot receive in-band: learned site cards are injected automatically into `navigate` and the following `snapshot` on known hosts (see "Site memory" below).
 
-**If your client has the browser-bridge MCP server connected** (`http://localhost:3003/mcp`), its tools are the same commands in typed form — and they get one extra the CLI cannot receive in-band: learned site cards are injected automatically into `navigate` and the following `snapshot` on known hosts (see "Site memory" below). CLI callers pull the same card with `bridge memory show <host>`.
+**The `bridge` CLI carries the same commands in stateless form** — one command per job, `--json` for structured output — and it owns what no MCP tool exposes: service management (`bridge service up` / `down` / `restart` / `status` / `logs [name]` / `enable` / `disable` / `update [version]` / `doctor` / `version`) and explicit memory pulls (`bridge memory show <host>`; the MCP path gets cards by injection instead).
 
-Both interfaces drive the same browser; the tables below map every command between the two.
+Both interfaces drive the same browser; the tables below map every MCP tool to its CLI equivalent.
 
 ## Before any browser command
 
-1. **Services running?** Use the CLI:
+1. **Services running?** Any successful MCP call proves they are — the control plane serves MCP itself. If every call fails to connect, bring the stack up with the CLI (service management is CLI-only):
    ```bash
    bridge service up
    ```
    If already running, `bridge service up` reports that and does nothing harmful.
-2. **Pick a browser**: `bridge browser:list`. No browsers → ask the user to load and authenticate the extension. Several → ask which one, then pass `--browser <id>` to every command. (MCP: `list_browsers`, then `set_browser(browserId=...)`.)
-3. **Pick a tab**: `bridge --browser <id> tab:list`, then `--tab <id>` on every page-level command — never guess a tab id. (MCP: `tab_list`.)
+2. **Pick a browser**: `list_browsers`. No browsers → ask the user to load and authenticate the extension. Several → ask which one, then `set_browser(browserId=...)`. (CLI: `bridge browser:list`, then `--browser <id>` on every command.)
+3. **Pick a tab**: `tab_list`, then pass `tab_id` on every page-level call — never guess a tab id. (CLI: `tab:list`, then `--tab <id>`.)
 
-## Command reference (CLI ⇄ MCP)
+## Command reference (MCP ⇄ CLI)
 
-Every browser command exists in both interfaces; examples in this skill use the CLI. Every tab-scoped command takes `--tab <id>` (CLI) / `tab_id: number` (MCP), plus an optional `--timeout <ms>` / `timeout_ms` (default 10000).
+Every browser command exists in both interfaces; examples in this skill use the MCP tools. Every tab-scoped call takes `tab_id: number` (CLI: `--tab <id>`), plus an optional `timeout_ms` (CLI: `--timeout <ms>`, default 10000).
 
 ### Browser and tabs
 
@@ -152,17 +152,16 @@ Most browser tasks need several calls. Plan the sequence, run them in order, and
 
 **Open Gmail and mark GitHub pipeline notifications as read:**
 
-1. `bridge service up` (CLI — service management)
-2. `list_browsers` → pick the `browserId`; `set_browser` if several are online
-3. `tab_new(url="https://mail.google.com")` — note the returned `tab_id`, e.g. `101`
-4. `wait_navigation(tab_id=101)` — raise `timeout_ms` to ~15000 if needed
-5. `snapshot(tab_id=101)` to find the notification rows and the mark-as-read control
-6. `get_html` on the confirmed `@eN` ref to derive a durable CSS selector for the control
-7. `click(selector, tab_id=101)` with that selector
-8. Confirm with another `snapshot` or `get_text` if needed
-9. `tab_close(tab_id=101)` when done
+1. `list_browsers` → pick the `browserId`; `set_browser` if several are online. If the call cannot connect, run `bridge service up` first (CLI — service management).
+2. `tab_new(url="https://mail.google.com")` — note the returned `tab_id`, e.g. `101`
+3. `wait_navigation(tab_id=101)` — raise `timeout_ms` to ~15000 if needed
+4. `snapshot(tab_id=101)` to find the notification rows and the mark-as-read control
+5. `get_html` on the confirmed `@eN` ref to derive a durable CSS selector for the control
+6. `click(selector, tab_id=101)` with that selector
+7. Confirm with another `snapshot` or `get_text` if needed
+8. `tab_close(tab_id=101)` when done
 
-CLI equivalent of steps 3-9: `bridge --browser <id> tab:new https://mail.google.com`, then pass `--tab <id>` to each command (`wait:navigation`, `snapshot`, `gethtml`, `click`, `tab:close`).
+CLI equivalent of steps 2-8: `bridge --browser <id> tab:new https://mail.google.com`, then pass `--tab <id>` to each command (`wait:navigation`, `snapshot`, `gethtml`, `click`, `tab:close`).
 
 ## Handling large outputs
 
@@ -177,9 +176,9 @@ Screenshots come back as image content (MCP) or base64 `dataUrl` (CLI); HTML and
 
 ## Error handling
 
+- MCP calls fail to connect → services are down → bring them up with `bridge service up` (CLI — service management is CLI-only), then retry.
 - `list_browsers` returns no browsers → stop and ask the user to load the extension in Chrome and authenticate.
-- Services not running → `bridge service up` first (CLI).
-- A call times out → retry once with a larger `timeout_ms` / `--timeout`, then report failure.
+- A call times out → retry once with a larger `timeout_ms` (CLI: `--timeout`), then report failure.
 - Selector not found → report the exact selector, take a `snapshot`, and ask for a better one.
 - An error payload → surface the `error` and `message` fields clearly.
 
