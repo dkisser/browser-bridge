@@ -11,6 +11,15 @@ dist/
 .agents/
 .claude/
 
+# Machine-local working directories, not part of Browser Bridge: .mavis/
+# holds canvas assets and promo/ a separate video-production project (script,
+# design specs, rendered assets). Both are untracked working state that
+# `git add -A` would otherwise carry into whatever commit happens to be next.
+# Anchored to the repo root so a same-named fixture under a subdirectory stays
+# committable.
+.mavis/
+promo/
+
 # Go build artifacts
 apps/bridge-core/bridge-core
 apps/bridge-core/bridge
