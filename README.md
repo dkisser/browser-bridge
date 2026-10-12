@@ -24,15 +24,9 @@
 
 
 <p align="center">
-  <img src="./docs/assets/outfit-demo.gif" alt="Recommending outfits with an agent" width="720" />
+  <img src="./docs/assets/promo-demo.gif" alt="An agent driving Gmail through Browser Bridge, with the token cost of a full page compared against reading the containers it needs" width="720" />
   <br />
-  <em>Recommending outfits with an agent</em>
-</p>
-
-<p align="center">
-  <img src="./docs/assets/email-demo.gif" alt="Managing Gmail with an agent" width="720" />
-  <br />
-  <em>Managing Gmail with an agent</em>
+  <em>Browser as a tool for any agent — in 15 seconds</em>
 </p>
 
 <p align="center">
