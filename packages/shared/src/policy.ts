@@ -38,6 +38,25 @@ export interface Grant {
   singleUse: boolean;
 }
 
+/**
+ * Whether this reason is a request the human can answer about an origin —
+ * the two reasons that offer Session / Always / Deny, and the two reasons a
+ * dismissal (ADR-0040) may be recorded against.
+ *
+ * One predicate rather than the set spelled out at each of its call sites.
+ * The sites are: the reducer deciding whether a dismissal records a stance,
+ * the close affordance deciding whether to render, the button set deciding
+ * which answers to offer, and the denial dedupe deciding what counts as the
+ * same outstanding request. They spelled it out separately once, and the first
+ * implementation of this feature passed an eleven-test suite while three of
+ * them disagreed — a new origin-scoped reason would now have to be added to
+ * four places and each has its own tests, so a miss stays green. Adding a
+ * reason here is the single edit that reaches all of them.
+ */
+export function isOriginRequestReason(reason: DenyReason): boolean {
+  return reason === 'origin_not_approved' || reason === 'origin_ignored';
+}
+
 export interface Denial {
   reason: DenyReason;
   command: CommandType;
@@ -287,7 +306,12 @@ export function originOf(url: string | null | undefined): string | null {
 export function takeoverDenied(
   command: CommandType,
   takeover: boolean,
-  ctx: Pick<PolicyContext, 'origin'>,
+  // permissionMode is in the Pick for the mode stamped on the denial (F5):
+  // omitting it type-checks because the field is optional, and then every
+  // Takeover refusal falls back to DEFAULT_PERMISSION_MODE — so a profile in
+  // relaxed reported 'strict' on the wire, which is the one value the new
+  // field is guaranteed to get wrong.
+  ctx: Pick<PolicyContext, 'origin' | 'permissionMode'>,
 ): PolicyDecision | null {
   if (!takeover) return null;
   return denial(command, 'human_assist_active', ctx);

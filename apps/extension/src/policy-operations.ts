@@ -1,5 +1,5 @@
 import type { Denial, Grant, PermissionMode } from '@browser-bridge/shared';
-import { denialKey } from '@browser-bridge/shared';
+import { denialKey, isOriginRequestReason } from '@browser-bridge/shared';
 import type { IgnoredOrigin, PolicyState } from './policy-state';
 
 // Pure policy-state mutations, owned by the service worker.
@@ -121,7 +121,7 @@ export function applyDenialAction(
     // having declined anything about the site, so it clears the card and
     // nothing else — the same dismissal, two meanings, would be a lie the
     // agent later reads back as a refusal it never got.
-    if (denial.reason !== 'origin_not_approved' || denial.origin === undefined)
+    if (!isOriginRequestReason(denial.reason) || denial.origin === undefined)
       return { recentDenials: remaining };
     return {
       recentDenials: remaining,
@@ -144,12 +144,8 @@ export function applyDenialAction(
     state.deniedOrigins,
     denial.origin,
   );
-  // An answer retires the stance for this origin. Granting, denying and
-  // allowing-once are all answers — they say something about the origin the
-  // dismissal was silent about, and leaving both standing would let the older
-  // "not right now" outlive the newer yes/no the agent is never told about.
-  // (origin_ignored cards carry the grant and deny buttons for exactly this
-  // reason: a dismissal must never be a dead end.)
+  // An answer *about the origin* retires the stance for it. Granting and
+  // denying qualify and allow-once does not — see the branch below.
   const clearedIgnoredOrigins = withoutOrigin(
     state.ignoredOrigins,
     denial.origin,
@@ -195,11 +191,13 @@ export function applyDenialAction(
         expiresAt: Date.now() + GRANT_TTL_MS,
         singleUse: true,
       };
-      return {
-        grants: [...state.grants, grant],
-        ignoredOrigins: clearedIgnoredOrigins,
-        recentDenials: remaining,
-      };
+      // Deliberately no ignoredOrigins here, and deliberately not the
+      // "answers retire the stance" rule above either. Allow-once is scoped to
+      // a capability for this one attempt; it says nothing about the origin,
+      // so it cannot answer a dismissal of some other command there. An
+      // earlier version cleared them, which meant allowing a single screenshot
+      // silently un-ignored a `click` the human had closed.
+      return { grants: [...state.grants, grant], recentDenials: remaining };
     }
     default:
       return null;

@@ -9,7 +9,7 @@ import type {
   PermissionMode,
   PolicyDecision,
 } from '@browser-bridge/shared';
-import { denialKey } from '@browser-bridge/shared';
+import { denialKey, isOriginRequestReason } from '@browser-bridge/shared';
 
 export interface PendingDownload {
   id: number;
@@ -37,6 +37,14 @@ export interface PolicyState {
   // the other. A stricter mode asks again; a session ends them all. This is
   // not a denial: the origin stays grantable, and the retried request still
   // raises its card.
+  //
+  // No cap, unlike recentDenials, and deliberately: that list is a UI feed
+  // that grows unboundedly on its own, where this one only grows when a human
+  // acts. Per origin the ceiling is already the number of gated commands times
+  // the number of modes — withStance replaces an identical (command, mode)
+  // rather than appending a duplicate — and across origins it is bounded by
+  // how many distinct sites the agent reached in one session, all of it
+  // cleared at the next startup.
   ignoredOrigins: Record<string, IgnoredOrigin[]>;
   // One-shot approvals granted from the side panel (singleUse, expiring).
   grants: Grant[];
@@ -278,10 +286,8 @@ export async function recordDenial(denial: Denial): Promise<void> {
     (other.origin !== undefined &&
       other.origin === denial.origin &&
       other.command === denial.command &&
-      (other.reason === 'origin_not_approved' ||
-        other.reason === 'origin_ignored') &&
-      (denial.reason === 'origin_not_approved' ||
-        denial.reason === 'origin_ignored'));
+      isOriginRequestReason(other.reason) &&
+      isOriginRequestReason(denial.reason));
   await updatePolicyState((state) => ({
     recentDenials: [
       denial,

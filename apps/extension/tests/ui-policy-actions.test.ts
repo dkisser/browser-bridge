@@ -511,3 +511,44 @@ describe('dismissed stance — regressions for the ways it first shipped wrong',
     expect(after.recentDenials[0].reason).toBe('origin_ignored');
   });
 });
+
+describe('allow-once is not an answer about the origin (ADR-0040)', () => {
+  const ORIGIN = 'https://a.example';
+
+  beforeEach(() => {
+    store.clear();
+  });
+
+  it('leaves a dismissal standing when the human allows one action instead', async () => {
+    // The human closed `click` on this origin. The agent then asked for a
+    // screenshot, which is a different question — scoped to a capability, not
+    // to the origin — and the human allowed it once. That answer is not about
+    // click, so it must not retire the click dismissal: doing so is exactly
+    // the widening withStance exists to prevent, reached from the other
+    // direction.
+    await updatePolicyState(() => ({ permissionMode: 'standard' }));
+    await recordDenial({ ...clickDenial(ORIGIN), mode: 'standard' });
+    await handleDenialAction(
+      'dismiss',
+      'origin_not_approved|https://a.example|click',
+    );
+
+    await recordDenial({
+      reason: 'action_out_of_scope',
+      command: 'screenshot',
+      origin: ORIGIN,
+      capability: 'screenshot',
+    });
+    await handleDenialAction(
+      'allow-once',
+      'action_out_of_scope|https://a.example|screenshot',
+    );
+
+    const after = await getPolicyState();
+    expect(after.ignoredOrigins[ORIGIN]).toEqual([
+      { command: 'click', mode: 'standard' },
+    ]);
+    // The one-shot grant was still written — that is what was asked for.
+    expect(after.grants).toHaveLength(1);
+  });
+});

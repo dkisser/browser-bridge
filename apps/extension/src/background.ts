@@ -341,7 +341,13 @@ export async function assertTakeoverUnchanged(
 ): Promise<void> {
   const { decision } = await decideWithState(
     (fresh) =>
-      takeoverDenied(command, fresh.takeover, { origin }) ?? { allow: true },
+      takeoverDenied(command, fresh.takeover, {
+        origin,
+        // The profile's own mode, not an omitted field. Left out it falls back
+        // to DEFAULT_PERMISSION_MODE, so a relaxed profile's Takeover refusal
+        // would report 'strict' to every consumer of the denial.
+        permissionMode: fresh.permissionMode,
+      }) ?? { allow: true },
   );
   if (decision.allow || !decision.denial) return;
 

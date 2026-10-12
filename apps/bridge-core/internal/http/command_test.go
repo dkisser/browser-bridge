@@ -281,6 +281,7 @@ func TestPolicyDenialSurvivesTheWire(t *testing.T) {
 			"reason": "origin_not_approved",
 			"command": "click",
 			"origin": "https://example.com",
+			"mode": "standard",
 			"capability": "origin",
 			"detail": "no approval on record"
 		}
@@ -306,6 +307,14 @@ func TestPolicyDenialSurvivesTheWire(t *testing.T) {
 		}
 		if d.Detail != "no approval on record" {
 			t.Errorf("detail = %q, want the extension's detail", d.Detail)
+		}
+		// Mode is the one field with no consumer yet, which is exactly why it
+		// needs an assertion: a rename of the TS field or a change in how
+		// denial() populates it would pass every other test here while the
+		// value silently arrived empty, and nothing downstream would notice
+		// because nothing downstream reads it yet.
+		if d.Mode != "standard" {
+			t.Errorf("mode = %q, want standard (ADR-0040: the threshold the extension evaluated against)", d.Mode)
 		}
 	})
 

@@ -101,3 +101,32 @@ describe('the close never traps the human (ADR-0040)', () => {
     expect(html).not.toContain('aria-label="Dismiss this request"');
   });
 });
+
+describe('a dismissed card is still closable (ADR-0040)', () => {
+  it('offers the close on the card a retry produces', () => {
+    // Giving origin_ignored the three answers fixed one dead end — a human
+    // who closed a card could no longer grant the origin — and opened
+    // another: with no Dismiss and no close, the card they closed came back
+    // and could never be removed, holding the badge at 1+ for as long as the
+    // agent kept asking. Pressing the close here is a no-op on the stance
+    // (withStance replaces an identical entry with itself); it takes the
+    // card away, which is what the human asked for by pressing it.
+    const html = render({
+      reason: 'origin_ignored',
+      command: 'click',
+      origin: 'https://example.com',
+    });
+    expect(html).toContain('aria-label="Dismiss this request"');
+  });
+
+  it('still offers every answer on it', () => {
+    const html = render({
+      reason: 'origin_ignored',
+      command: 'click',
+      origin: 'https://example.com',
+    });
+    for (const label of ['Session', 'Always', 'Deny']) {
+      expect(html).toContain(`>${label}<`);
+    }
+  });
+});

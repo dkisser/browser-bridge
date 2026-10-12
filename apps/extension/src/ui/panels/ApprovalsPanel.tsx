@@ -2,6 +2,7 @@ import {
   type Denial,
   denialKey,
   humanDenialMessage,
+  isOriginRequestReason,
 } from '@browser-bridge/shared';
 import { EmptyState } from '../components/EmptyState';
 import { type DenialAction, denialCardButtons } from '../policy-actions';
@@ -65,7 +66,7 @@ function DenialCard({
             type="button"
             className={styles.cardDismiss}
             aria-label="Dismiss this request"
-            title="Dismiss — the human is not answering this one"
+            title="Not answering this one for now"
             onClick={() => onAction('dismiss')}
           >
             ×
@@ -99,11 +100,16 @@ function DenialCard({
 // the gate reaches it with none (a content command arriving without a tab id
 // resolves to origin null). Offering the close there would promise a stance
 // and then quietly record nothing — the rejected pure-UI outcome, wearing a
-// better icon. origin_ignored is excluded because its stance is already
-// recorded; every other reason ships a Dismiss button, and the close would be
-// that button a second time in another shape.
+// better icon.
+//
+// origin_ignored is included, which it was not at first. The card the human
+// closed comes back on the agent's retry, and with no close on it they cannot
+// remove the card they just closed — the badge stays at one for as long as the
+// agent keeps asking. Pressing the close is a no-op on the stance, which is
+// already recorded and unchanged by withStance replacing an identical entry
+// with itself; it takes the card away, which is what pressing it asked for.
 function closable(denial: Denial): boolean {
-  return denial.reason === 'origin_not_approved' && denial.origin !== undefined;
+  return isOriginRequestReason(denial.reason) && denial.origin !== undefined;
 }
 
 // Action styling follows the design.md approval triad: deny-origin =
