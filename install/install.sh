@@ -300,9 +300,9 @@ install_skills() {
   local src="$1" dest="$2"
   [[ -d "$src" ]] || die "BB-E200: skills source directory not found: $src"
   [[ -n "$dest" ]] || die "BB-E201: skills destination directory not specified"
-  # Explicit `|| die` on mkdir/cp: main() runs download_skills (and thus this
-  # function) in a subshell as an `if` condition, which suspends errexit, so
-  # unguarded commands would otherwise fail silently.
+  # Explicit `|| die` on mkdir/cp: install_staged_skills runs this function in a
+  # subshell as an `if` condition, which suspends errexit, so unguarded commands
+  # would otherwise fail silently.
   mkdir -p "$dest" || die "BB-E210: could not create skills destination directory: $dest"
 
   local installed=0
@@ -347,8 +347,17 @@ install_skills() {
   info "Skills installed to $dest"
 }
 
-download_skills() {
-  local version="$1" dest="$2" base
+# fetch_skills <version> <workdir>
+#
+# 下载 skills tarball、校验 sha256、解压到 <workdir>/extract，并校验 tarball
+# 形状。**不安装**——安装由 install_skills 对每个目标各做一次，因此整个安装
+# 过程只需下载一次（目标目录数通常是两个，见 detect_default_skills_dirs）。
+#
+# <workdir> 由调用方创建并负责删除，本函数不碰它的生命周期：调用方在子 shell
+# 里执行本函数以便把 die() 降级为警告，而 die() 只退出那个子 shell，父 shell
+# 才有能力在失败后清理 mktemp 目录。
+fetch_skills() {
+  local version="$1" workdir="$2" base
   if [[ "$ORG" =~ ^[0-9a-zA-Z.-]+:[0-9]+$ ]]; then
     base="http://${ORG}"
   else
@@ -356,35 +365,26 @@ download_skills() {
   fi
 
   local tarball="browser-bridge-skills-${version}.tar.gz"
-  local tmpdir
-  tmpdir=$(mktemp -d)
-  # EXIT (not RETURN) trap: download_skills may die() — e.g. BB-E203 on a
-  # 404, BB-E204 on sha256 mismatch, BB-E211 on a malformed tarball — and
-  # die() exits the shell, which means a RETURN trap would never fire and
-  # the mktemp dir would leak. EXIT fires on every shell exit including
-  # die(), and is idempotent (re-cleaning an already-removed tmpdir is a
-  # no-op).
-  trap 'rm -rf "$tmpdir"' EXIT
 
   info "Downloading $tarball"
-  curl -fsSL "${base}/${tarball}" -o "${tmpdir}/${tarball}" \
+  curl -fsSL "${base}/${tarball}" -o "${workdir}/${tarball}" \
     || die "BB-E203: download failed for ${base}/${tarball}"
-  curl -fsSL "${base}/${tarball}.sha256" -o "${tmpdir}/${tarball}.sha256" \
+  curl -fsSL "${base}/${tarball}.sha256" -o "${workdir}/${tarball}.sha256" \
     || die "BB-E203: download failed for ${base}/${tarball}.sha256"
 
   local expected actual
-  expected=$(awk '{print $1}' "${tmpdir}/${tarball}.sha256")
-  actual=$(shasum -a 256 "${tmpdir}/${tarball}" | awk '{print $1}')
+  expected=$(awk '{print $1}' "${workdir}/${tarball}.sha256")
+  actual=$(shasum -a 256 "${workdir}/${tarball}" | awk '{print $1}')
   [[ "$expected" == "$actual" ]] || die "BB-E204: sha256 mismatch (expected $expected, got $actual)"
 
-  mkdir -p "$tmpdir/extract"
-  tar xzf "${tmpdir}/${tarball}" -C "$tmpdir/extract"
+  mkdir -p "${workdir}/extract"
+  tar xzf "${workdir}/${tarball}" -C "${workdir}/extract"
   # Validate the tarball shape: the extract root must hold skill *directories*.
   # A wrapper-less tarball (just SKILL.md at the top, shipped directly without
   # its wrapper dir) would extract as a single file and install_skills would
   # silently copy it to $dest/<basename of the extract root>, where no agent
   # would ever find it. Catch it here where we still know the tarball's URL.
-  # (The exact name of the extract root is whatever download_skills named it;
+  # (The exact name of the extract root is whatever fetch_skills named it;
   # this invariant is about the shape, not the name.)
   #
   # The check is per-entry rather than a count. It used to be `exactly one
@@ -395,7 +395,7 @@ download_skills() {
   # multi-skill branch is right below this, and it was never reached.
   local -a entries=()
   local entry
-  for entry in "$tmpdir/extract"/*; do
+  for entry in "${workdir}/extract"/*; do
     [[ -e "$entry" ]] && entries+=("$entry")
   done
   if [[ ${#entries[@]} -eq 0 ]]; then
@@ -406,11 +406,33 @@ download_skills() {
       die "BB-E211: skills tarball is missing its top-level wrapper directory: ${base}/${tarball} (the root holds $(basename "$entry"), which is not a directory; expected one directory per skill)"
     fi
   done
-  install_skills "$tmpdir/extract" "$dest"
-  # Done; clean up explicitly. The EXIT trap also fires on normal return
-  # for safety, but the rm -rf is idempotent.
-  rm -rf "$tmpdir"
-  trap - EXIT
+}
+
+# install_staged_skills <extract_root> <dest_dir>...
+#
+# 把 fetch_skills 解压出来的同一棵 skills 树复制到每个目标。每个目标独立容错：
+# 一个失败只降级为警告，不影响其它目标（与逐目标下载的旧行为一致）。
+# 成功安装的目标追加到全局 SKILLS_INSTALLED_DIRS；全部失败时返回 1。
+install_staged_skills() {
+  local extract_root="$1"
+  shift
+  local dest_dir any_installed=0
+  for dest_dir in "$@"; do
+    # install_skills runs in a subshell: main() executes this function as an
+    # `if` condition, which suspends errexit, so install_skills' die() would
+    # otherwise take down the whole install.
+    if ( install_skills "$extract_root" "$dest_dir" ); then
+      any_installed=1
+      if [[ -z "$SKILLS_INSTALLED_DIRS" ]]; then
+        SKILLS_INSTALLED_DIRS="$dest_dir"
+      else
+        SKILLS_INSTALLED_DIRS="${SKILLS_INSTALLED_DIRS}"$'\n'"${dest_dir}"
+      fi
+    else
+      info "Warning: skills installation into $dest_dir failed; continuing."
+    fi
+  done
+  [[ "$any_installed" -eq 1 ]]
 }
 
 parse_install_args() {
@@ -546,43 +568,37 @@ main() {
   SKILLS_INSTALLED_DIRS=""
   if [[ "$NO_SKILLS" == "true" ]]; then
     SKILLS_STATUS="skipped-opt-out"
-  elif [[ -n "$SKILLS_TARGET_DIR" ]]; then
-    # Explicit --skills-dir: single target, exactly as requested.
-    if ( download_skills "$version" "$SKILLS_TARGET_DIR" ); then
-      SKILLS_INSTALLED_DIRS="$SKILLS_TARGET_DIR"
-      SKILLS_STATUS="installed"
-    else
-      info "Warning: skills installation failed; continuing without skills."
-      SKILLS_STATUS="failed"
-    fi
   else
     local dest_dirs=()
-    while IFS= read -r line; do
-      [[ -n "$line" ]] && dest_dirs+=("$line")
-    done < <(detect_default_skills_dirs)
+    if [[ -n "$SKILLS_TARGET_DIR" ]]; then
+      # Explicit --skills-dir: single target, exactly as requested.
+      dest_dirs=("$SKILLS_TARGET_DIR")
+    else
+      while IFS= read -r line; do
+        [[ -n "$line" ]] && dest_dirs+=("$line")
+      done < <(detect_default_skills_dirs)
+    fi
     if [[ ${#dest_dirs[@]} -eq 0 ]]; then
       info "Note: neither ~/.agents nor ~/.claude exists; skipping skills installation (pass --skills-dir to choose a location)."
       SKILLS_STATUS="skipped-no-target"
     else
-      local any_installed=0
-      local dest_dir
-      for dest_dir in "${dest_dirs[@]}"; do
-        if ( download_skills "$version" "$dest_dir" ); then
-          any_installed=1
-          if [[ -z "$SKILLS_INSTALLED_DIRS" ]]; then
-            SKILLS_INSTALLED_DIRS="$dest_dir"
-          else
-            SKILLS_INSTALLED_DIRS="${SKILLS_INSTALLED_DIRS}"$'\n'"${dest_dir}"
-          fi
+      # One fetch, N installs: the workdir (and therefore the download and
+      # extract) is shared by every target, so installing into both default
+      # locations does not fetch the tarball twice. Owned by *this* shell —
+      # fetch_skills runs in a subshell where die() would bypass any cleanup.
+      local skills_workdir
+      skills_workdir=$(mktemp -d)
+      if ( fetch_skills "$version" "$skills_workdir" ); then
+        if install_staged_skills "${skills_workdir}/extract" "${dest_dirs[@]}"; then
+          SKILLS_STATUS="installed"
         else
-          info "Warning: skills installation into $dest_dir failed; continuing."
+          SKILLS_STATUS="failed"
         fi
-      done
-      if [[ "$any_installed" -eq 1 ]]; then
-        SKILLS_STATUS="installed"
       else
+        info "Warning: skills download failed; continuing without skills."
         SKILLS_STATUS="failed"
       fi
+      rm -rf "$skills_workdir"
     fi
   fi
 

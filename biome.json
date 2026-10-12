@@ -13,7 +13,8 @@
       "!**/.superpowers",
       "!.worktrees",
       "!**/testdata",
-      "!docs/design"
+      "!docs/design",
+      "!promo"
     ]
   },
   "formatter": {

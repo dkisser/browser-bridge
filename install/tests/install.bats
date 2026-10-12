@@ -975,6 +975,63 @@ SCRIPT
   [[ "$output" == *"Installed the browser-bridge skill into:"* ]]
 }
 
+@test "install.sh fetches the skills tarball once for all default targets" {
+  # Two default targets (~/.agents/skills and ~/.claude/skills) but ONE
+  # download: the tarball and its .sha256 sidecar are each fetched exactly
+  # once, then the single extract is copied into every target. A per-target
+  # download loop (the original shape) fetches each twice — correct output,
+  # double the bandwidth and an extra sha256 + extract pass.
+  mkdir -p "$BB_TEST_TMP/www" "$BB_TEST_TMP/stage"
+  echo "fake-extension-content" > "$BB_TEST_TMP/stage/bb.zip"
+  ( cd "$BB_TEST_TMP/stage" && zip -q "$BB_TEST_TMP/www/browser-bridge-extension-v9.9.9.zip" bb.zip )
+  ( cd "$BB_TEST_TMP/www" && shasum -a 256 browser-bridge-extension-v9.9.9.zip > browser-bridge-extension-v9.9.9.zip.sha256 )
+
+  local tarball_path tarball_name
+  tarball_path=$(make_fake_runtime_tarball v9.9.9 arm64)
+  tarball_name=$(basename "$tarball_path")
+  cp "$tarball_path" "$BB_TEST_TMP/www/$tarball_name"
+  cp "${tarball_path}.sha256" "$BB_TEST_TMP/www/${tarball_name}.sha256"
+
+  local skills_tarball
+  skills_tarball=$(make_fake_skills_tarball v9.9.9)
+  cp "$skills_tarball" "$BB_TEST_TMP/www/"
+  cp "${skills_tarball}.sha256" "$BB_TEST_TMP/www/"
+
+  # Both agent config roots exist → both receive the skill.
+  mkdir -p "$HOME/.agents" "$HOME/.claude"
+
+  make_fake_uname Linux
+  start_mock_http 18781
+  bash_path=$(find_modern_bash)
+
+  sed '$d' "$INSTALL_SH" > "$BB_TEST_TMP/test_skills_single_fetch.sh"
+  cat >> "$BB_TEST_TMP/test_skills_single_fetch.sh" <<SCRIPT
+BB_INSTALL_ARCH=arm64
+ORG='127.0.0.1:18781'
+main
+SCRIPT
+
+  BB_HOME="$BB_TEST_TMP/bb-home-single-fetch" \
+  BB_VERSION="v9.9.9" \
+  run "$bash_path" "$BB_TEST_TMP/test_skills_single_fetch.sh"
+  stop_mock_http
+
+  [ "$status" -eq 0 ]
+  # Both targets still get the skill — one fetch, two installs.
+  [[ -f "$HOME/.agents/skills/browser-bridge/SKILL.md" ]]
+  [[ -f "$HOME/.claude/skills/browser-bridge/SKILL.md" ]]
+
+  # The mock server logs every request, so this counts real network fetches
+  # rather than trusting the script's own progress lines. Match up to the
+  # protocol so the .sha256 sidecar (whose path has the tarball's as a
+  # prefix) is not folded into the same count.
+  local tarball_fetches sidecar_fetches
+  tarball_fetches=$(grep -c 'GET /browser-bridge-skills-v9.9.9.tar.gz HTTP' "$BB_TEST_TMP/http.log" || true)
+  sidecar_fetches=$(grep -c 'GET /browser-bridge-skills-v9.9.9.tar.gz.sha256 HTTP' "$BB_TEST_TMP/http.log" || true)
+  [ "$tarball_fetches" -eq 1 ]
+  [ "$sidecar_fetches" -eq 1 ]
+}
+
 @test "install.sh installs skills only into the default targets whose parent exists" {
   mkdir -p "$BB_TEST_TMP/www" "$BB_TEST_TMP/stage"
   echo "fake-extension-content" > "$BB_TEST_TMP/stage/bb.zip"
@@ -1265,7 +1322,9 @@ SCRIPT
   stop_mock_http
 
   [ "$status" -eq 0 ]
-  [[ "$output" == *"Warning: skills installation into"* ]]
+  # The fetch happens once, before any target is touched, so the warning
+  # fires once for the download rather than once per target.
+  [[ "$output" == *"Warning: skills download failed;"* ]]
   [[ "$output" != *"Installed the browser-bridge skill"* ]]
   [[ -f "$BB_TEST_TMP/bb-home-skills-fail/version" ]]
   [[ -x "$BB_TEST_TMP/bb-home-skills-fail/bin/bridge" ]]
