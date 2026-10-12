@@ -4,6 +4,11 @@ All notable changes to Browser Bridge are documented here. The format follows [K
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-10-12
+
+### Fixed
+- **Updating no longer downloads the skills tarball once per agent.** `bridge service update` runs `install.sh`, and ADR-0015's installer looped over its target directories with the entire pipeline inside it — download, `.sha256` fetch, verify, extract — so a user with both default targets (`~/.agents/skills` for Kimi Code, `~/.claude/skills` for Claude Code) fetched `browser-bridge-skills-<version>.tar.gz` and its checksum twice and extracted twice, to copy identical bytes into two directories. The asset is no longer the few KB it was when ADR-0015 accepted that duplication to keep `download_skills` untouched, and the duplication was invisible to the test suite: no assertion looked at how many times the asset was requested. The fetch is now separated from the install — `fetch_skills` stages one verified extract, `install_staged_skills` copies it into every target — and a BATS case counts requests in a mock server's access log to hold it at one. Per-target failure isolation, the `--skills-dir` override, replace semantics and the best-effort degradation of a failed download are unchanged. See [ADR-0041](docs/adr/0041-the-skills-tarball-is-fetched-once.md).
+
 ## [0.4.3] - 2026-10-12
 
 ### Removed
