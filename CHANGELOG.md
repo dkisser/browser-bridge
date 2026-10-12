@@ -4,6 +4,8 @@ All notable changes to Browser Bridge are documented here. The format follows [K
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-10-12
+
 ### Removed
 - **Breaking for existing MCP clients**: the `screenshot` tool's `fullPage` parameter and the `tab_new` tool's `auto_close` parameter are gone. Both were declared in the tool schemas, carried through the Go argument structs and serialized onto the wire — and read by nothing in the extension. An agent asking for `fullPage: true` got a viewport screenshot and a success response, with no way to tell the difference, and would go on to report the whole page as captured. Since the tool schemas are closed, a client still passing either one now gets a validation error naming the key rather than a silently wrong answer. Neither was worth implementing as-is: a true full-page capture needs either the `chrome.debugger` permission (which puts a banner on the user's toolbar) or scroll-and-stitch (which duplicates fixed headers and misses content that lazy-loads below the fold), and `auto_close` had no defined moment to close at — the one reading that would work, closing when the call returns, contradicts `screenshot`, which needs the tab to stay open and visible. `tab_close` remains the way to close an agent-opened tab. See the note in `internal/http/testdata/README.md`, which also records why the golden fixture now deliberately diverges from the deleted TS server's snapshot.
 ### Added
