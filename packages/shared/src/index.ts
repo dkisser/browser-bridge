@@ -29,6 +29,7 @@ export {
   denialKey,
   evaluatePolicy,
   humanDenialMessage,
+  isOriginRequestReason,
   isReadOnlyCommand,
   originOf,
   takeoverDenied,

@@ -3,12 +3,13 @@
 // partial stored objects still yield a complete PolicyState.
 
 import type {
+  CommandType,
   Denial,
   Grant,
   PermissionMode,
   PolicyDecision,
 } from '@browser-bridge/shared';
-import { denialKey } from '@browser-bridge/shared';
+import { denialKey, isOriginRequestReason } from '@browser-bridge/shared';
 
 export interface PendingDownload {
   id: number;
@@ -16,10 +17,35 @@ export interface PendingDownload {
   url: string;
 }
 
+// What one dismissed stance covers: the command that was closed, and the mode
+// the request was made under. ADR-0040 keys a stance on all three of
+// (origin, command, mode) — a dismissal at one threshold is not a statement
+// about another, and closing `tab:new` is not a statement about `click`.
+export interface IgnoredOrigin {
+  command: CommandType;
+  mode: PermissionMode;
+}
+
 export interface PolicyState {
   // Origins the human approved for the agent, and ones they denied.
   origins: Record<string, 'always' | 'session'>;
   deniedOrigins: Record<string, 'always' | 'session'>;
+  // Stances where the human closed an approval without answering it
+  // (ADR-0040). Keyed by origin, holding one entry per (command, mode) the
+  // human has closed there — a list, not a slot, because the human closes
+  // `click` at one mode and `type` at another and neither decision retires
+  // the other. A stricter mode asks again; a session ends them all. This is
+  // not a denial: the origin stays grantable, and the retried request still
+  // raises its card.
+  //
+  // No cap, unlike recentDenials, and deliberately: that list is a UI feed
+  // that grows unboundedly on its own, where this one only grows when a human
+  // acts. Per origin the ceiling is already the number of gated commands times
+  // the number of modes — withStance replaces an identical (command, mode)
+  // rather than appending a duplicate — and across origins it is bounded by
+  // how many distinct sites the agent reached in one session, all of it
+  // cleared at the next startup.
+  ignoredOrigins: Record<string, IgnoredOrigin[]>;
   // One-shot approvals granted from the side panel (singleUse, expiring).
   grants: Grant[];
   // Human assist: while true, the browser is under user control and all
@@ -87,6 +113,7 @@ function resolvePermissionMode(stored: unknown): PermissionMode {
 const DEFAULT_STATE: PolicyState = {
   origins: {},
   deniedOrigins: {},
+  ignoredOrigins: {},
   grants: [],
   takeover: false,
   agentTabs: [],
@@ -248,10 +275,23 @@ export { denialKey };
 // make about it.
 export async function recordDenial(denial: Denial): Promise<void> {
   if (denial.reason === 'human_assist_active') return;
+  // A dismissed request retried by the agent comes back as origin_ignored,
+  // while the same request asked again at a stricter mode comes back as
+  // origin_not_approved (ADR-0040). Both are one outstanding request for one
+  // (origin, command), and denialKey includes the reason — so keying on it
+  // alone would stack two cards for one request, one calling the origin
+  // unapproved and the other calling it closed. The newest wins either way.
+  const sameRequest = (other: Denial): boolean =>
+    denialKey(other) === denialKey(denial) ||
+    (other.origin !== undefined &&
+      other.origin === denial.origin &&
+      other.command === denial.command &&
+      isOriginRequestReason(other.reason) &&
+      isOriginRequestReason(denial.reason));
   await updatePolicyState((state) => ({
     recentDenials: [
       denial,
-      ...state.recentDenials.filter((d) => denialKey(d) !== denialKey(denial)),
+      ...state.recentDenials.filter((d) => !sameRequest(d)),
     ].slice(0, MAX_RECENT_DENIALS),
   }));
 }
@@ -259,6 +299,11 @@ export async function recordDenial(denial: Denial): Promise<void> {
 // Session-scoped approvals expire with the browser session: drop every
 // 'session'-valued origin entry plus all one-shot grants, agent tabs, and
 // paused downloads.
+//
+// Dismissed stances (ADR-0040) go too, and unlike the maps above they are not
+// filtered by a scope value — every stance is session-scoped by definition,
+// because "not right now" is anchored to this session and carrying one across
+// a restart would harden it into a standing refusal that no card is showing.
 export async function clearSessionScoped(): Promise<void> {
   await updatePolicyState((state) => {
     const keepAlways = (
@@ -270,6 +315,10 @@ export async function clearSessionScoped(): Promise<void> {
     return {
       origins: keepAlways(state.origins),
       deniedOrigins: keepAlways(state.deniedOrigins),
+      // A dismissal is "not right now" (ADR-0040), and "now" is the browser
+      // session — carrying it across a restart would quietly harden it into
+      // a standing refusal that no card is showing any more.
+      ignoredOrigins: {},
       grants: [],
       agentTabs: [],
       pendingDownloads: [],

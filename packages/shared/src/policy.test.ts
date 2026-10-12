@@ -5,8 +5,10 @@ import {
   evaluatePolicy,
   type Grant,
   humanDenialMessage,
+  isOriginRequestReason,
   originOf,
   type PolicyContext,
+  takeoverDenied,
 } from './index';
 import type { CommandType } from './types';
 
@@ -525,5 +527,194 @@ describe('humanDenialMessage', () => {
     expect(message).toContain('https://example.com');
     expect(message).toContain('Browser Bridge side panel');
     expect(message).toContain('WebFetch');
+  });
+});
+
+describe('dismissed stance', () => {
+  const IGNORED = {
+    origin: 'https://unapproved.site',
+    originState: 'ignored' as const,
+  };
+
+  const READ_GATED: CommandType[] = [
+    'navigate',
+    'tab:new',
+    'snapshot',
+    'gettext',
+    'gethtml',
+  ];
+  const WRITE_GATED: CommandType[] = [
+    'click',
+    'type',
+    'select',
+    'scroll',
+    'hover',
+  ];
+
+  it('answers a dismissed request as ignored, not as unapproved', () => {
+    // The two reasons ask the agent for opposite things — "go and get it
+    // approved" against "stop knocking" — so the dismissal cannot ride the
+    // existing reason with a different label somewhere in the UI.
+    for (const mode of ['strict', 'standard'] as const) {
+      for (const command of WRITE_GATED) {
+        expectDeny(
+          evaluatePolicy(command, ctx({ ...IGNORED, permissionMode: mode })),
+          'origin_ignored',
+        );
+      }
+    }
+    // Reads are only gated in strict (ADR-0038), so that is the only mode in
+    // which a dismissed read has a request to have been declined.
+    for (const command of READ_GATED) {
+      expectDeny(
+        evaluatePolicy(command, ctx({ ...IGNORED, permissionMode: 'strict' })),
+        'origin_ignored',
+      );
+    }
+  });
+
+  it('never outranks a denial', () => {
+    // Deny is a hard rail in every mode. A dismissal is the absence of a
+    // decision, so it must not be able to read as anything weaker.
+    for (const mode of ['strict', 'standard', 'relaxed'] as const) {
+      expectDeny(
+        evaluatePolicy(
+          'navigate',
+          ctx({ ...IGNORED, originState: 'denied', permissionMode: mode }),
+        ),
+        'origin_denied',
+      );
+    }
+  });
+
+  it('says nothing in a mode that does not gate this command', () => {
+    // Relaxed gates nothing origin-scoped, and standard gates reads no
+    // longer, so there is no request to have been declined. A dismissal that
+    // reached here would invent an objection the human never made — and would
+    // hold back a command the mode had already released.
+    for (const command of WRITE_GATED) {
+      expect(
+        evaluatePolicy(command, ctx({ ...IGNORED, permissionMode: 'relaxed' }))
+          .allow,
+      ).toBe(true);
+    }
+    for (const command of READ_GATED) {
+      for (const mode of ['standard', 'relaxed'] as const) {
+        expect(
+          evaluatePolicy(command, ctx({ ...IGNORED, permissionMode: mode }))
+            .allow,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it('leaves commands outside the origin gate alone', () => {
+    // Observer commands were never gated on the origin, so a dismissal has
+    // nothing to say about them either.
+    for (const command of [
+      'tab:list',
+      'pageinfo',
+      'tab:switch',
+      'wait:element',
+      'wait:navigation',
+      'goBack',
+      'goForward',
+      'refresh',
+    ] as CommandType[]) {
+      for (const mode of ['strict', 'standard'] as const) {
+        expect(
+          evaluatePolicy(command, ctx({ ...IGNORED, permissionMode: mode }))
+            .allow,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it('tells the agent to stop rather than to go get it approved', () => {
+    const message = humanDenialMessage({
+      reason: 'origin_ignored',
+      command: 'tab:new',
+      origin: 'https://unapproved.site',
+    });
+    expect(message).toContain('https://unapproved.site');
+    // The unapproved text ends "then the command can be retried". Reused
+    // here it would instruct the agent to do exactly what the human closed.
+    expect(message).not.toContain('can be retried');
+    // The do-not-route-around-the-gate warning stays: it is a security note,
+    // not an instruction to ask, and an agent told to stop is exactly the one
+    // that starts looking for a side door.
+    expect(message).toContain('WebFetch');
+    // A dismissal is not a refusal, so the text has to leave the human a way
+    // back in rather than silently ending the origin for good.
+    expect(message.toLowerCase()).toContain('block');
+  });
+});
+
+describe('isOriginRequestReason', () => {
+  it('covers exactly the reasons a human can grant or refuse an origin', () => {
+    // Four call sites used to spell this set out independently, and the
+    // 11-test first version stayed green through all of them disagreeing.
+    for (const reason of ['origin_not_approved', 'origin_ignored'] as const) {
+      expect(isOriginRequestReason(reason)).toBe(true);
+    }
+  });
+
+  it('excludes every reason that is not a request about the origin', () => {
+    for (const reason of [
+      'human_assist_active',
+      'origin_denied',
+      'origin_blocked',
+      'action_out_of_scope',
+      'approval_required',
+      'unknown_command',
+    ] as const) {
+      expect(isOriginRequestReason(reason)).toBe(false);
+    }
+  });
+
+  it('is exhaustive, so a new reason cannot be silently left out', () => {
+    // The reason this exists: a follow-up adding a new origin-scoped reason
+    // had to remember four places. A record that must be updated keeps the
+    // set open by accident.
+    const reasons: DenyReason[] = [
+      'human_assist_active',
+      'origin_not_approved',
+      'origin_ignored',
+      'origin_denied',
+      'origin_blocked',
+      'action_out_of_scope',
+      'approval_required',
+      'unknown_command',
+    ];
+    for (const reason of reasons) {
+      expect(typeof isOriginRequestReason(reason)).toBe('boolean');
+    }
+  });
+});
+
+describe('takeover denials carry the real mode', () => {
+  it('does not report strict for a profile in another mode', () => {
+    // The field is optional on PolicyContext, so a caller omitting it
+    // type-checks and then falls back to DEFAULT_PERMISSION_MODE. That put a
+    // guaranteed-wrong value on the wire for every Takeover refusal from a
+    // relaxed or standard profile, and this function is the one that stamps
+    // it (F5).
+    for (const mode of ['strict', 'standard', 'relaxed'] as const) {
+      const decision = takeoverDenied('click', true, {
+        origin: 'https://example.com',
+        permissionMode: mode,
+      });
+      expect(decision).not.toBeNull();
+      if (decision && !decision.allow) expect(decision.denial.mode).toBe(mode);
+    }
+  });
+
+  it('resolves an omitted mode the same way the gate does', () => {
+    const omitted = takeoverDenied('click', true, { origin: null });
+    const explicit = takeoverDenied('click', true, {
+      origin: null,
+      permissionMode: 'strict',
+    });
+    expect(omitted).toEqual(explicit);
   });
 });

@@ -1,4 +1,4 @@
-import type { Denial } from '@browser-bridge/shared';
+import { type Denial, isOriginRequestReason } from '@browser-bridge/shared';
 import type { DenialAction, OriginKind } from '../policy-operations';
 import { requestPolicyOp } from './policy-ops';
 
@@ -11,13 +11,20 @@ import { requestPolicyOp } from './policy-ops';
 // Button sets vary by denial reason — order and labels are user-visible
 // contract (copy freeze), do not reorder or rename.
 export function denialCardButtons(denial: Denial): [DenialAction, string][] {
+  // Both origin-request reasons get the same three answers, deliberately. A
+  // dismissed request that the agent retried lands here, and ADR-0040
+  // promises the human keeps the ability to change their mind — so this card
+  // must still offer the grant and the refusal. Without them the close would
+  // be a one-way door, and the only way back would be switching permission
+  // modes: a setting rather than an answer about this origin.
+  if (isOriginRequestReason(denial.reason)) {
+    return [
+      ['approve-session', 'Session'],
+      ['approve-always', 'Always'],
+      ['deny-origin', 'Deny'],
+    ];
+  }
   switch (denial.reason) {
-    case 'origin_not_approved':
-      return [
-        ['approve-session', 'Session'],
-        ['approve-always', 'Always'],
-        ['deny-origin', 'Deny'],
-      ];
     case 'approval_required':
     case 'action_out_of_scope':
       return [

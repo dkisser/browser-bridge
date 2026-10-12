@@ -39,11 +39,36 @@
   pointer-events: none;
 }
 
+.cardHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-xs);
+}
+
 .cardTitle {
   font-size: 13px;
   font-weight: 600;
   word-break: break-all;
   color: var(--text);
+}
+
+/* Close affordance for an approval card (ADR-0040). Composes the shared ghost
+   icon button rather than restating it, so this and the panel's other icon
+   controls cannot drift apart into two versions of the same control.
+   Permanently visible rather than hover-revealed: the Origins list reveals
+   Revoke on hover because it sits in a dense repeated row, while this is a
+   single control per card that a human aims at deliberately. Neutral, never
+   the red of Deny — a dismissal is the absence of an answer, and painting it
+   as a refusal is the misreading this ADR exists to prevent. */
+.cardDismiss {
+  composes: iconButton iconButtonHover iconButtonFocusVisible from "../components/icon-button.module.css";
+  /* Optical alignment with the 13px title above it, and the glyph size for a
+     character rather than an SVG. */
+  margin-top: -2px;
+  font: inherit;
+  font-size: 16px;
+  line-height: 1;
 }
 
 .cardMsg {

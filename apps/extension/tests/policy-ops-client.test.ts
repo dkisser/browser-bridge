@@ -23,6 +23,7 @@ let sent: unknown[] = [];
 const POLICY_STATE = {
   origins: {},
   deniedOrigins: {},
+  ignoredOrigins: {},
   grants: [],
   takeover: true,
   permissionMode: 'strict' as const,
