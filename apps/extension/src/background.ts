@@ -430,10 +430,25 @@ async function applyPolicyGate(
       ...(params.submit === true ? { submit: true } : {}),
     };
     if (origin !== null) {
+      // Order is the precedence: a denial and an approval are answers, and a
+      // stance is the absence of one. The stance also has to be matched here,
+      // against this command and this mode, because that is what it was keyed
+      // on (ADR-0040) and this is the only context holding the stored key.
       if (fresh.deniedOrigins[origin] !== undefined) {
         ctx.originState = 'denied';
       } else if (fresh.origins[origin] !== undefined) {
         ctx.originState = 'approved';
+      } else {
+        const held = fresh.ignoredOrigins[origin] ?? [];
+        if (
+          held.some(
+            (stance) =>
+              stance.command === command &&
+              stance.mode === fresh.permissionMode,
+          )
+        ) {
+          ctx.originState = 'ignored';
+        }
       }
     }
     if (command === 'screenshot') {

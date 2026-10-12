@@ -1,6 +1,6 @@
 import type { Denial, Grant, PermissionMode } from '@browser-bridge/shared';
 import { denialKey } from '@browser-bridge/shared';
-import type { PolicyState } from './policy-state';
+import type { IgnoredOrigin, PolicyState } from './policy-state';
 
 // Pure policy-state mutations, owned by the service worker.
 //
@@ -78,6 +78,29 @@ function withoutOrigin<T>(
   );
 }
 
+// withStance adds one (command, mode) stance to an origin, replacing any entry
+// for that same pair and leaving the origin's other stances alone. A list
+// rather than a single slot: the human who closed `click` at strict and `type`
+// at standard made two decisions, and storing the second must not silently
+// retire the first — that would turn a narrow human choice into a wider one
+// than they ever made (ADR-0040).
+function withStance(
+  map: Record<string, IgnoredOrigin[]>,
+  origin: string,
+  stance: IgnoredOrigin,
+): Record<string, IgnoredOrigin[]> {
+  const existing = map[origin] ?? [];
+  return {
+    ...map,
+    [origin]: [
+      ...existing.filter(
+        (held) => held.command !== stance.command || held.mode !== stance.mode,
+      ),
+      stance,
+    ],
+  };
+}
+
 /**
  * Applies a denial-card action. Returns null when the target denial is gone
  * (already resolved by another click) or the action is not applicable, so the
@@ -88,22 +111,47 @@ export function applyDenialAction(
   action: DenialAction,
   targetKey: string,
 ): Partial<PolicyState> | null {
-  if (action === 'dismiss') {
-    return {
-      recentDenials: state.recentDenials.filter(
-        (d) => denialKey(d) !== targetKey,
-      ),
-    };
-  }
-
   const found = findDenial(state, targetKey);
   if (!found) return null;
   const { denial, remaining } = found;
-  // The two maps must stay mutually exclusive — OriginsPanel renders them
+
+  if (action === 'dismiss') {
+    // Closing the card is only a stance about the origin when the card was an
+    // origin request (ADR-0040). An Allow-once card closes without the human
+    // having declined anything about the site, so it clears the card and
+    // nothing else — the same dismissal, two meanings, would be a lie the
+    // agent later reads back as a refusal it never got.
+    if (denial.reason !== 'origin_not_approved' || denial.origin === undefined)
+      return { recentDenials: remaining };
+    return {
+      recentDenials: remaining,
+      ignoredOrigins: withStance(state.ignoredOrigins, denial.origin, {
+        command: denial.command,
+        // The mode the *request* was raised under, not the mode the human is
+        // in now. They can differ — the card can sit open across a mode
+        // change — and recording the current one would key a stance to a
+        // threshold the request never belonged to, which then matches nothing
+        // and silently does nothing forever.
+        mode: denial.mode ?? state.permissionMode,
+      }),
+    };
+  }
+
+  // The maps must stay mutually exclusive — OriginsPanel renders them
   // together and would otherwise show the same origin twice.
   const clearedOrigins = withoutOrigin(state.origins, denial.origin);
   const clearedDeniedOrigins = withoutOrigin(
     state.deniedOrigins,
+    denial.origin,
+  );
+  // An answer retires the stance for this origin. Granting, denying and
+  // allowing-once are all answers — they say something about the origin the
+  // dismissal was silent about, and leaving both standing would let the older
+  // "not right now" outlive the newer yes/no the agent is never told about.
+  // (origin_ignored cards carry the grant and deny buttons for exactly this
+  // reason: a dismissal must never be a dead end.)
+  const clearedIgnoredOrigins = withoutOrigin(
+    state.ignoredOrigins,
     denial.origin,
   );
 
@@ -122,6 +170,7 @@ export function applyDenialAction(
           [denial.origin]: action === 'approve-session' ? 'session' : 'always',
         },
         deniedOrigins: clearedDeniedOrigins,
+        ignoredOrigins: clearedIgnoredOrigins,
         recentDenials: remaining,
       };
     }
@@ -135,6 +184,7 @@ export function applyDenialAction(
           ...clearedDeniedOrigins,
           [denial.origin]: 'always',
         },
+        ignoredOrigins: clearedIgnoredOrigins,
         recentDenials: remaining,
       };
     }
@@ -145,7 +195,11 @@ export function applyDenialAction(
         expiresAt: Date.now() + GRANT_TTL_MS,
         singleUse: true,
       };
-      return { grants: [...state.grants, grant], recentDenials: remaining };
+      return {
+        grants: [...state.grants, grant],
+        ignoredOrigins: clearedIgnoredOrigins,
+        recentDenials: remaining,
+      };
     }
     default:
       return null;

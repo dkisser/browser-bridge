@@ -13,6 +13,10 @@ const DEFAULT_PERMISSION_MODE: PermissionMode = 'strict';
 export type DenyReason =
   | 'human_assist_active'
   | 'origin_not_approved'
+  // The human closed the request without answering it (ADR-0040). Distinct
+  // from origin_denied, which is a refusal that holds in every mode: this one
+  // is scoped to (origin, command, mode) and expires with the session.
+  | 'origin_ignored'
   | 'origin_denied'
   | 'origin_blocked'
   | 'action_out_of_scope'
@@ -38,6 +42,10 @@ export interface Denial {
   reason: DenyReason;
   command: CommandType;
   origin?: string;
+  // The permission mode the decision was made under, resolved to a concrete
+  // value. Set by evaluatePolicy for every denial it produces; ADR-0040 keys a
+  // dismissal on it, and a card can be closed long after the mode changed.
+  mode?: PermissionMode;
   capability?: GrantCapability;
   detail?: string;
 }
@@ -63,7 +71,13 @@ export interface PolicyContext {
   // which stays hard-denied — a caller that named a target still gets the
   // protected-context check.
   blankNewTab?: boolean;
-  originState?: 'approved' | 'denied';
+  originState?: 'approved' | 'denied' | 'ignored';
+  // Whether this origin carries a dismissed stance (ADR-0040) *for this
+  // command and this mode* is the caller's to make: it owns the stored key
+  // and is the only context that can read it. The policy core takes the
+  // matched result, the same shape it takes for 'approved' and 'denied', so
+  // that the rule for what a dismissal *means* stays here rather than in
+  // whichever context happened to compute it.
   blocklistHit?: boolean;
   isAgentTab?: boolean;
   isVisibleApprovedTab?: boolean;
@@ -210,7 +224,7 @@ export function isReadOnlyCommand(command: CommandType): boolean {
 function denial(
   command: CommandType,
   reason: DenyReason,
-  ctx: Pick<PolicyContext, 'origin'>,
+  ctx: Pick<PolicyContext, 'origin' | 'permissionMode'>,
   capability?: GrantCapability,
   detail?: string,
 ): PolicyDecision {
@@ -219,6 +233,13 @@ function denial(
     denial: {
       reason,
       command,
+      // The mode this decision was made under (ADR-0040). A dismissal is keyed
+      // on the mode it was made in, and the human may change mode between the
+      // request being raised and the card being closed — so the stance has to
+      // carry the mode the *request* was made under, which is not knowable
+      // later. Optional only so hand-built denials stay convenient; every one
+      // produced by evaluatePolicy carries it.
+      mode: ctx.permissionMode ?? DEFAULT_PERMISSION_MODE,
       ...(ctx.origin !== null ? { origin: ctx.origin } : {}),
       ...(capability !== undefined ? { capability } : {}),
       ...(detail !== undefined ? { detail } : {}),
@@ -329,6 +350,12 @@ export function evaluatePolicy(
     (READ_COMMANDS.has(command) || WRITE_COMMANDS.has(command))
   ) {
     if (originApprovalGated(command, mode) && ctx.originState !== 'approved') {
+      // Inside the gate, not before it: a mode that does not gate this
+      // command has no request to have been declined, and reaching here in
+      // relaxed would hold back a command the mode released.
+      if (ctx.originState === 'ignored') {
+        return denial(command, 'origin_ignored', ctx, 'origin');
+      }
       const grant = findGrant(ctx, now, 'origin');
       if (grant) return { allow: true, consume: [grant] };
       return denial(command, 'origin_not_approved', ctx, 'origin');
@@ -339,6 +366,12 @@ export function evaluatePolicy(
   if (command === 'type') {
     const consume: Grant[] = [];
     if (originApprovalGated(command, mode) && ctx.originState !== 'approved') {
+      // Same position as the read/write branch above, and for the same
+      // reason: the origin comes first, so a dismissal is the answer the
+      // agent gets before submit and sensitive-field ever come into it.
+      if (ctx.originState === 'ignored') {
+        return denial(command, 'origin_ignored', ctx, 'origin');
+      }
       const originGrant = findGrant(ctx, now, 'origin');
       if (!originGrant) {
         return denial(command, 'origin_not_approved', ctx, 'origin');
@@ -433,6 +466,22 @@ export function humanDenialMessage(d: Denial): string {
         '(click the Browser Bridge icon in the browser toolbar to open the panel; choose Session or Always), ' +
         'then the command can be retried. ' +
         'Do not bypass the gate with WebFetch or other tools — accessing this origin requires approval.'
+      );
+    case 'origin_ignored':
+      // A dismissal, not a refusal. The human closed the card, which is a
+      // different thing from denying the origin: it lasts for this command at
+      // this permission mode and ends with the session. So the text tells the
+      // agent to stop, and — because "not right now" is not "never" — hands
+      // the decision back to the human instead of quietly retiring the origin.
+      // The "go get it approved, then retry" half of the unapproved text above
+      // would instruct the agent to do precisely what the human closed.
+      return (
+        `Origin ignored by the human: ${d.origin ?? 'unknown'}. ` +
+        'A human saw this request in the Browser Bridge side panel and closed it without answering. ' +
+        'That means "not right now", not a refusal: the origin can still be approved there, and the ' +
+        'dismissal ends with the browser session. ' +
+        'Do not retry this command on this origin. If it blocks your task, say so and let the human decide. ' +
+        'Do not bypass the gate with WebFetch or other tools — this origin still requires the human.'
       );
     case 'origin_denied':
       return (

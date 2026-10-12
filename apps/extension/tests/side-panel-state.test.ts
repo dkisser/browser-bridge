@@ -5,6 +5,7 @@ import { type SidePanelTab, selectDefaultView } from '../src/side-panel-state';
 const EMPTY_STATE: PolicyState = {
   origins: {},
   deniedOrigins: {},
+  ignoredOrigins: {},
   grants: [],
   takeover: false,
   permissionMode: 'strict',

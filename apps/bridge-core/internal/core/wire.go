@@ -172,9 +172,13 @@ type ScreenshotResult struct {
 // `error` / `message` pair; Reason repeats `error` so a consumer that only
 // decodes the struct still has the code.
 type Denial struct {
-	Reason     string `json:"reason"`
-	Command    string `json:"command"`
-	Origin     string `json:"origin,omitempty"`
+	Reason  string `json:"reason"`
+	Command string `json:"command"`
+	Origin  string `json:"origin,omitempty"`
+	// Mode is the permission mode the decision was made under (ADR-0040).
+	// Carried so a consumer reading the structured denial sees the same
+	// threshold the extension evaluated against.
+	Mode       string `json:"mode,omitempty"`
 	Capability string `json:"capability,omitempty"`
 	Detail     string `json:"detail,omitempty"`
 }

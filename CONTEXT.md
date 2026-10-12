@@ -66,6 +66,10 @@ _Avoid_: risk tier, permission tier, trust level
 The boundary of what the agent may touch without asking: the tabs it opened itself plus the origins a human approved. What a crossing costs is the Permission mode's call — strict and standard hold gated commands for Approval, relaxed waves them through — while deny and the blocklist hold in every mode.
 _Avoid_: allowlist, permission set, trust zone
 
+**Dismissed stance**:
+A human closing an Approval without answering it: the origin was reached for, the human saw the request and does not want to decide on it now. Keyed on (origin, command, permission mode), so it holds at the threshold where it was given and asks again at a tighter one. Readable only to the agent, and only on its next attempt, which it is told to abandon unless the task is blocked — a dismissal is not a refusal: the origin can still be granted afterwards, the retried request still raises its card, and the stance ends with the browser session.
+_Avoid_: dismissed approval, snooze, mute origin, denied origin
+
 **Agent tab group**:
 The per-window Chrome tab group (titled `browser-bridge`) that the extension automatically places every agent-opened tab into, so the human can see the agent's operating area at a glance. Purely visual organization: it is not part of Working scope and membership never feeds policy decisions.
 _Avoid_: workgroup, lane, trust group

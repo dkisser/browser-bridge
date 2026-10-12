@@ -13,6 +13,14 @@ import { requestPolicyOp } from './policy-ops';
 export function denialCardButtons(denial: Denial): [DenialAction, string][] {
   switch (denial.reason) {
     case 'origin_not_approved':
+    // Same three answers, deliberately. A dismissed request that the agent
+    // retried lands here, and ADR-0040 promises the human keeps the ability to
+    // change their mind — so this card must still offer the grant and the
+    // refusal. Without them the close would be a one-way door, and the only
+    // way back would be switching permission modes: a setting, not an answer
+    // about this origin. The close control is deliberately absent here (see
+    // `closable`) — the stance it records is already recorded.
+    case 'origin_ignored':
       return [
         ['approve-session', 'Session'],
         ['approve-always', 'Always'],

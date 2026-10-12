@@ -49,10 +49,28 @@ function DenialCard({
 }) {
   return (
     <article className={styles.card}>
-      <div className={styles.cardTitle}>
-        {denial.origin !== undefined
-          ? `${denial.command} — ${denial.origin}`
-          : denial.command}
+      <div className={styles.cardHeader}>
+        <div className={styles.cardTitle}>
+          {denial.origin !== undefined
+            ? `${denial.command} — ${denial.origin}`
+            : denial.command}
+        </div>
+        {closable(denial) && (
+          // ADR-0040: closing an origin request records that the human saw it
+          // and does not want to answer it — a stance the agent reads on its
+          // next attempt. Offered only where there is no Dismiss button
+          // already, and never styled like Deny: red means refusal here, and
+          // this is not one.
+          <button
+            type="button"
+            className={styles.cardDismiss}
+            aria-label="Dismiss this request"
+            title="Dismiss — the human is not answering this one"
+            onClick={() => onAction('dismiss')}
+          >
+            ×
+          </button>
+        )}
       </div>
       <div className={styles.cardMsg}>{humanDenialMessage(denial)}</div>
       <div className={styles.cardActions}>
@@ -69,6 +87,23 @@ function DenialCard({
       </div>
     </article>
   );
+}
+
+// Which cards carry the close. Kept as its own predicate rather than folded
+// into denialCardButtons because that function is the copy-frozen answer
+// set, and this is a different thing: the button set says what a human can
+// *decide*, this says what a human can *put aside*.
+//
+// The origin requirement is not decoration: applyDenialAction records no
+// stance for a denial with no origin, and a denial loses its origin whenever
+// the gate reaches it with none (a content command arriving without a tab id
+// resolves to origin null). Offering the close there would promise a stance
+// and then quietly record nothing — the rejected pure-UI outcome, wearing a
+// better icon. origin_ignored is excluded because its stance is already
+// recorded; every other reason ships a Dismiss button, and the close would be
+// that button a second time in another shape.
+function closable(denial: Denial): boolean {
+  return denial.reason === 'origin_not_approved' && denial.origin !== undefined;
 }
 
 // Action styling follows the design.md approval triad: deny-origin =

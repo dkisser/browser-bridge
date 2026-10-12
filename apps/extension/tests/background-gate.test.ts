@@ -1958,3 +1958,80 @@ describe('the worker rejects privileged messages from a non-extension sender', (
     expect(response).toBe(NO_REPLY);
   });
 });
+
+describe('the gate reads a dismissed stance (ADR-0040)', () => {
+  const ORIGIN = 'https://unapproved.site';
+  const TAB = 1;
+
+  function stance(overrides: { command?: string; mode?: string } = {}): void {
+    store.set('policyState', {
+      permissionMode: overrides.mode ?? 'standard',
+      ignoredOrigins: {
+        [ORIGIN]: [
+          {
+            command: overrides.command ?? 'click',
+            mode: overrides.mode ?? 'standard',
+          },
+        ],
+      },
+    });
+  }
+
+  async function denialReason(): Promise<string> {
+    try {
+      await handleCommand(makeCommand('click', TAB));
+      throw new Error('expected the command to be denied');
+    } catch (err) {
+      return (err as { denial?: { reason: string } }).denial?.reason ?? 'none';
+    }
+  }
+
+  beforeEach(() => {
+    store.clear();
+    tabUrls.clear();
+    tabUrls.set(TAB, `${ORIGIN}/page`);
+  });
+
+  it('answers as ignored when the command and the mode both match', async () => {
+    stance();
+    expect(await denialReason()).toBe('origin_ignored');
+  });
+
+  it('asks again in a stricter mode than the one the stance was given in', async () => {
+    // The key carries the mode (ADR-0040): a dismissal at standard is not a
+    // statement about strict, so the human gets asked there.
+    stance({ mode: 'standard' });
+    store.set('policyState', {
+      permissionMode: 'strict',
+      ignoredOrigins: { [ORIGIN]: [{ command: 'click', mode: 'standard' }] },
+    });
+    expect(await denialReason()).toBe('origin_not_approved');
+  });
+
+  it('asks again for a command the stance does not cover', async () => {
+    stance({ command: 'tab:new' });
+    expect(await denialReason()).toBe('origin_not_approved');
+  });
+
+  it('still raises the card, so the human can change their mind', async () => {
+    stance();
+    await denialReason();
+
+    const stored = store.get('policyState') as {
+      recentDenials: { reason: string; origin?: string }[];
+    };
+    expect(stored.recentDenials).toHaveLength(1);
+    expect(stored.recentDenials[0].reason).toBe('origin_ignored');
+    expect(stored.recentDenials[0].origin).toBe(ORIGIN);
+  });
+
+  it('lets a denial outrank the stance', async () => {
+    stance();
+    store.set('policyState', {
+      permissionMode: 'standard',
+      deniedOrigins: { [ORIGIN]: 'always' },
+      ignoredOrigins: { [ORIGIN]: [{ command: 'click', mode: 'standard' }] },
+    });
+    expect(await denialReason()).toBe('origin_denied');
+  });
+});
