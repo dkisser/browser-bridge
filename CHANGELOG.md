@@ -4,6 +4,12 @@ All notable changes to Browser Bridge are documented here. The format follows [K
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-10-13
+
+### Fixed
+- **The connection row now moves when the socket does, instead of up to five seconds later.** The side panel's bridge row was refreshed only by a 5s poll, so every socket transition surfaced late — most visibly the one right after pairing, where the drawer collapsed and the row sat on *Disconnected* until the next tick. The offscreen document already knew the truth and the service worker already received it; the last hop was missing. The worker now broadcasts each offscreen transition as `ws_status_changed`, and the panel applies the payload directly — no ping round trip — while refreshing the bridge identity separately, because a push cannot carry it. The poll remains the floor rather than the mechanism. The payload is narrowed through a validator instead of a cast: the side panel is a `runtime.onMessage` listener like every other extension context, so it also receives tab traffic, and an unvalidated read would let an unrelated broadcast flip the indicator. The broadcast carries a distinct type rather than echoing `ws_status`, which is what stops the worker re-entering on its own message.
+- **A successful re-pair no longer leaves the pairing form open.** The drawer's visibility was a boolean toggle read as *unpaired, or the toggle says open* — which collapses for free on a **first** pairing, because the storage listener flips `paired` and the form closes on its own. A **re-**pair never got that: `paired` was already true and never became false, so nothing collapsed the drawer. You re-paired, the code was accepted, and the form sat there as though nothing had happened. Visibility is now a small reducer with an explicit *pairing succeeded* event, and the rules live outside the component where they are unit-testable without a DOM.
+
 ## [0.4.4] - 2026-10-12
 
 ### Fixed
