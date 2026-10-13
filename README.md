@@ -442,6 +442,7 @@ Browser Bridge drives your everyday, logged-in browser, so safety is enforced wh
 - **Hard denials**: browser system pages (`chrome://`, `chrome-extension://`, `file:`, `javascript:`, …) and the built-in blocklist (including the Chrome Web Store) are rejected with no approval path, so an agent cannot reconfigure the browser.
 - **Human assist**: a takeover switch in the side panel rejects every agent command until you release it.
 - **Sensitive actions**: typing into password or credit-card fields and form submission (`type` with `submit`) always require a one-time approval; downloads initiated in agent tabs are paused for your review.
+- **A dedicated browser for automation** (see [docs/dedicated-automation-browser.md](docs/dedicated-automation-browser.md)): if you don't want an agent anywhere near your everyday browser, point Browser Bridge at a separate Chrome instance with its own data directory — the blast radius is exactly the logins you chose to put there.
 
 ---
 

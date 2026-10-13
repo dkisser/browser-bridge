@@ -321,6 +321,7 @@ Browser Bridge 驱动的是你日常已登录的浏览器，因此安全策略�
 - **硬拒绝**：浏览器系统页（`chrome://`、`chrome-extension://`、`file:`、`javascript:` 等）和内置黑名单（含 Chrome 网上应用店）一律拒绝且不可批准，agent 无法借此修改浏览器配置。
 - **人工接管**：扩展弹窗中的接管开关开启期间，所有 agent 命令都会被拒绝，直到你释放。
 - **敏感动作**：在密码或信用卡输入框中输入、以及表单提交（`type` 带 `submit`）永远需要一次性批准；agent 发起的下载会被暂停待你确认。
+- **自动化专用浏览器**（见 [docs/dedicated-automation-browser.md](docs/dedicated-automation-browser.md)）：如果你不希望 agent 靠近你的日常浏览器，可以把 Browser Bridge 指向一个带独立数据目录的独立 Chrome 实例——爆炸半径恰好等于你主动放进去的那些登录态。
 
 ---
 
