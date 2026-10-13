@@ -25,7 +25,9 @@ type panicRouter struct {
 
 func (p *panicRouter) BrowserID() string { return "browser-test" }
 
-func (p *panicRouter) HandleBrowserConnect() {}
+func (p *panicRouter) MarkBrowserOnline() core.BufferedCommand { return core.BufferedCommand{} }
+
+func (p *panicRouter) ReplayBufferedCommand(core.BufferedCommand) {}
 
 func (p *panicRouter) HandleBrowserDisconnect() {}
 

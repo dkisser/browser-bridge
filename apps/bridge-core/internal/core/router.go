@@ -506,32 +506,63 @@ func (r *Router) HandleBrowserEvent(envelope Envelope) {
 	}
 }
 
-// HandleBrowserConnect is router.handleBrowserConnect: the extension WS
-// upgrade succeeded.
-func (r *Router) HandleBrowserConnect() {
+// BufferedCommand is a command MarkBrowserOnline claimed off the reconnect
+// buffer, carried across the greeting the browser server sends in between. The
+// zero value means the reconnect had nothing waiting.
+type BufferedCommand struct {
+	// Frame is the encoded envelope, exactly as GetBufferedCommand returned
+	// it — the frame *is* an envelope, so it decodes back.
+	Frame string
+	// ID is the envelope id, needed to answer the caller if the replay fails.
+	ID string
+
+	buffered bool
+}
+
+// MarkBrowserOnline is the first half of router.handleBrowserConnect: the
+// extension WS upgrade succeeded, so the browser is routable again.
+//
+// It is split in two because the browser server has to greet the extension
+// between the halves — the first frame after an upgrade is always
+// `connected`, and a command replayed ahead of it would arrive as the
+// extension's very first frame — while the marking has to *precede* the
+// greeting. The registry is the only thing that lets a command through
+// (inbound.go answers browser_offline for a browser it has never seen), so a
+// client that reads the greeting and immediately sends one down the inbound
+// connection would otherwise be refused for a browser that was, by then,
+// plainly online.
+func (r *Router) MarkBrowserOnline() BufferedCommand {
 	// Read the buffer *before* flipping status. StateManager's status setter
 	// clears any buffered command and cancels its timeout as soon as the
 	// status leaves idle_wait, so reading afterwards always yields nothing
 	// and the command is silently dropped — neither forwarded nor answered,
 	// with the caller left to time out on its own.
 	buffered, ok := r.state.GetBufferedCommand()
-	// The envelope id, needed to answer the caller if the replay below
-	// fails. GetBufferedCommand hands back the encoded frame rather than the
-	// envelope, and the frame *is* an envelope, so it decodes back.
-	var bufferedID string
+	var claimed BufferedCommand
 	if ok {
+		claimed = BufferedCommand{Frame: buffered, buffered: true}
+		// GetBufferedCommand hands back the encoded frame rather than the
+		// envelope, and the frame *is* an envelope, so it decodes back.
 		if env, err := Decode(buffered); err == nil {
-			bufferedID = env.ID
+			claimed.ID = env.ID
 		}
 	}
 
 	r.state.SetStatus(StatusOnline)
 	r.registry.SetStatus(r.state.BrowserID(), StatusOnline)
 
-	if !ok {
+	return claimed
+}
+
+// ReplayBufferedCommand is the second half: hand the command MarkBrowserOnline
+// claimed to the extension. A zero BufferedCommand — a reconnect with nothing
+// buffered — is a no-op, so calling this without having marked first is inert
+// rather than out of order.
+func (r *Router) ReplayBufferedCommand(claimed BufferedCommand) {
+	if !claimed.buffered {
 		return
 	}
-	if r.browser.SendToExtension(buffered) {
+	if r.browser.SendToExtension(claimed.Frame) {
 		return
 	}
 	// The third site that can lose a command after it has been accepted, and
@@ -542,14 +573,14 @@ func (r *Router) HandleBrowserConnect() {
 	// reacting to has not produced a usable connection — so the only honest
 	// thing left is to fail the caller now instead of leaving it to discover
 	// the loss by timing out on its own deadline.
-	if target := r.lookupInbound(bufferedID); target != nil {
+	if target := r.lookupInbound(claimed.ID); target != nil {
 		r.mu.Lock()
-		call := r.pending[bufferedID]
+		call := r.pending[claimed.ID]
 		r.mu.Unlock()
 		r.sendError(target, "extension_send_failed",
 			"The extension reconnected but the command could not be delivered.",
-			bufferedID, r.state.BrowserID(), call)
-		r.removeInbound(bufferedID)
+			claimed.ID, r.state.BrowserID(), call)
+		r.removeInbound(claimed.ID)
 	}
 }
 

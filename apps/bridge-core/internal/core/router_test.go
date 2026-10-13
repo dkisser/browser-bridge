@@ -127,7 +127,7 @@ func TestDeliversBufferedCommandOnConnect(t *testing.T) {
 		t.Fatal("did not buffer")
 	}
 
-	r.HandleBrowserConnect()
+	r.ReplayBufferedCommand(r.MarkBrowserOnline())
 
 	// Regression: flipping status before reading the buffer cleared it (and
 	// canceled its timeout) on the way in, so the command was dropped with
@@ -149,7 +149,7 @@ func TestConnectConsumesBufferAndFlipsOnline(t *testing.T) {
 		t.Fatal("did not buffer")
 	}
 
-	r.HandleBrowserConnect()
+	r.ReplayBufferedCommand(r.MarkBrowserOnline())
 
 	if _, ok := st.GetBufferedCommand(); ok {
 		t.Fatal("buffer was not consumed")
@@ -291,7 +291,7 @@ func TestBufferExpiryDoesNotBlameTheServiceWorker(t *testing.T) {
 // the third site where an accepted command can be lost, and the only one
 // where every safety net is already disarmed at the moment it happens.
 //
-// By the time HandleBrowserConnect replays the buffer, GetBufferedCommand has
+// By the time the connect handler replays the buffer, GetBufferedCommand has
 // cleared the buffer and stopped its timeout — so the sw_timeout callback can
 // no longer fire — and the buffered path never armed a route TTL, so nothing
 // else will clean up either. The return value of the replay was discarded, so
@@ -315,7 +315,7 @@ func TestReplayedCommandFailsTheCallerWhenTheExtensionCannotBeReached(t *testing
 	// connection — SendToExtension says so.
 	browser.online = true
 	browser.deliver = false
-	r.HandleBrowserConnect()
+	r.ReplayBufferedCommand(r.MarkBrowserOnline())
 
 	select {
 	case text := <-responded:
@@ -351,7 +351,7 @@ func TestReplayedCommandStaysSilentWhenItIsDelivered(t *testing.T) {
 	r.HandleInboundCommand(commandEnvelope(st.BrowserID(), "c1"), sender)
 	browser.online = true
 	browser.deliver = true
-	r.HandleBrowserConnect()
+	r.ReplayBufferedCommand(r.MarkBrowserOnline())
 
 	select {
 	case text := <-responded:
@@ -930,7 +930,7 @@ func TestIdlessBufferedCommandIsFailedOnAFailedReplay(t *testing.T) {
 
 	browser.online = true
 	browser.deliver = false
-	r.HandleBrowserConnect()
+	r.ReplayBufferedCommand(r.MarkBrowserOnline())
 
 	got := sender.sentMessages()
 	if len(got) != 1 {

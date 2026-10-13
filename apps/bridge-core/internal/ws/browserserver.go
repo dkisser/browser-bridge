@@ -24,7 +24,8 @@ const extensionOriginPrefix = "chrome-extension://"
 // reference each other, mirroring the getRouter closure in index.ts.
 type BrowserRouter interface {
 	BrowserID() string
-	HandleBrowserConnect()
+	MarkBrowserOnline() core.BufferedCommand
+	ReplayBufferedCommand(core.BufferedCommand)
 	HandleBrowserDisconnect()
 	HandleBrowserResponse(envelope core.Envelope)
 	HandleBrowserEvent(envelope core.Envelope)
@@ -231,13 +232,27 @@ func (s *BrowserServer) serveConn(conn *websocket.Conn) {
 	s.conns[c] = struct{}{}
 	s.mu.Unlock()
 
+	// Mark the browser routable *before* announcing the connection. The
+	// registry is the only thing that lets a command through — inbound.go
+	// answers browser_offline for a browser it has never seen — so a client
+	// that reads the greeting and immediately sends a command down the
+	// inbound connection could be refused for a browser that was, by then,
+	// plainly online.
+	//
+	// The router's connect handling is split across the greeting: the marking
+	// here, the replay at the bottom. The extension's first frame after an
+	// upgrade is always `connected`, so a buffered command must not arrive
+	// ahead of it.
+	buffered := s.getRouter().MarkBrowserOnline()
+
 	s.logger.Println("[browser] Extension connected")
 	if text, err := core.Encode(core.TypeEvent, json.RawMessage(`{"event":"connected"}`), "", ""); err != nil {
 		s.logger.Printf("encode connected event: %v", err)
 	} else {
 		c.Send(text)
 	}
-	s.getRouter().HandleBrowserConnect()
+
+	s.getRouter().ReplayBufferedCommand(buffered)
 
 	defer func() {
 		s.mu.Lock()
