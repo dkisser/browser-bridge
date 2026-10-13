@@ -22,7 +22,7 @@
     "lint": "biome check . && ! gofmt -l apps/bridge-core | grep . && go -C apps/bridge-core vet ./... && cd apps/bridge-core && golangci-lint run",
     "check": "bun run lint && bun run type-check && bun run test",
     "type-check": "tsc --noEmit",
-    "test": "bun test && go -C apps/bridge-core test -race ./...",
+    "test": "bun test && go -C apps/bridge-core test -race -count=1 ./...",
     "test:watch": "bun test --watch",
     "test:install": "bats install/tests/",
     "release:extension-zip": "bash .github/scripts/build-extension-zip.sh"
