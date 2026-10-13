@@ -1,9 +1,19 @@
 import type { PermissionMode } from '@browser-bridge/shared';
-import { type KeyboardEvent, type MouseEvent, useState } from 'react';
+import {
+  type KeyboardEvent,
+  type MouseEvent,
+  useReducer,
+  useState,
+} from 'react';
 import { confirmPairingCode } from '../bridge-api';
 import { GearIcon, RefreshIcon } from '../icons';
 import { GlassSwitch } from './GlassSwitch';
 import { PermissionModeControl } from './PermissionModeControl';
+import {
+  initialPairDrawerState,
+  pairDrawerReducer,
+  shouldShowPairForm,
+} from './pair-drawer';
 import styles from './TakeoverHero.module.css';
 
 interface TakeoverHeroProps {
@@ -36,8 +46,11 @@ export function TakeoverHero({
   const [pairError, setPairError] = useState('');
   // Paired: the form stays collapsed behind the re-pair toggle; unpaired it
   // is always visible (that is the blocking state the user must resolve).
-  const [pairFormOpen, setPairFormOpen] = useState(false);
-  const showPairForm = !paired || pairFormOpen;
+  const [drawer, dispatch] = useReducer(
+    pairDrawerReducer,
+    initialPairDrawerState,
+  );
+  const showPairForm = shouldShowPairForm(paired, drawer.open);
 
   const submitPairing = (): void => {
     const code = pairCode.trim();
@@ -46,10 +59,7 @@ export function TakeoverHero({
     void confirmPairingCode(code).then((error) => {
       if (error === null) {
         setPairCode('');
-        // Do not reset pairFormOpen here: once `paired` updates via the
-        // storage listener, showPairForm = !paired || pairFormOpen will
-        // collapse the form automatically. Resetting now would briefly
-        // re-show the empty form before the listener catches up.
+        dispatch({ type: 'pairing-succeeded' });
       } else {
         setPairError(error);
       }
@@ -137,9 +147,9 @@ export function TakeoverHero({
           <button
             type="button"
             className={
-              pairFormOpen ? styles.iconButtonActive : styles.iconButton
+              drawer.open ? styles.iconButtonActive : styles.iconButton
             }
-            onClick={() => setPairFormOpen((open) => !open)}
+            onClick={() => dispatch({ type: 'toggle' })}
             aria-label="Re-pair"
             title="Re-pair with bridge-core"
           >

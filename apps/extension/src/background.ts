@@ -927,6 +927,21 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   // Status update from offscreen document
   if (request.type === 'ws_status') {
     _wsConnected = request.connected;
+    // Relay it to the extension's own pages. The side panel's connection row
+    // is otherwise only ever refreshed by its 5s poll, so every socket
+    // transition showed up seconds late — most visibly the one right after
+    // pairing, where the drawer collapsed but the row sat on Disconnected
+    // until the next tick. The offscreen document already knew the truth;
+    // this was the missing last hop.
+    //
+    // A distinct type, not an echo of `ws_status`: the handler above must not
+    // be able to re-enter on its own broadcast and spin.
+    void chrome.runtime
+      .sendMessage({ type: 'ws_status_changed', connected: _wsConnected })
+      .catch(() => {
+        // No page is listening (side panel closed, or the worker was
+        // invalidated). The next poll reconciles.
+      });
     return false;
   }
 

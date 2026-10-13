@@ -21,6 +21,9 @@ const HOUR = 60 * 60 * 1000;
 const store = new Map<string, unknown>();
 const tabUrls = new Map<number, string>();
 const sentToContentScript: Record<string, unknown>[] = [];
+// What the worker broadcast out over chrome.runtime.sendMessage, so the
+// side panel's connection row can be tested as a push rather than a poll.
+const runtimeMessages: Record<string, unknown>[] = [];
 // Records the browser-level side effects a command handler performed, so a
 // takeover test can assert the handler never ran — not merely that the call
 // rejected. A url-less tab:new that opens a tab is the regression these guard.
@@ -250,7 +253,13 @@ beforeAll(async () => {
       // mock needs one; without it every policy_op in this file is rejected.
       id: 'test',
       getURL: (path: string) => `chrome-extension://test/${path}`,
-      sendMessage: async () => ({ connected: false }),
+      // Records every outbound broadcast so a test can assert what the worker
+      // pushes to the extension's own pages. queryOffscreenStatus reads
+      // `connected` off the reply, so the stand-in value stays.
+      sendMessage: async (message: Record<string, unknown>) => {
+        runtimeMessages.push(message);
+        return { connected: false };
+      },
       ContextType: { OFFSCREEN_DOCUMENT: 'OFFSCREEN_DOCUMENT' },
     },
     offscreen: {
@@ -1956,6 +1965,61 @@ describe('the worker rejects privileged messages from a non-extension sender', (
     // answered, and the offscreen socket state would have stopped updating
     // with nothing in any response to show for it.
     expect(response).toBe(NO_REPLY);
+  });
+
+  it('relays the socket state to the pages, so the row is not poll-bound', async () => {
+    // Without this the offscreen document knew the socket had opened and the
+    // worker recorded it, but the side panel's connection row only ever
+    // changed on its 5s poll — which is why pairing left it on Disconnected
+    // for seconds after the drawer had collapsed. The state assertion in the
+    // test above passes either way; this is the assertion that fails when the
+    // last hop is missing.
+    runtimeMessages.length = 0;
+
+    await sendExpectingSilence(
+      { type: 'ws_status', connected: true },
+      { id: 'test', url: 'chrome-extension://test/offscreen.html' },
+    );
+    // The broadcast is a floating promise; drain before asserting.
+    for (let i = 0; i < 20; i += 1) await settle();
+
+    expect(runtimeMessages).toContainEqual({
+      type: 'ws_status_changed',
+      connected: true,
+    });
+  });
+
+  it('relays under a name the worker does not itself handle', async () => {
+    // If the relay echoed `ws_status`, the worker could receive its own
+    // broadcast and re-broadcast forever. The renamed type makes the loop
+    // unrepresentable rather than dependent on whether Chrome happens to
+    // deliver a sender's own runtime.sendMessage back to it.
+    runtimeMessages.length = 0;
+
+    await sendExpectingSilence(
+      { type: 'ws_status', connected: true },
+      { id: 'test', url: 'chrome-extension://test/offscreen.html' },
+    );
+    for (let i = 0; i < 20; i += 1) await settle();
+
+    expect(runtimeMessages.filter((m) => m.type === 'ws_status')).toHaveLength(
+      0,
+    );
+  });
+
+  it('relays a disconnect too, not just the connect', async () => {
+    runtimeMessages.length = 0;
+
+    await sendExpectingSilence(
+      { type: 'ws_status', connected: false },
+      { id: 'test', url: 'chrome-extension://test/offscreen.html' },
+    );
+    for (let i = 0; i < 20; i += 1) await settle();
+
+    expect(runtimeMessages).toContainEqual({
+      type: 'ws_status_changed',
+      connected: false,
+    });
   });
 });
 
