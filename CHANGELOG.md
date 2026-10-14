@@ -9,6 +9,12 @@ All notable changes to Browser Bridge are documented here. The format follows [K
 
   The extension previously pointed all four declared icon sizes at one 1024px master, which made every slot a downscale of a downscale. That costs the mark its colour at the size that matters most: the tapered tail is about a tenth of a pixel at 16px, so antialiasing spread it across one pixel at roughly 12% coverage and the brand blue stopped reading as blue — the 16px toolbar icon was a pale grey-blue smear and the mark read as yellow only. Each size is now rendered from the vector at its own pixel size with a minimum stroke width of ~1.05px in its own units, applied as a smooth maximum so there is no crease in the taper. The glass variant is hero-only: below about 64px the glass stack is measurably gone, and a toolbar slot is 16px. See [ADR-0042](docs/adr/0042-a-tapered-sweep-with-a-spectrum-fill.md).
 
+### Added
+- **A dark-ground copy of the logo, for the places that cannot do transparency (ADR-0043).** Social previews, app tiles, chat unfurls and anything else without alpha support need an opaque-background asset. `logo-dark.png` / `icon-dark-{16,32,48,128}.png` ship alongside the transparent family, on the extension's own dark surface `#131315`. **The mark does not change colour between the two families** — same `#007aff → #ff9500` spectrum, only the backdrop differs. The extension's dark scheme does brighten `--primary` and `--amber` for UI contrast, and it is tempting to follow that here; measured against `#131315` the light spectrum already clears 4.62:1 (AA body text wants 4.5:1) and 8.44:1 at the amber end, so there is no contrast problem to solve, and solving it anyway would make the mark read as two different logos depending on what is behind it. Neither family is wired into `manifest.json` yet — the natural consumer for the dark icons is Chrome's `theme_icons`, which is a separate call.
+
+### Fixed
+- **The extension icons were rendering smaller than they should have.** They were cut against the same generously-padded viewBox as the page logo, but an icon canvas *is* the boundary, so the padding only shrank the mark — and the non-square viewBox inside a square viewport letterboxed the remainder. The shipped `icon-16.png` had the mark filling 88% of the width and 66% of the height, which in a 16px slot is a mark 12px tall. Icons are now cut against a tight 2%-padded ink box and fill the full width. The page logo keeps its padding, where the air is the point.
+
 ## [0.4.5] - 2026-10-13
 
 ### Fixed

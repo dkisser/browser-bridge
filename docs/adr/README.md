@@ -51,6 +51,7 @@ ADR records what changed since. Read the chain, not just the newest file.
 | [0040](./0040-dismissal-is-a-stance-the-agent-can-read.md) | Dismissal is a stance the agent can read | 0038, 0022 |
 | [0041](./0041-the-skills-tarball-is-fetched-once.md) | The skills tarball is fetched once, not once per target | 0015 |
 | [0042](./0042-a-tapered-sweep-with-a-spectrum-fill.md) | The logo is a tapered sweep with a spectrum fill; icons ship one PNG per size | |
+| [0043](./0043-one-mark-two-grounds.md) | One mark, two grounds: a light and a dark asset family, same colours | 0042 |
 
 ## The rest
 
