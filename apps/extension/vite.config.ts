@@ -11,7 +11,13 @@ import { resolve } from 'node:path';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 
-const LOGO_PATH = '../../docs/assets/logo.png';
+const LOGO_DIR = '../../docs/assets';
+
+// One PNG per declared size. Chrome picks the slot it wants from the manifest
+// and scales it, so shipping a single 1024 master means every slot is a
+// downscaled raster of a raster — the 16px toolbar icon in particular has to
+// be rendered from the vector at its own size to survive. See ADR-0042.
+const ICON_SIZES = [16, 32, 48, 128];
 
 function copyBuildArtifact(
   sourcePath: string,
@@ -87,11 +93,13 @@ export default defineConfig({
           'manifest',
         );
 
-        copyBuildArtifact(
-          resolve(__dirname, LOGO_PATH),
-          resolve(distDir, 'icon.png'),
-          'logo',
-        );
+        for (const size of ICON_SIZES) {
+          copyBuildArtifact(
+            resolve(__dirname, LOGO_DIR, `icon-${size}.png`),
+            resolve(distDir, `icon-${size}.png`),
+            `icon-${size}`,
+          );
+        }
       },
     },
   ],

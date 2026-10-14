@@ -4,6 +4,11 @@ All notable changes to Browser Bridge are documented here. The format follows [K
 
 ## [Unreleased]
 
+### Changed
+- **The logo is a tapered sweep with a spectrum fill, and the extension ships one icon per declared size.** The old mark was a line drawing of the Brooklyn Bridge — literal, and legible as "a bridge" only to someone who had been told. The new one is a single stroke that enters thin at the lower left, swells through the apex and tapers off right, filled with a spectrum running the product's own two brand tokens (`#007aff` → `#ff9500`) through cyan and yellow. The stroke is *tapered* rather than uniform, which is both the expressiveness and the reason it survives 16px; the spectrum is interpolated along the arc's own length rather than across the canvas, so the apex carries gradation instead of sitting one flat colour. A flat and a Liquid Glass variant ship (`logo.png` / `logo-glass.png`, both with the SVG as source of truth).
+
+  The extension previously pointed all four declared icon sizes at one 1024px master, which made every slot a downscale of a downscale. That costs the mark its colour at the size that matters most: the tapered tail is about a tenth of a pixel at 16px, so antialiasing spread it across one pixel at roughly 12% coverage and the brand blue stopped reading as blue — the 16px toolbar icon was a pale grey-blue smear and the mark read as yellow only. Each size is now rendered from the vector at its own pixel size with a minimum stroke width of ~1.05px in its own units, applied as a smooth maximum so there is no crease in the taper. The glass variant is hero-only: below about 64px the glass stack is measurably gone, and a toolbar slot is 16px. See [ADR-0042](docs/adr/0042-a-tapered-sweep-with-a-spectrum-fill.md).
+
 ## [0.4.5] - 2026-10-13
 
 ### Fixed
