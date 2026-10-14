@@ -4,6 +4,8 @@ All notable changes to Browser Bridge are documented here. The format follows [K
 
 ## [Unreleased]
 
+## [0.4.6] - 2026-10-14
+
 ### Changed
 - **The logo is a tapered sweep with a spectrum fill, and the extension ships one icon per declared size.** The old mark was a line drawing of the Brooklyn Bridge — literal, and legible as "a bridge" only to someone who had been told. The new one is a single stroke that enters thin at the lower left, swells through the apex and tapers off right, filled with a spectrum running the product's own two brand tokens (`#007aff` → `#ff9500`) through cyan and yellow. The stroke is *tapered* rather than uniform, which is both the expressiveness and the reason it survives 16px; the spectrum is interpolated along the arc's own length rather than across the canvas, so the apex carries gradation instead of sitting one flat colour. A flat and a Liquid Glass variant ship (`logo.png` / `logo-glass.png`, both with the SVG as source of truth).
 
