@@ -50,6 +50,8 @@ ADR records what changed since. Read the chain, not just the newest file.
 | [0039](./0039-the-memory-pull-crosses-to-mcp.md) | The memory pull crosses to MCP, as a mandated step and not a choice | 0019, 0024, [0027](./0027-the-cli-recalls-by-pull.md) |
 | [0040](./0040-dismissal-is-a-stance-the-agent-can-read.md) | Dismissal is a stance the agent can read | 0038, 0022 |
 | [0041](./0041-the-skills-tarball-is-fetched-once.md) | The skills tarball is fetched once, not once per target | 0015 |
+| [0042](./0042-a-tapered-sweep-with-a-spectrum-fill.md) | The logo is a tapered sweep with a spectrum fill; icons ship one PNG per size | |
+| [0043](./0043-one-mark-two-grounds.md) | One mark, two grounds: a light and a dark asset family, same colours | 0042 |
 
 ## The rest
 

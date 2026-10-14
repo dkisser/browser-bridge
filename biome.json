@@ -14,7 +14,8 @@
       "!.worktrees",
       "!**/testdata",
       "!docs/design",
-      "!promo"
+      "!promo",
+      "!.logo-explore"
     ]
   },
   "formatter": {

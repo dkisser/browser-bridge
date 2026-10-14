@@ -20,6 +20,12 @@ dist/
 .mavis/
 promo/
 
+# Scratch dir for logo exploration. The mark that shipped lives in
+# docs/assets/ as SVG (source of truth) + rendered PNGs; the generators and the
+# comparison sheets here are how those were chosen and are not part of the
+# product. Anchored to the repo root.
+.logo-explore/
+
 # Go build artifacts
 apps/bridge-core/bridge-core
 apps/bridge-core/bridge
