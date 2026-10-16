@@ -22,15 +22,9 @@
 </p>
 
 <p align="center">
-  <img src="./docs/assets/outfit-demo.gif" alt="穿搭推荐" width="720" />
+  <img src="./docs/assets/promo-demo.gif" alt="Agent 通过 Browser Bridge 驱动 Gmail，对比整页 token 成本与只读所需容器" width="720" />
   <br />
-  <em>穿搭推荐</em>
-</p>
-
-<p align="center">
-  <img src="./docs/assets/email-demo.gif" alt="管理邮件" width="720" />
-  <br />
-  <em>管理邮件</em>
+  <em>15 秒，让浏览器成为任意 Agent 的工具</em>
 </p>
 
 <p align="center">
@@ -46,6 +40,7 @@
 - 🔒 **本地会话，本地控制** —— 复用你已登录的浏览器，无需云端浏览器或同步 Cookie。
 - 🔗 **MCP server** —— Streamable HTTP MCP server，向 Claude Desktop、Cursor 等 MCP 客户端暴露浏览器控制工具。
 - 🎯 **省 token 的读取** —— 观测先行的 snapshot、定向容器读取与硬上限，把页面噪声挡在 Agent 的上下文之外。
+- 🧠 **会记住每个站点的样子** —— 控制层按 host 保存一张*站点卡片*，内容来自你的 Agent 实际做过的事；下次落到同一个站点时交还给它：哪个容器装着内容、哪些调用在这个站点上已经失败过、哪些顺序是走通过的。不需要额外工具调用，也不需要新工具——它搭在你本来就要拿的那个返回值上顺带回来。见 [自我学习](#-自我学习)。
 
 ---
 
@@ -198,6 +193,77 @@ bridge --browser <browser-id> --tab 12345 wait:navigation
 ```
 
 完整命令列表请运行 `bridge --help` 查看。
+
+---
+
+## 🧠 自我学习
+
+Agent 会在同一个站点上反复踩同样的坑。促成这个功能的失败是真实发生的：一个 Agent 操作 Gmail 时，猜了一堆并不存在的选择器，耗掉几十个来回，下次再来还会重来一遍。这个功能让第二次访问比第一次更便宜。
+
+一切发生在控制层。当 Agent 落到一个此前见过的 host 上，它会拿到一张简短的有标注卡片——在 MCP 路径上注入 `navigate` 的返回值，在 CLI 路径上通过 `bridge memory show <host>` 拉取（ADR-0027）：
+
+```
+[learned site patterns] mail.example.com
+Observed to fail here (do not repeat):
+  - element_not_found on gettext with "[data-message-subject=\"…\"]" (4x)
+```
+
+紧随其后的第一次 `snapshot` 会带上站点地图——*这个*页面上哪个容器装着内容，引用已对着手里的页面解析过：
+
+```
+Site map (checked against this page):
+  - text container · list [Inbox] → @e12 (6x)
+  - text container · toolbar [Mailbox actions] → @e7 (6x)
+```
+
+在依赖它之前，有几件事值得知道：
+
+- **它是建议，不是命令。** 卡片永远不会取代 Agent 自己阅读页面。站点改版会让卡片过期，Agent 会被告知这一点并退回去自己看——过期的卡片只会浪费调用，绝不会影响正确性。
+- **你的浏览内容不会被明文记录。** 记录是结构化的：命令、结果，以及页面的形状（role、截断后的 label、每个节点一个属性和一个 ref）。没有页面文本，没有页面标题，没有输入内容，查询串也没有——URL 只保留 scheme、host 和 path，选择器只保留其形状，所以
+  `[data-message-subject="Standup notes"]` 被记录为
+  `[data-message-subject=…]`。这是一个真实的取舍，而且方向是对的：
+  「data-message-subject 选择器在这里解析不了」才是那条经验，而它对下一封邮件同样成立，字面量却不会。每次读取新增的数字是返回了多少字符，正是它让卡片能按「值不值得读」给容器排序。
+- **卡片只由证据生成。** 没有观察到失败、也没有确认读取的 host 不会得到卡片，所以逛过二十个站点只会得到零张卡片。
+- **卡片会自我更新，且每次修订都留痕。** `bridge memory history <host>` 显示改了什么、以及是什么证据导致的。
+- **删掉卡片或整个 `data/` 目录即可退出。** 存储是 `~/.browser-bridge/data/` 下的纯文件，永远不上传——只有一个明确的 opt-in 例外：设置 `BRIDGE_MEMORY_API_KEY` 会启用卡片压缩，把渲染后的卡片（站点结构，绝不含 trace）发往你配置的 OpenAI 兼容端点（ADR-0022）。该端点必须是 `https://`；本地代理是唯一需要 `BRIDGE_MEMORY_ALLOW_INSECURE=1` 明确表态的情况。试图回传 ref、冒充卡片章节或自行开启新章节的回复会被丢弃而非存储——即使由你亲自选择，该端点也仍被视为不可信。
+
+```bash
+bridge memory list                    # 有卡片的全部 host
+bridge memory show mail.example.com   # Agent 到底被告知了什么
+bridge memory show mail.example.com --resolve  # ……以及解析后的站点地图
+bridge memory history mail.example.com # 改了什么，为什么
+bridge memory learn                   # 现在就跑学习器，不用等空闲
+bridge memory rm mail.example.com     # 忘掉一个站点
+```
+
+`--resolve` 之所以存在，是因为单纯的 `show` 无法打印站点地图：地图里的 ref 只有对着它们被解析时的那个页面才有意义，而裸 `show` 没有页面。`--resolve` 会从 trace 里读出最后那个页面，所以即使服务已停止也能用——并且它会标注自己做了这件事。它打印的 ref 是真实的，但**对你浏览器当前的内容无效**（ADR-0026）。
+
+整理过的知识与机器的卡片并存：`browser-bridge-memory` skill 让 Agent 记录卡片学不到的东西——*为什么*这些步骤要按这个顺序、哪个横幅要先关掉——以每 host 的**站点指南**形式存在（`~/.browser-bridge/data/guides/<host>.md`），并把已经固定的流程固化成可重放的**例程**
+（`~/.browser-bridge/data/routines/<host>/`）。指南和例程只在人类明确要求时写入，绝不自动生成（ADR-0028）。
+
+### 它真的有用吗？
+
+`bridge memory bench` 用两半来度量，各自回答不同的问题。
+
+```bash
+# 确定性：一个与真实页面难度相当的合成页面，跑真实的学习器。每次结果相同。
+bridge memory bench run
+
+# 实测：你在 Agent 里跑一个任务，回填一行。调用数与失败数
+# 从 trace 里读出——不是手工数的。
+bridge memory bench record --host news.google.com \
+  --task "find todays top story" --ok --card used
+bridge memory bench report
+```
+
+在四个像样容器的页面上，fixture 跑出来大约每个任务省两次调用，外加失败列表挡掉一次被拒的调用。这不是一个大的数字，也是诚实的那个：伪树已经能告诉 Agent 如何找到*具名控件*，所以卡片增加的是知道*一页里几个可读容器中哪个才值得读*。表里最小的节省是控件查找那个任务，这是刻意放进去的——为了不让结论超出实测范围。这些决策见 [ADR-0018](docs/adr/0018-structural-trace.md) 至
+[ADR-0022](docs/adr/0022-optional-model-call-for-compression.md)，构建与度量它们所带来的改变见
+[ADR-0023](docs/adr/0023-a-card-carries-no-handles.md)、
+[ADR-0024](docs/adr/0024-site-card-as-implemented.md) 和
+[ADR-0025](docs/adr/0025-what-the-baseline-taught.md)；recall 如何抵达 CLI 路径、以及整理过的知识如何与卡片并存见
+[ADR-0027](docs/adr/0027-the-cli-recalls-by-pull.md) 至
+[ADR-0029](docs/adr/0029-crystallization-starts-as-cli-scripts.md)——此处的决策记录只增不改，修正会落到新文件，而不是被它修正的那个文件里。
+[docs/adr/README.md](docs/adr/README.md) 有完整索引。
 
 ---
 
